@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { LayoutMode } from '../lib/layoutConfig'
 
-export type PopoverId = 'indicators' | 'alerts' | 'drawings' | 'sync' | 'watchlist' | 'mtf' | 'pins'
+export type PopoverId = 'indicators' | 'alerts' | 'drawings' | 'sync' | 'watchlist' | 'mtf' | 'pins' | 'discover'
 
 interface ToolbarProps {
   layout: LayoutMode
@@ -63,7 +63,11 @@ export function Toolbar({
         const bar = barRef.current
         if (bar) {
           const b = e.currentTarget.getBoundingClientRect()
-          setLeft(b.left - bar.getBoundingClientRect().left)
+          const barLeft = bar.getBoundingClientRect().left
+          // 오른쪽 끝 버튼을 누르면 팝오버가 화면 밖으로 밀린다. 안쪽으로 당겨 붙인다.
+          const width = 320
+          const maxLeft = window.innerWidth - width - 12 - barLeft
+          setLeft(Math.max(0, Math.min(b.left - barLeft, maxLeft)))
         }
         onOpenChange(open === id ? null : id)
       }}
@@ -97,6 +101,7 @@ export function Toolbar({
         {tab('indicators', '〜 지표')}
         {tab('drawings', '─ 선')}
         {tab('pins', '📌 핀')}
+        {tab('discover', '🔍 탐색')}
         {tab('alerts', '🔔 알림', alertCount)}
         {tab('sync', '⇅ 동기화')}
       </div>

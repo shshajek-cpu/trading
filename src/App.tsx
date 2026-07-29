@@ -19,6 +19,7 @@ import { useWatchlist } from './hooks/useWatchlist'
 import { Watchlist } from './components/Watchlist'
 import { MtfPanel } from './components/MtfPanel'
 import { PinPanel } from './components/PinPanel'
+import { DiscoverPanel } from './components/DiscoverPanel'
 import { usePins } from './hooks/usePins'
 import type { PinSide } from './lib/pins'
 import type { FeatureSet } from './lib/features'
@@ -233,6 +234,13 @@ function App() {
         onOpenChange={setPopover}
         alertCount={alerts.filter((a) => a.active).length + drawings.filter((d) => d.alert).length}
       >
+        {popover === 'discover' && (
+          <DiscoverPanel
+            symbol={activeSymbol}
+            interval={cells[active]?.interval ?? '1m'}
+            liveFeatures={liveFeatures}
+          />
+        )}
         {popover === 'pins' && (
           <PinPanel
             pins={pinStore.pins}

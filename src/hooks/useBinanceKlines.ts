@@ -110,6 +110,9 @@ export function useBinanceKlines(
     const oldest = candlesRef.current[0]
     if (!oldest) return
 
+    // 받아오는 사이에 종목·주기가 바뀔 수 있다. 그때 온 것을 그대로 앞에 붙이면
+    // 다른 주기의 캔들이 섞여 시간 순서가 깨진다.
+    const token = `${symbol}|${interval}`
     busyRef.current = true
     setLoadingOlder(true)
     try {
@@ -121,6 +124,11 @@ export function useBinanceKlines(
         undefined,
         oldest.time * 1000 - 1,
       )
+      if (token !== `${symbol}|${interval}`) return
+      const current = candlesRef.current[0]
+      // 그 사이 새로 불러왔다면 기준점이 달라졌다는 뜻이다. 버린다.
+      if (!current || current.time !== oldest.time) return
+
       const fresh = older.filter((c) => c.time < oldest.time)
       if (fresh.length === 0) {
         setExhausted(true)
