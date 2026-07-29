@@ -1,4 +1,7 @@
+import { useEffect, useRef, useState } from 'react'
 import type { LayoutMode } from '../lib/layoutConfig'
+
+export type PopoverId = 'indicators' | 'alerts' | 'drawings'
 
 interface ToolbarProps {
   layout: LayoutMode
@@ -6,6 +9,11 @@ interface ToolbarProps {
   pipSupported: boolean
   pipOpen: boolean
   onTogglePip: () => void
+  /** 열린 팝오버. 상단바 버튼을 누르면 그 아래로 내려온다. */
+  open: PopoverId | null
+  onOpenChange: (id: PopoverId | null) => void
+  alertCount: number
+  children?: React.ReactNode
 }
 
 const LAYOUTS: { mode: LayoutMode; label: string; title: string }[] = [
@@ -14,9 +22,59 @@ const LAYOUTS: { mode: LayoutMode; label: string; title: string }[] = [
   { mode: 4, label: '⊞', title: '4분할' },
 ]
 
-export function Toolbar({ layout, onLayoutChange, pipSupported, pipOpen, onTogglePip }: ToolbarProps) {
+export function Toolbar({
+  layout,
+  onLayoutChange,
+  pipSupported,
+  pipOpen,
+  onTogglePip,
+  open,
+  onOpenChange,
+  alertCount,
+  children,
+}: ToolbarProps) {
+  const barRef = useRef<HTMLElement>(null)
+  const tabsRef = useRef<HTMLDivElement>(null)
+  // 팭오버를 누른 버튼 아래에 맞춘다.
+  const [left, setLeft] = useState(0)
+
+  // 바깥을 누르거나 Esc 를 누르면 닫는다.
+  useEffect(() => {
+    if (!open) return
+    const onDown = (e: PointerEvent) => {
+      if (!barRef.current?.contains(e.target as Node)) onOpenChange(null)
+    }
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onOpenChange(null)
+    }
+    document.addEventListener('pointerdown', onDown)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('pointerdown', onDown)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [open, onOpenChange])
+
+  const tab = (id: PopoverId, label: string, badge?: number) => (
+    <button
+      type="button"
+      className={open === id ? 'active' : undefined}
+      onClick={(e) => {
+        const bar = barRef.current
+        if (bar) {
+          const b = e.currentTarget.getBoundingClientRect()
+          setLeft(b.left - bar.getBoundingClientRect().left)
+        }
+        onOpenChange(open === id ? null : id)
+      }}
+    >
+      {label}
+      {badge ? <span className="badge">{badge}</span> : null}
+    </button>
+  )
+
   return (
-    <header className="toolbar">
+    <header className="toolbar" ref={barRef}>
       <span className="app-title">Trading</span>
 
       <div className="layout-switch">
@@ -33,6 +91,14 @@ export function Toolbar({ layout, onLayoutChange, pipSupported, pipOpen, onToggl
         ))}
       </div>
 
+      <div className="toolbar-tabs" ref={tabsRef}>
+        {tab('indicators', '〜 지표')}
+        {tab('drawings', '─ 선')}
+        {tab('alerts', '🔔 알림', alertCount)}
+      </div>
+
+      <div className="toolbar-gap" />
+
       <button
         type="button"
         className={`pip-button${pipOpen ? ' active' : ''}`}
@@ -46,6 +112,12 @@ export function Toolbar({ layout, onLayoutChange, pipSupported, pipOpen, onToggl
       >
         ⧉ 미니창
       </button>
+
+      {open && (
+        <div className="popover" style={{ left }}>
+          {children}
+        </div>
+      )}
     </header>
   )
 }

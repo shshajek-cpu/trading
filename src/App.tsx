@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import './App.css'
 import { ChartCell } from './components/ChartCell'
-import { Toolbar } from './components/Toolbar'
+import { Toolbar, type PopoverId } from './components/Toolbar'
 import { IndicatorPanel } from './components/IndicatorPanel'
 import { AlertPanel } from './components/AlertPanel'
 import { DrawingPanel } from './components/DrawingPanel'
@@ -101,22 +101,8 @@ function App() {
   // 모바일에서는 설정 패널을 기본으로 숨기고 시트로 올린다.
   const [sheetOpen, setSheetOpen] = useState(false)
 
-  // 데스크톱: 우측 패널을 접어 차트를 넓힌다.
-  const [panelOpen, setPanelOpen] = useState(() => {
-    try {
-      return localStorage.getItem('trading.panelOpen') !== '0'
-    } catch {
-      return true
-    }
-  })
-
-  useEffect(() => {
-    try {
-      localStorage.setItem('trading.panelOpen', panelOpen ? '1' : '0')
-    } catch {
-      /* 저장 실패는 무시 */
-    }
-  }, [panelOpen])
+  // 상단바 팭오버 — 우측 사이드바를 없애고 이걸로 대체했다.
+  const [popover, setPopover] = useState<PopoverId | null>(null)
 
   // 칸 경계 끌기 — 방향별로 비율을 고친다.
   const gridRef = useRef<HTMLElement>(null)
@@ -208,7 +194,39 @@ function App() {
         pipSupported={pip.supported}
         pipOpen={pip.open}
         onTogglePip={() => void pip.toggle()}
-      />
+        open={popover}
+        onOpenChange={setPopover}
+        alertCount={alerts.filter((a) => a.active).length + drawings.filter((d) => d.alert).length}
+      >
+        {popover === 'indicators' && (
+          <IndicatorPanel settings={indicators} onChange={setIndicators} />
+        )}
+        {popover === 'drawings' && (
+          <DrawingPanel
+            symbol={activeSymbol}
+            drawings={drawings}
+            drawMode={drawMode}
+            drawColor={drawColor}
+            drawAlert={drawAlert}
+            onToggleMode={() => setDrawMode((v) => !v)}
+            onColorChange={setDrawColor}
+            onAlertChange={setDrawAlert}
+            onAdd={(price) => addDrawing(activeSymbol, price, drawColor, drawAlert)}
+            onRemove={removeDrawing}
+            onUpdate={updateDrawing}
+            onClear={() => clearSymbol(activeSymbol)}
+          />
+        )}
+        {popover === 'alerts' && (
+          <AlertPanel
+            symbol={activeSymbol}
+            alerts={alerts}
+            permission={permission}
+            onAdd={addAlert}
+            onRemove={removeAlert}
+          />
+        )}
+      </Toolbar>
 
       <div className="body">
         {/* 좌측 도구 레일 — 자주 쓰는 것을 바로 닿게 한다(데스크톱 전용). */}
@@ -249,14 +267,6 @@ function App() {
               ⧉
             </button>
           )}
-          <button
-            type="button"
-            className={panelOpen ? 'active' : undefined}
-            title={panelOpen ? '우측 패널 접기' : '우측 패널 열기'}
-            onClick={() => setPanelOpen((v) => !v)}
-          >
-            {panelOpen ? '›' : '‹'}
-          </button>
         </nav>
 
         <main
@@ -343,7 +353,7 @@ function App() {
         )}
 
         <aside
-          className={`settings-panel${sheetOpen ? ' open' : ''}${panelOpen ? '' : ' collapsed'}`}
+          className={`settings-panel${sheetOpen ? ' open' : ''}`}
         >
           <button type="button" className="sheet-handle" onClick={() => setSheetOpen(false)}>
             <span />

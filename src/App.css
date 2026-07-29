@@ -6,6 +6,8 @@
 
 /* ── 툴바 (유리 바) ── */
 .toolbar {
+  position: relative;
+  z-index: 30;
   flex: 0 0 auto;
   display: flex;
   align-items: center;
@@ -424,20 +426,66 @@
 }
 
 /* ── 사이드 패널 (유리 판) ── */
+/* 설정 묶음은 데스크톱에선 상단바 팭오버로 들어간다. 여기서는 안 보이고,
+   모바일 미디어쿼리에서 바텀시트로 되살아난다. */
 .settings-panel {
-  flex: 0 0 268px;
-  padding: 14px;
-  background: linear-gradient(
-    165deg,
-    rgb(255 255 255 / 10%),
-    rgb(255 255 255 / 3%) 40%,
-    rgb(255 255 255 / 6%)
-  );
-  border-left: 1px solid var(--border-strong);
-  box-shadow: inset 1px 1px 0 rgb(255 255 255 / 12%), -12px 0 32px rgb(0 0 0 / 35%);
+  display: none;
+}
+
+/* ── 상단바 팭오버 ── */
+.toolbar-tabs {
+  display: flex;
+  gap: 4px;
+}
+
+.toolbar-tabs button {
+  position: relative;
+  padding: 5px 10px;
+  font-size: 12px;
+}
+
+.toolbar-tabs button.active {
+  background: rgb(255 255 255 / 16%);
+  border-color: var(--border-strong);
+  color: #fff;
+}
+
+.toolbar-tabs .badge {
+  margin-left: 5px;
+  padding: 1px 5px;
+  border-radius: 8px;
+  background: rgb(255 255 255 / 18%);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+
+.toolbar-gap {
+  flex: 1 1 auto;
+}
+
+.popover {
+  position: absolute;
+  top: calc(100% + 6px);
+
+  z-index: 50;
+  width: 300px;
+  max-height: min(72vh, 620px);
+  padding: 12px;
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  background: rgb(14 14 14 / 97%);
+  box-shadow: 0 18px 44px rgb(0 0 0 / 55%);
   overflow-y: auto;
-  backdrop-filter: var(--blur);
-  -webkit-backdrop-filter: var(--blur);
+  overscroll-behavior: contain;
+}
+
+/* 팭오버 안에선 패널 제목을 한 번 더 보일 필요가 없다 — 탭이 이미 이름이다. */
+.popover .panel > h2 {
+  display: none;
+}
+
+.popover .panel + .panel {
+  margin-top: 12px;
 }
 
 .panel + .panel {
@@ -806,8 +854,15 @@ button.bell.on {
     display: none;
   }
 
+  /* 데스크톱 팭오버는 모바일에선 안 쓴다 — 하단 시트가 그 역할을 한다. */
+  .toolbar-tabs,
+  .toolbar-gap {
+    display: none;
+  }
+
   /* 설정은 평소엔 내려가 있다가 버튼을 누를 때만 올라온다. */
   .settings-panel {
+    display: block;
     position: fixed;
     inset: auto 0 0;
     z-index: 40;
