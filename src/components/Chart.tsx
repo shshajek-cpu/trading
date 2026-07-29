@@ -32,6 +32,8 @@ interface ChartProps {
   onDrawPrice: (price: number) => void
   /** 수평선을 끌어서 놓았을 때. */
   onMoveDrawing: (id: string, price: number) => void
+  /** 왼쪽 끝에 닿으면 과거를 더 불러오기 위해 불린다. */
+  onReachStart?: () => void
 }
 
 const INTERVAL_SECONDS: Record<Interval, number> = {
@@ -72,6 +74,7 @@ export function Chart({
   drawMode,
   onDrawPrice,
   onMoveDrawing,
+  onReachStart,
 }: ChartProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<IChartApi | null>(null)
@@ -87,6 +90,9 @@ export function Chart({
   const priceLinesRef = useRef(new Map<string, IPriceLine>())
   const drawLinesRef = useRef(new Map<string, IPriceLine>())
   const fittedRef = useRef(false)
+  const firstTimeRef = useRef<number | null>(null)
+  const reachStartRef = useRef(onReachStart)
+  reachStartRef.current = onReachStart
   const onDrawPriceRef = useRef(onDrawPrice)
   onDrawPriceRef.current = onDrawPrice
   const onMoveDrawingRef = useRef(onMoveDrawing)
@@ -160,7 +166,22 @@ export function Chart({
       maSeries.clear()
       priceLines.clear()
       fittedRef.current = false
+      firstTimeRef.current = null
     }
+  }, [])
+
+  // 왼쪽 끝에 가까워지면 과거를 더 달라고 알린다.
+  useEffect(() => {
+    const chart = chartRef.current
+    if (!chart) return
+    const timeScale = chart.timeScale()
+    const onRange = (range: { from: number; to: number } | null) => {
+      if (!range) return
+      // 앞쪽 20봉 안으로 들어오면 미리 부른다 — 끝에 닿고 나서면 늦다.
+      if (range.from < 20) reachStartRef.current?.()
+    }
+    timeScale.subscribeVisibleLogicalRangeChange(onRange)
+    return () => timeScale.unsubscribeVisibleLogicalRangeChange(onRange)
   }, [])
 
   // 캔들 + 거래량
@@ -168,6 +189,13 @@ export function Chart({
     const candleSeries = candleSeriesRef.current
     const volumeSeries = volumeSeriesRef.current
     if (!candleSeries || !volumeSeries || candles.length === 0) return
+
+    // 과거가 앞에 붙었으면 그만큼 보이는 구간을 밀어 화면이 튀지 않게 한다.
+    const prependedCount = candles.findIndex((c) => c.time === firstTimeRef.current)
+    const prepended = firstTimeRef.current !== null && prependedCount > 0 ? prependedCount : 0
+    const keepRange = prepended
+      ? chartRef.current?.timeScale().getVisibleLogicalRange()
+      : null
 
     candleSeries.setData(
       candles.map((c) => ({
@@ -187,6 +215,14 @@ export function Chart({
     )
 
     lastCandleRef.current = candles[candles.length - 1]
+
+    if (keepRange) {
+      chartRef.current?.timeScale().setVisibleLogicalRange({
+        from: keepRange.from + prepended,
+        to: keepRange.to + prepended,
+      })
+    }
+    firstTimeRef.current = candles[0]?.time ?? null
 
     // 최초 1회만 전체 구간을 맞춘다. 이후엔 사용자의 줌/스크롤을 건드리지 않는다.
     if (!fittedRef.current) {

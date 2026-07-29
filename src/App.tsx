@@ -14,6 +14,9 @@ import { usePipWindow } from './hooks/usePipWindow'
 import { useDrawings } from './hooks/useDrawings'
 import { useIsMobile } from './hooks/useIsMobile'
 import { useSync } from './hooks/useSync'
+import { usePushAlerts } from './hooks/usePushAlerts'
+import { useWatchlist } from './hooks/useWatchlist'
+import { Watchlist } from './components/Watchlist'
 import { SyncPanel } from './components/SyncPanel'
 import { DRAW_COLORS, type Drawing } from './lib/drawings'
 import type { Interval } from './lib/binance'
@@ -159,6 +162,8 @@ function App() {
   const { layout, active, cells, splitCol, splitRow } = layoutState
   const isMobile = useIsMobile()
   const sync = useSync()
+  const push = usePushAlerts(sync.code, alerts)
+  const watchlist = useWatchlist()
 
   const pip = usePipWindow()
 
@@ -205,6 +210,20 @@ function App() {
         onOpenChange={setPopover}
         alertCount={alerts.filter((a) => a.active).length + drawings.filter((d) => d.alert).length}
       >
+        {popover === 'watchlist' && (
+          <Watchlist
+            symbols={watchlist.symbols}
+            rows={watchlist.rows}
+            allSymbols={symbols}
+            current={activeSymbol}
+            onPick={(s) => {
+              setCellSymbol(active, s)
+              setPopover(null)
+            }}
+            onAdd={watchlist.add}
+            onRemove={watchlist.remove}
+          />
+        )}
         {popover === 'indicators' && (
           <IndicatorPanel settings={indicators} onChange={setIndicators} />
         )}
@@ -231,6 +250,8 @@ function App() {
             permission={permission}
             onAdd={addAlert}
             onRemove={removeAlert}
+            push={push}
+            hasSyncCode={Boolean(sync.code)}
           />
         )}
         {popover === 'sync' && (
@@ -375,6 +396,18 @@ function App() {
           <button type="button" className="sheet-handle" onClick={() => setSheetOpen(false)}>
             <span />
           </button>
+          <Watchlist
+            symbols={watchlist.symbols}
+            rows={watchlist.rows}
+            allSymbols={symbols}
+            current={activeSymbol}
+            onPick={(s) => {
+              setCellSymbol(active, s)
+              setSheetOpen(false)
+            }}
+            onAdd={watchlist.add}
+            onRemove={watchlist.remove}
+          />
           <DrawingPanel
             symbol={activeSymbol}
             drawings={drawings}
@@ -396,6 +429,8 @@ function App() {
             permission={permission}
             onAdd={addAlert}
             onRemove={removeAlert}
+            push={push}
+            hasSyncCode={Boolean(sync.code)}
           />
           <SyncPanel
             code={sync.code}

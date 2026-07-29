@@ -1,0 +1,10 @@
+name = "trading-alerts"
+main = "index.ts"
+compatibility_date = "2025-01-01"
+
+[triggers]
+crons = ["* * * * *"]
+
+[[kv_namespaces]]
+binding = "SETTINGS"
+id = "43c52222dba44e2789e22ba625051e16"

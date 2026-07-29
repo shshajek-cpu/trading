@@ -101,12 +101,16 @@ export async function fetchKlines(
   interval: Interval,
   limit = 1000,
   signal?: AbortSignal,
+  /** 이 시각(ms) 이전 캔들만 — 과거로 거슬러 올라갈 때 쓴다. */
+  endTime?: number,
 ): Promise<Candle[]> {
-  const raw = await getJson<RawKline[]>(
-    '/fapi/v1/klines',
-    { symbol: toRestSymbol(symbol), interval, limit },
-    signal,
-  )
+  const params: Record<string, string | number> = {
+    symbol: toRestSymbol(symbol),
+    interval,
+    limit,
+  }
+  if (endTime !== undefined) params.endTime = endTime
+  const raw = await getJson<RawKline[]>('/fapi/v1/klines', params, signal)
   return raw.map(normalizeKline)
 }
 
@@ -132,6 +136,25 @@ export async function fetch24hTicker(symbol: string, signal?: AbortSignal): Prom
     volume: Number(raw.volume),
     quoteVolume: Number(raw.quoteVolume),
   }
+}
+
+/**
+ * 전 종목 24시간 시세. 관심 종목 시세판이 쓴다.
+ *
+ * 선물 웹소켓 전체 스트림(!miniTicker@arr)은 일부 망에서 응답이 오지 않아 REST 로 받는다.
+ */
+export async function fetchAll24hTickers(signal?: AbortSignal): Promise<Ticker24h[]> {
+  const raw = await getJson<Raw24hTicker[]>('/fapi/v1/ticker/24hr', {}, signal)
+  return raw.map((r) => ({
+    symbol: r.symbol,
+    lastPrice: Number(r.lastPrice),
+    priceChange: Number(r.priceChange),
+    priceChangePercent: Number(r.priceChangePercent),
+    highPrice: Number(r.highPrice),
+    lowPrice: Number(r.lowPrice),
+    volume: Number(r.volume),
+    quoteVolume: Number(r.quoteVolume),
+  }))
 }
 
 /** wss 스트림의 kline 이벤트 페이로드. */

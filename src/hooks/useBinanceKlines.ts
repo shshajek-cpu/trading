@@ -7,10 +7,16 @@ export interface UseBinanceKlinesResult {
   error: Error | null
   /** 수동 재조회(갭 메우기 등). */
   reload: () => Promise<void>
+  /** 더 오래된 캔들을 앞에 붙인다. */
+  loadOlder: () => Promise<void>
+  loadingOlder: boolean
+  /** 거래소에 더 이상 과거가 없음. */
+  exhausted: boolean
 }
 
 const MAX_ATTEMPTS = 4
 const BASE_DELAY_MS = 700
+const OLDER_CHUNK = 500
 
 const sleep = (ms: number, signal?: AbortSignal) =>
   new Promise<void>((resolve, reject) => {
@@ -33,7 +39,13 @@ export function useBinanceKlines(
   const [candles, setCandles] = useState<Candle[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<Error | null>(null)
+  const [loadingOlder, setLoadingOlder] = useState(false)
+  const [exhausted, setExhausted] = useState(false)
   const reloadRef = useRef<(() => void) | null>(null)
+  // 상태가 아니라 ref 로 가진다 — 스크롤 중 연달아 불려도 중복 요청을 막아야 한다.
+  const busyRef = useRef(false)
+  const candlesRef = useRef<Candle[]>([])
+  candlesRef.current = candles
 
   const load = useCallback(
     async (signal?: AbortSignal) => {
@@ -48,6 +60,7 @@ export function useBinanceKlines(
           setCandles(data)
           setError(null)
           setLoading(false)
+          setExhausted(false)
           return
         } catch (err) {
           if (signal?.aborted || (err instanceof DOMException && err.name === 'AbortError')) return
@@ -69,6 +82,8 @@ export function useBinanceKlines(
 
   useEffect(() => {
     const controller = new AbortController()
+    setCandles([])
+    setExhausted(false)
     void load(controller.signal)
     reloadRef.current = () => void load(controller.signal)
     return () => {
@@ -90,7 +105,38 @@ export function useBinanceKlines(
     }
   }, [])
 
+  const loadOlder = useCallback(async () => {
+    if (busyRef.current || exhausted) return
+    const oldest = candlesRef.current[0]
+    if (!oldest) return
+
+    busyRef.current = true
+    setLoadingOlder(true)
+    try {
+      // endTime 은 포함이라 1ms 빼서 겹침을 피한다.
+      const older = await fetchKlines(
+        symbol,
+        interval,
+        OLDER_CHUNK,
+        undefined,
+        oldest.time * 1000 - 1,
+      )
+      const fresh = older.filter((c) => c.time < oldest.time)
+      if (fresh.length === 0) {
+        setExhausted(true)
+      } else {
+        setCandles((prev) => [...fresh, ...prev])
+        if (fresh.length < OLDER_CHUNK) setExhausted(true)
+      }
+    } catch {
+      /* 과거 로딩 실패는 조용히 넘긴다 — 이미 보고 있는 차트는 멀쩡하다. */
+    } finally {
+      busyRef.current = false
+      setLoadingOlder(false)
+    }
+  }, [symbol, interval, exhausted])
+
   const reload = useCallback(() => load(), [load])
 
-  return { candles, loading, error, reload }
+  return { candles, loading, error, reload, loadOlder, loadingOlder, exhausted }
 }

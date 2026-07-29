@@ -24,6 +24,7 @@ export default defineConfig({
         ],
       },
       workbox: {
+        importScripts: ['/sw-push.js'],
         // 앱 셸만 캐시한다. 시세 API·웹소켓은 절대 캐시하지 않는다.
         globPatterns: ['**/*.{js,css,html,svg,png}'],
         navigateFallback: 'index.html',

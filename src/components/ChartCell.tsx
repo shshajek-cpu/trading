@@ -68,7 +68,10 @@ export function ChartCell({
   const [liveCandle, setLiveCandle] = useState<Candle | null>(null)
   const [intervalOpen, setIntervalOpen] = useState(false)
   const ticker = useTicker24h(symbol)
-  const { candles, loading, error, reload } = useBinanceKlines(symbol, interval)
+  const { candles, loading, error, reload, loadOlder, loadingOlder } = useBinanceKlines(
+    symbol,
+    interval,
+  )
 
   const lastTickRef = useRef(0)
   const onPriceRef = useRef(onPrice)
@@ -226,7 +229,9 @@ export function ChartCell({
           drawMode={drawMode}
           onDrawPrice={onDrawPrice}
           onMoveDrawing={onMoveDrawing}
+          onReachStart={() => void loadOlder()}
         />
+        {loadingOlder && <div className="loading-older">과거 불러오는 중…</div>}
         {/* 모바일: 지표 패널마다 접기/설정 — 트레이딩뷰처럼 차트 위에 얹는다. */}
         {onToggleIndicator && (indicators.rsi.enabled || indicators.macd.enabled) && (
           <div className="pane-controls">

@@ -1194,3 +1194,139 @@ button.bell.on {
   flex: 1;
   min-width: 0;
 }
+
+/* 과거 데이터를 이어 받는 동안 왼쪽 위에 조용히 표시한다. */
+.loading-older {
+  position: absolute;
+  top: 40px;
+  left: 10px;
+  z-index: 4;
+  padding: 3px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: rgb(0 0 0 / 70%);
+  font-size: 11px;
+  color: var(--text-dim);
+  pointer-events: none;
+}
+
+/* 앱을 닫아도 오는 알림 */
+.push-row {
+  margin-bottom: 10px;
+}
+
+.push-row button {
+  width: 100%;
+}
+
+.push-row button.active {
+  background: rgb(38 166 154 / 18%);
+  border-color: rgb(38 166 154 / 45%);
+  color: #fff;
+}
+
+/* ── 관심 종목 시세판 ── */
+.watch-add {
+  position: relative;
+  margin-bottom: 8px;
+}
+
+.watch-add input {
+  width: 100%;
+}
+
+.watch-candidates {
+  position: absolute;
+  top: calc(100% + 3px);
+  left: 0;
+  right: 0;
+  z-index: 5;
+  max-height: 180px;
+  padding: 3px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: rgb(18 18 18 / 98%);
+  list-style: none;
+  overflow-y: auto;
+}
+
+.watch-candidates button {
+  width: 100%;
+  border: none;
+  background: none;
+  text-align: left;
+  font-size: 12px;
+}
+
+.watch-rows {
+  list-style: none;
+}
+
+.watch-rows li {
+  display: flex;
+  align-items: center;
+  border-radius: 7px;
+}
+
+.watch-rows li.active {
+  background: rgb(255 255 255 / 8%);
+}
+
+.watch-pick {
+  flex: 1;
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 8px;
+  align-items: baseline;
+  min-width: 0;
+  padding: 7px 8px;
+  border: none;
+  background: none;
+  text-align: left;
+}
+
+.watch-sym {
+  font-weight: 600;
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.watch-price {
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+
+.watch-chg {
+  min-width: 58px;
+  text-align: right;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.watch-chg.up {
+  color: #26a69a;
+}
+
+.watch-chg.down {
+  color: #ef5350;
+}
+
+.watch-del {
+  padding: 4px 7px;
+  border: none;
+  background: none;
+  color: var(--text-dim);
+  opacity: 0;
+}
+
+.watch-rows li:hover .watch-del {
+  opacity: 1;
+}
+
+@media (width <= 900px) {
+  .watch-del {
+    opacity: 1;
+  }
+}

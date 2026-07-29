@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import type { AlertCondition, PriceAlert } from '../hooks/usePriceAlerts'
+import type { PushState } from '../hooks/usePushAlerts'
 import { COLORS } from '../lib/theme'
 
 interface AlertPanelProps {
@@ -8,9 +9,26 @@ interface AlertPanelProps {
   permission: NotificationPermission | 'unsupported'
   onAdd: (symbol: string, condition: AlertCondition, price: number) => void
   onRemove: (id: string) => void
+  /** 앱을 닫아도 오는 알림. 동기화 코드가 있어야 켤 수 있다. */
+  push: {
+    state: PushState
+    message: string
+    supported: boolean
+    enable: () => Promise<void>
+    disable: () => Promise<void>
+  }
+  hasSyncCode: boolean
 }
 
-export function AlertPanel({ symbol, alerts, permission, onAdd, onRemove }: AlertPanelProps) {
+export function AlertPanel({
+  symbol,
+  alerts,
+  permission,
+  onAdd,
+  onRemove,
+  push,
+  hasSyncCode,
+}: AlertPanelProps) {
   const [condition, setCondition] = useState<AlertCondition>('above')
   const [price, setPrice] = useState('')
 
@@ -31,6 +49,27 @@ export function AlertPanel({ symbol, alerts, permission, onAdd, onRemove }: Aler
       )}
       {permission === 'unsupported' && (
         <p className="hint">이 브라우저는 알림을 지원하지 않아 화면 안내로만 표시됩니다.</p>
+      )}
+
+      {/* 앱을 닫아도 오는 알림 */}
+      {push.supported && (
+        <div className="push-row">
+          {hasSyncCode ? (
+            <>
+              <button
+                type="button"
+                className={push.state === 'on' ? 'active' : undefined}
+                disabled={push.state === 'working'}
+                onClick={() => void (push.state === 'on' ? push.disable() : push.enable())}
+              >
+                {push.state === 'on' ? '✓ 백그라운드 알림 켜짐' : '백그라운드 알림 켜기'}
+              </button>
+              {push.message && <p className="hint">{push.message}</p>}
+            </>
+          ) : (
+            <p className="hint">동기화 코드를 만들면 앱을 닫아도 알림을 받을 수 있습니다.</p>
+          )}
+        </div>
       )}
 
       <form className="alert-form" onSubmit={submit}>
