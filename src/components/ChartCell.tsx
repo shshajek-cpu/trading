@@ -133,42 +133,6 @@ export function ChartCell({
     [drawings, symbol],
   )
 
-  // 세로 스와이프로 종목 전환 — 손가락 하나로 옆 코인으로 넘어간다.
-  const swipeRef = useRef<{ x: number; y: number; t: number } | null>(null)
-
-  const onTouchStart = useCallback((e: React.TouchEvent) => {
-    if (e.touches.length !== 1) {
-      swipeRef.current = null
-      return
-    }
-    const t = e.touches[0]
-    swipeRef.current = { x: t.clientX, y: t.clientY, t: Date.now() }
-  }, [])
-
-  const onTouchEnd = useCallback(
-    (e: React.TouchEvent) => {
-      const start = swipeRef.current
-      swipeRef.current = null
-      if (!start || symbols.length === 0) return
-
-      const t = e.changedTouches[0]
-      const dy = t.clientY - start.y
-      const dx = t.clientX - start.x
-      // 빠르고, 충분히 수직이고, 가로로 거의 안 움직였을 때만 인정한다.
-      if (Date.now() - start.t > 600) return
-      if (Math.abs(dy) < 70 || Math.abs(dx) > Math.abs(dy) * 0.6) return
-
-      // 만기 있는 계약(BTCUSDT_260925 등)은 건너뛴다 — 쒸데없이 수십 개가 끼어든다.
-      const list = symbols.filter((s) => !s.includes('_'))
-      const i = list.indexOf(symbol)
-      if (i === -1) return
-      // 아래로 끌면 이전 종목, 위로 끌면 다음 종목.
-      const next = dy > 0 ? i - 1 : i + 1
-      if (next < 0 || next >= list.length) return
-      onSymbolChange(list[next])
-    },
-    [symbols, symbol, onSymbolChange],
-  )
 
   return (
     // 칸 어디를 눌러도 활성 칸이 되도록 하는 래퍼. 키보드 조작 대상이 아니라 온클릭만 둔다.
@@ -251,7 +215,7 @@ export function ChartCell({
         </div>
       )}
 
-      <div className="cell-chart" onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}>
+      <div className="cell-chart">
         <Chart
           key={seriesKey}
           candles={mergedCandles}
