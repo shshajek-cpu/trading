@@ -9,12 +9,32 @@ export interface UseDrawingsResult {
   clearSymbol: (symbol: string) => void
   /** 실시간 가격을 흘려보내면 선을 통과한 순간 알림을 발동시킨다. */
   checkPrice: (symbol: string, price: number) => void
+  undo: () => void
+  canUndo: boolean
 }
 
 export function useDrawings(
   onCross: (drawing: Drawing, price: number) => void,
 ): UseDrawingsResult {
   const [drawings, setDrawings] = useState<Drawing[]>(loadDrawings)
+
+  // 직전 상태들 — 추가/삭제/이동을 되돌린다. 가격 감시로 바뀐 것은 쌓지 않는다.
+  const [history, setHistory] = useState<Drawing[][]>([])
+
+  const pushHistory = useCallback(() => {
+    setDrawings((cur) => {
+      setHistory((h) => [...h.slice(-19), cur])
+      return cur
+    })
+  }, [])
+
+  const undo = useCallback(() => {
+    setHistory((h) => {
+      if (h.length === 0) return h
+      setDrawings(h[h.length - 1])
+      return h.slice(0, -1)
+    })
+  }, [])
 
   const crossRef = useRef(onCross)
   crossRef.current = onCross
@@ -26,6 +46,7 @@ export function useDrawings(
   const addDrawing = useCallback(
     (symbol: string, price: number, color: string, alert: boolean) => {
       if (!Number.isFinite(price) || price <= 0) return
+      pushHistory()
       setDrawings((prev) => [
         ...prev,
         {
@@ -41,20 +62,32 @@ export function useDrawings(
         },
       ])
     },
-    [],
+    [pushHistory],
   )
 
-  const removeDrawing = useCallback((id: string) => {
-    setDrawings((prev) => prev.filter((d) => d.id !== id))
-  }, [])
+  const removeDrawing = useCallback(
+    (id: string) => {
+      pushHistory()
+      setDrawings((prev) => prev.filter((d) => d.id !== id))
+    },
+    [pushHistory],
+  )
 
-  const updateDrawing = useCallback((id: string, patch: Partial<Drawing>) => {
-    setDrawings((prev) => prev.map((d) => (d.id === id ? { ...d, ...patch } : d)))
-  }, [])
+  const updateDrawing = useCallback(
+    (id: string, patch: Partial<Drawing>) => {
+      pushHistory()
+      setDrawings((prev) => prev.map((d) => (d.id === id ? { ...d, ...patch } : d)))
+    },
+    [pushHistory],
+  )
 
-  const clearSymbol = useCallback((symbol: string) => {
-    setDrawings((prev) => prev.filter((d) => d.symbol !== symbol))
-  }, [])
+  const clearSymbol = useCallback(
+    (symbol: string) => {
+      pushHistory()
+      setDrawings((prev) => prev.filter((d) => d.symbol !== symbol))
+    },
+    [pushHistory],
+  )
 
   const checkPrice = useCallback((symbol: string, price: number) => {
     if (!Number.isFinite(price)) return
@@ -92,5 +125,14 @@ export function useDrawings(
     })
   }, [])
 
-  return { drawings, addDrawing, removeDrawing, updateDrawing, clearSymbol, checkPrice }
+  return {
+    drawings,
+    addDrawing,
+    removeDrawing,
+    updateDrawing,
+    clearSymbol,
+    checkPrice,
+    undo,
+    canUndo: history.length > 0,
+  }
 }

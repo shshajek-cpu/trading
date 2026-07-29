@@ -664,6 +664,12 @@ button.bell.on {
   display: none;
 }
 
+/* 분봉 드롭다운과 패널 컨트롤은 모바일 전용. */
+.interval-select,
+.pane-controls {
+  display: none;
+}
+
 .sheet-handle,
 .sheet-backdrop {
   display: none;
@@ -795,9 +801,127 @@ button.bell.on {
     font-size: 13px;
   }
 
+  /* 툴바를 차트 위에 얹어 차트가 화면 꼭대기부터 시작하게 한다. */
+  .chart-cell {
+    position: relative;
+  }
+
   .cell-bar {
-    flex-wrap: wrap;
-    row-gap: 4px;
+    position: absolute;
+    inset: 0 0 auto;
+    z-index: 5;
+    gap: 6px;
+    padding: 6px 8px;
+    border-bottom: none;
+    background: linear-gradient(rgb(10 10 10 / 82%), rgb(10 10 10 / 0%));
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+
+  /* 분봉 7개 나열은 숨기고 드롭다운으로 대체 — 한 줄을 통째로 아낀다. */
+  .intervals {
+    display: none;
+  }
+
+  .interval-select {
+    display: block;
+    position: relative;
+  }
+
+  /* 가격축 눈금과 겹쳐 읽히지 않는 것을 막는다. */
+  .price-block {
+    padding: 3px 7px;
+    border-radius: 8px;
+    background: rgb(10 10 10 / 88%);
+  }
+
+  .interval-current {
+    min-height: 32px;
+    padding: 4px 10px;
+    font-size: 12px;
+    font-weight: 600;
+  }
+
+  .interval-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 20;
+    padding: 0;
+    border: none;
+    border-radius: 0;
+    background: transparent;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+
+  .interval-menu {
+    position: absolute;
+    top: calc(100% + 4px);
+    left: 0;
+    z-index: 21;
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 4px;
+    width: 168px;
+    padding: 6px;
+    border: 1px solid var(--border-strong);
+    border-radius: 10px;
+    background: rgb(16 16 16 / 97%);
+  }
+
+  .interval-menu button {
+    min-height: 38px;
+    font-size: 12px;
+  }
+
+  .interval-menu button.active {
+    background: rgb(255 255 255 / 18%);
+    color: #fff;
+  }
+
+  /* 지표 패널별 접기/설정 — 해당 패널 왼쪽 위에 떠 있다. */
+  .pane-controls {
+    display: block;
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    z-index: 4;
+  }
+
+  .pane-ctl {
+    position: absolute;
+    left: 6px;
+    display: flex;
+    gap: 4px;
+    pointer-events: auto;
+  }
+
+  /* 패널은 아래에서부터 쌓는다 — MACD 가 막차, RSI 가 그 위. */
+  .pane-ctl[data-pane='rsi'] {
+    bottom: 34%;
+  }
+
+  .pane-ctl[data-pane='macd'] {
+    bottom: 8%;
+  }
+
+  .pane-ctl button {
+    min-width: 30px;
+    min-height: 30px;
+    padding: 0;
+    font-size: 13px;
+    line-height: 1;
+    background: rgb(20 20 20 / 88%);
+  }
+
+  .mobile-bar button:disabled {
+    opacity: 0.35;
+  }
+
+  /* 실행취소는 아이콘만이라 좀게. */
+  .mobile-bar button:last-child {
+    flex: 0 0 56px;
   }
 
   /* iOS 에서 입력할 때 화면이 확대되는 것을 막는다(16px 미만이면 확대됨). */

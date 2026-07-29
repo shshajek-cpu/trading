@@ -30,6 +30,9 @@ interface ChartCellProps {
   onSymbolChange: (symbol: string) => void
   onIntervalChange: (interval: Interval) => void
   onPrice: (symbol: string, price: number) => void
+  /** 모바일 패널 컨트롤 — 지표를 접거나 그 지표 설정을 열때. */
+  onToggleIndicator?: (which: 'rsi' | 'macd') => void
+  onOpenIndicatorSettings?: () => void
 }
 
 function formatPrice(value: number): string {
@@ -56,8 +59,11 @@ export function ChartCell({
   onSymbolChange,
   onIntervalChange,
   onPrice,
+  onToggleIndicator,
+  onOpenIndicatorSettings,
 }: ChartCellProps) {
   const [liveCandle, setLiveCandle] = useState<Candle | null>(null)
+  const [intervalOpen, setIntervalOpen] = useState(false)
   const ticker = useTicker24h(symbol)
   const { candles, loading, error, reload } = useBinanceKlines(symbol, interval)
 
@@ -124,6 +130,43 @@ export function ChartCell({
     [drawings, symbol],
   )
 
+  // 세로 스와이프로 종목 전환 — 손가락 하나로 옆 코인으로 넘어간다.
+  const swipeRef = useRef<{ x: number; y: number; t: number } | null>(null)
+
+  const onTouchStart = useCallback((e: React.TouchEvent) => {
+    if (e.touches.length !== 1) {
+      swipeRef.current = null
+      return
+    }
+    const t = e.touches[0]
+    swipeRef.current = { x: t.clientX, y: t.clientY, t: Date.now() }
+  }, [])
+
+  const onTouchEnd = useCallback(
+    (e: React.TouchEvent) => {
+      const start = swipeRef.current
+      swipeRef.current = null
+      if (!start || symbols.length === 0) return
+
+      const t = e.changedTouches[0]
+      const dy = t.clientY - start.y
+      const dx = t.clientX - start.x
+      // 빠르고, 충분히 수직이고, 가로로 거의 안 움직였을 때만 인정한다.
+      if (Date.now() - start.t > 600) return
+      if (Math.abs(dy) < 70 || Math.abs(dx) > Math.abs(dy) * 0.6) return
+
+      // 만기 있는 계약(BTCUSDT_260925 등)은 건너뛴다 — 쒸데없이 수십 개가 끼어든다.
+      const list = symbols.filter((s) => !s.includes('_'))
+      const i = list.indexOf(symbol)
+      if (i === -1) return
+      // 아래로 끌면 이전 종목, 위로 끌면 다음 종목.
+      const next = dy > 0 ? i - 1 : i + 1
+      if (next < 0 || next >= list.length) return
+      onSymbolChange(list[next])
+    },
+    [symbols, symbol, onSymbolChange],
+  )
+
   return (
     // 칸 어디를 눌러도 활성 칸이 되도록 하는 래퍼. 키보드 조작 대상이 아니라 온클릭만 둔다.
     // eslint-disable-next-line jsx-a11y/no-static-element-interactions, jsx-a11y/click-events-have-key-events
@@ -145,6 +188,42 @@ export function ChartCell({
                 {iv}
               </button>
             ))}
+          </div>
+
+          {/* 모바일: 분봉을 나열하지 않고 현재값 하나만 보이는 드롭다운으로. */}
+          <div className="interval-select">
+            <button
+              type="button"
+              className="interval-current"
+              onClick={() => setIntervalOpen((v) => !v)}
+            >
+              {interval} ⌄
+            </button>
+            {intervalOpen && (
+              <>
+                <button
+                  type="button"
+                  className="interval-backdrop"
+                  aria-label="닫기"
+                  onClick={() => setIntervalOpen(false)}
+                />
+                <div className="interval-menu">
+                  {INTERVALS.map((iv) => (
+                    <button
+                      key={iv}
+                      type="button"
+                      className={iv === interval ? 'active' : undefined}
+                      onClick={() => {
+                        onIntervalChange(iv)
+                        setIntervalOpen(false)
+                      }}
+                    >
+                      {iv}
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
           </div>
           <div className="price-block">
             <span
@@ -168,7 +247,7 @@ export function ChartCell({
         </div>
       )}
 
-      <div className="cell-chart">
+      <div className="cell-chart" onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}>
         <Chart
           key={seriesKey}
           candles={mergedCandles}
@@ -180,6 +259,32 @@ export function ChartCell({
           onDrawPrice={onDrawPrice}
           onMoveDrawing={onMoveDrawing}
         />
+        {/* 모바일: 지표 패널마다 접기/설정 — 트레이딩뷰처럼 차트 위에 얹는다. */}
+        {onToggleIndicator && (indicators.rsi.enabled || indicators.macd.enabled) && (
+          <div className="pane-controls">
+            {indicators.rsi.enabled && (
+              <div className="pane-ctl" data-pane="rsi">
+                <button type="button" title="RSI 접기" onClick={() => onToggleIndicator('rsi')}>
+                  ⌄
+                </button>
+                <button type="button" title="RSI 설정" onClick={onOpenIndicatorSettings}>
+                  ⛭
+                </button>
+              </div>
+            )}
+            {indicators.macd.enabled && (
+              <div className="pane-ctl" data-pane="macd">
+                <button type="button" title="MACD 접기" onClick={() => onToggleIndicator('macd')}>
+                  ⌄
+                </button>
+                <button type="button" title="MACD 설정" onClick={onOpenIndicatorSettings}>
+                  ⛭
+                </button>
+              </div>
+            )}
+          </div>
+        )}
+
         {loading && mergedCandles.length === 0 && <div className="overlay">불러오는 중…</div>}
         {error && (
           <div className="overlay error">

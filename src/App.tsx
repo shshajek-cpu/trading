@@ -85,6 +85,8 @@ function App() {
     updateDrawing,
     clearSymbol,
     checkPrice: checkDrawings,
+    undo,
+    canUndo,
   } = useDrawings(handleCross)
 
   // 선을 옮기면 교차 판정을 처음부터 다시 한다 — 옴긴 자리에서 다시 울리게.
@@ -177,6 +179,13 @@ function App() {
               onSymbolChange={(s) => setCellSymbol(i, s)}
               onIntervalChange={(iv) => setCellInterval(i, iv)}
               onPrice={handlePrice}
+              onToggleIndicator={(which) =>
+                setIndicators((prev) => ({
+                  ...prev,
+                  [which]: { ...prev[which], enabled: !prev[which].enabled },
+                }))
+              }
+              onOpenIndicatorSettings={() => setSheetOpen(true)}
             />
           ))}
         </main>
@@ -233,7 +242,10 @@ function App() {
           {drawMode ? '✓ 차트 탭' : '─ 수평선'}
         </button>
         <button type="button" onClick={() => setSheetOpen((v) => !v)}>
-          ⚙ 설정
+          〰 지표
+        </button>
+        <button type="button" disabled={!canUndo} onClick={undo} title="실행취소">
+          ↩
         </button>
       </div>
 
