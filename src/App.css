@@ -780,6 +780,8 @@ button.bell.on {
   margin-top: -5px;
   cursor: ns-resize;
   pointer-events: auto;
+  /* 브라우저가 터치를 스크롤로 가로채지 못하게 막는다 — 없으면 모바일에서 안 잡힌다. */
+  touch-action: none;
 }
 
 .draw-handle:hover::after,
@@ -957,10 +959,27 @@ button.bell.on {
     padding-bottom: calc(94px + env(safe-area-inset-bottom));
   }
 
-  /* 터치로 잡기 쉬우려면 잡이가 두툼워야 한다. */
+  /* 선은 없지만 손가락은 넣어야 한다 — 잡히는 범위만 넓힌다. */
   .draw-handle {
-    height: 22px;
-    margin-top: -11px;
+    height: 34px;
+    margin-top: -17px;
+  }
+
+  /* 잡는 자리를 연하게 보여준다 — 어디를 누를지 알게. */
+  .draw-handle::before {
+    content: '';
+    position: absolute;
+    right: 0;
+    top: 50%;
+    width: 26px;
+    height: 26px;
+    margin-top: -13px;
+    border-radius: 50%;
+    background: rgb(255 255 255 / 10%);
+  }
+
+  .draw-handle.dragging::before {
+    background: rgb(255 255 255 / 22%);
   }
 
   /* 모바일엔 미니창을 쓸 수 없다(브라우저 미지원). */

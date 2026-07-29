@@ -450,7 +450,7 @@ export function Chart({
       const options = {
         price: drag && drag.id === d.id ? drag.price : d.price,
         color: d.color,
-        lineWidth: 2 as const,
+        lineWidth: 1 as const,
         lineStyle: 0,
         axisLabelVisible: true,
         title: d.alert ? (d.fired ? '🔔 발동' : '🔔') : '',
@@ -515,6 +515,7 @@ export function Chart({
     const onPointerMove = (e: PointerEvent) => {
       const drag = dragRef.current
       if (!drag) return
+      e.preventDefault()
       const rect = layer.getBoundingClientRect()
       const price = series.coordinateToPrice(e.clientY - rect.top)
       if (price === null) return
