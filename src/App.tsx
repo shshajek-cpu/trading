@@ -12,6 +12,7 @@ import { useNotifications } from './hooks/useNotifications'
 import { useSymbols } from './hooks/useSymbols'
 import { usePipWindow } from './hooks/usePipWindow'
 import { useDrawings } from './hooks/useDrawings'
+import { useIsMobile } from './hooks/useIsMobile'
 import { DRAW_COLORS, type Drawing } from './lib/drawings'
 import type { Interval } from './lib/binance'
 import {
@@ -154,6 +155,7 @@ function App() {
   )
 
   const { layout, active, cells, splitCol, splitRow } = layoutState
+  const isMobile = useIsMobile()
 
   const pip = usePipWindow()
 
@@ -183,7 +185,9 @@ function App() {
     }))
   }, [])
 
-  const visibleCells = cells.slice(0, layout)
+  // 모바일에선 분할을 쌓아봐야 각각이 너무 작다 — 활성 칸 하나만 보여준다.
+  const effectiveLayout = isMobile ? 1 : layout
+  const visibleCells = isMobile ? [cells[active] ?? cells[0]] : cells.slice(0, layout)
   const activeSymbol = cells[active]?.symbol ?? 'BTCUSDT'
 
   return (
@@ -271,9 +275,9 @@ function App() {
 
         <main
           ref={gridRef}
-          className={`chart-grid grid-${layout}`}
+          className={`chart-grid grid-${effectiveLayout}`}
           style={
-            layout === 1
+            effectiveLayout === 1
               ? undefined
               : {
                   gridTemplateColumns: `${splitCol}fr 1px ${1 - splitCol}fr`,
@@ -287,9 +291,9 @@ function App() {
             <ChartCell
               key={i}
               gridStyle={
-                layout === 1
+                effectiveLayout === 1
                   ? undefined
-                  : layout === 2
+                  : effectiveLayout === 2
                     ? { gridColumn: i === 0 ? 1 : 3, gridRow: 1 }
                     : { gridColumn: i % 2 === 0 ? 1 : 3, gridRow: i < 2 ? 1 : 3 }
               }
@@ -305,11 +309,11 @@ function App() {
                 setDrawMode(false)
               }}
               onMoveDrawing={handleMoveDrawing}
-              active={layout > 1 && i === active}
+              active={effectiveLayout > 1 && i === active}
               showMiniBar
-              onActivate={() => setActive(i)}
-              onSymbolChange={(s) => setCellSymbol(i, s)}
-              onIntervalChange={(iv) => setCellInterval(i, iv)}
+              onActivate={() => setActive(isMobile ? active : i)}
+              onSymbolChange={(s) => setCellSymbol(isMobile ? active : i, s)}
+              onIntervalChange={(iv) => setCellInterval(isMobile ? active : i, iv)}
               onPrice={handlePrice}
               onToggleIndicator={(which) =>
                 setIndicators((prev) => ({
@@ -322,16 +326,16 @@ function App() {
           ))}
 
           {/* 칸 사이 경계 — 끌어서 크기를 바꿄다. */}
-          {layout > 1 && (
+          {effectiveLayout > 1 && (
             // eslint-disable-next-line jsx-a11y/no-static-element-interactions
             <div
               className="split-bar split-col"
-              style={{ gridColumn: 2, gridRow: layout === 4 ? '1 / -1' : 1 }}
+              style={{ gridColumn: 2, gridRow: effectiveLayout === 4 ? '1 / -1' : 1 }}
               onPointerDown={startSplitDrag('col')}
               onDoubleClick={resetSplit}
             />
           )}
-          {layout === 4 && (
+          {effectiveLayout === 4 && (
             // eslint-disable-next-line jsx-a11y/no-static-element-interactions
             <div
               className="split-bar split-row"
@@ -382,6 +386,22 @@ function App() {
           />
         </aside>
       </div>
+
+      {/* 모바일: 분할을 쌓는 대신 탭으로 골라 본다 */}
+      {layout > 1 && (
+        <div className="cell-tabs">
+          {cells.slice(0, layout).map((c, i) => (
+            <button
+              key={i}
+              type="button"
+              className={i === active ? 'active' : undefined}
+              onClick={() => setActive(i)}
+            >
+              {c.symbol.replace('USDT', '')}
+            </button>
+          ))}
+        </div>
+      )}
 
       {/* 모바일 전용 하단 버튼 — 데스크톱에서는 CSS 로 숨긴다 */}
       <div className="mobile-bar">

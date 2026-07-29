@@ -809,7 +809,8 @@ button.bell.on {
 }
 
 /* 모바일 하단 바 — 데스크톱에선 안 보인다. */
-.mobile-bar {
+.mobile-bar,
+.cell-tabs {
   display: none;
 }
 
@@ -948,6 +949,11 @@ button.bell.on {
     padding-bottom: calc(52px + env(safe-area-inset-bottom));
   }
 
+  /* 칸 탭이 있으면 그만큼 더 비운다. */
+  .app:has(.cell-tabs) .body {
+    padding-bottom: calc(94px + env(safe-area-inset-bottom));
+  }
+
   /* 터치로 잡기 쉬우려면 잡이가 두툼워야 한다. */
   .draw-handle {
     height: 22px;
@@ -1084,6 +1090,34 @@ button.bell.on {
 
   .mobile-bar button:disabled {
     opacity: 0.35;
+  }
+
+  /* 분할을 썰을 때 어느 차트를 볼지 고르는 탭. 하단바 바로 위에 붙는다. */
+  .cell-tabs {
+    display: flex;
+    position: fixed;
+    inset: auto 0 calc(52px + env(safe-area-inset-bottom));
+    z-index: 41;
+    gap: 4px;
+    padding: 5px 10px;
+    border-top: 1px solid var(--border);
+    background: rgb(10 10 10 / 92%);
+    backdrop-filter: var(--blur);
+    -webkit-backdrop-filter: var(--blur);
+  }
+
+  .cell-tabs button {
+    flex: 1;
+    min-height: 32px;
+    padding: 0 4px;
+    font-size: 11px;
+    font-weight: 600;
+  }
+
+  .cell-tabs button.active {
+    background: rgb(255 255 255 / 18%);
+    border-color: var(--border-strong);
+    color: #fff;
   }
 
   /* 실행취소는 아이콘만이라 좀게. */

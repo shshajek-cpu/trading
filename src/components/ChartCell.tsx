@@ -254,9 +254,12 @@ export function ChartCell({
         )}
 
         {loading && mergedCandles.length === 0 && <div className="overlay">불러오는 중…</div>}
-        {error && (
+        {/* 캐시된 추세가 이미 보이면 오류로 덮지 않는다 — 뒤에서 알아서 다시 받는다. */}
+        {error && mergedCandles.length === 0 && (
           <div className="overlay error">
-            데이터를 불러오지 못했습니다: {error.message}
+            {error.message === 'Failed to fetch'
+              ? '연결이 끊겼습니다. 네트워크를 확인해 주세요.'
+              : `데이터를 불러오지 못했습니다: ${error.message}`}
             <button type="button" onClick={() => void reload()}>
               다시 시도
             </button>
