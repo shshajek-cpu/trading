@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { LayoutMode } from '../lib/layoutConfig'
 
-export type PopoverId = 'indicators' | 'alerts' | 'drawings'
+export type PopoverId = 'indicators' | 'alerts' | 'drawings' | 'sync'
 
 interface ToolbarProps {
   layout: LayoutMode
@@ -95,6 +95,7 @@ export function Toolbar({
         {tab('indicators', '〜 지표')}
         {tab('drawings', '─ 선')}
         {tab('alerts', '🔔 알림', alertCount)}
+        {tab('sync', '⇅ 동기화')}
       </div>
 
       <div className="toolbar-gap" />

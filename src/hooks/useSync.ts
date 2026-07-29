@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { onSettingsChanged } from '../lib/syncBus'
 
 /** 동기화 대상 — 기기마다 달라야 하는 것(패널 접힘 등)은 넣지 않는다. */
 const SYNCED_KEYS = [
   'trading.layout.v1',
   'trading.indicators.v1',
   'trading.drawings.v1',
-  'trading.alerts.v1',
+  'trading.priceAlerts.v1',
   'trading.panes.v1',
 ]
 
@@ -108,17 +109,12 @@ export function useSync() {
       window.clearTimeout(timerRef.current)
       timerRef.current = window.setTimeout(() => void push(code), 2500)
     }
-    window.addEventListener('trading:settings-changed', onChange)
+    const off = onSettingsChanged(onChange)
     return () => {
-      window.removeEventListener('trading:settings-changed', onChange)
+      off()
       window.clearTimeout(timerRef.current)
     }
   }, [code, push])
 
   return { code, setCode, status, message, pull, push }
-}
-
-/** 설정을 바꾼 쪽에서 부르면 동기화가 예약된다. */
-export function notifySettingsChanged(): void {
-  window.dispatchEvent(new Event('trading:settings-changed'))
 }

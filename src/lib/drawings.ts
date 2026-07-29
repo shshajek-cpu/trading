@@ -1,3 +1,5 @@
+import { notifySettingsChanged } from './syncBus'
+
 export type DrawingKind = 'horizontal'
 
 export interface Drawing {
@@ -46,6 +48,7 @@ export function loadDrawings(): Drawing[] {
 export function saveDrawings(drawings: Drawing[]): void {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(drawings))
+    notifySettingsChanged()
   } catch {
     /* 저장 실패는 무시 */
   }

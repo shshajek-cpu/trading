@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { notifySettingsChanged } from '../lib/syncBus'
 
 export type AlertCondition = 'above' | 'below'
 
@@ -57,6 +58,7 @@ export function usePriceAlerts(
   useEffect(() => {
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(alerts))
+      notifySettingsChanged()
     } catch {
       /* 저장 실패(용량 초과 등)는 무시 — 메모리 상태는 유지된다. */
     }

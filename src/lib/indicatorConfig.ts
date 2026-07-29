@@ -1,4 +1,5 @@
 import { MA_PALETTE } from './theme'
+import { notifySettingsChanged } from './syncBus'
 
 export type MaType = 'sma' | 'ema'
 
@@ -85,6 +86,7 @@ export function loadIndicators(): IndicatorSettings {
 export function saveIndicators(settings: IndicatorSettings): void {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(settings))
+    notifySettingsChanged()
   } catch {
     /* 저장 실패는 무시 */
   }

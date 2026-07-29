@@ -1,4 +1,5 @@
 import type { Interval } from './binance'
+import { notifySettingsChanged } from './syncBus'
 
 export type LayoutMode = 1 | 2 | 4
 
@@ -71,6 +72,7 @@ export function loadLayout(): LayoutState {
 export function saveLayout(state: LayoutState): void {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state))
+    notifySettingsChanged()
   } catch {
     /* 저장 실패는 무시 */
   }
@@ -102,6 +104,7 @@ export function savePaneSizes(config: string, sizes: number[]): void {
     const all = raw ? (JSON.parse(raw) as Record<string, unknown>) : {}
     all[config] = sizes
     localStorage.setItem(PANE_KEY, JSON.stringify(all))
+    notifySettingsChanged()
   } catch {
     /* 저장 실패는 무시 */
   }

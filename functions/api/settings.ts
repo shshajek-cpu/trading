@@ -32,9 +32,9 @@ export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
   const code = readCode(request)
   if (!code) return bad('동기화 코드 형식이 올바르지 않습니다', 400)
 
+  // 저장된 모양 그대로 돌려준다: { at, data }
   const value = await env.SETTINGS.get(`s:${code}`)
-  if (value === null) return new Response('{}', { headers: JSON_HEADERS })
-  return new Response(value, { headers: JSON_HEADERS })
+  return new Response(value ?? '{}', { headers: JSON_HEADERS })
 }
 
 export const onRequestPut: PagesFunction<Env> = async ({ request, env }) => {

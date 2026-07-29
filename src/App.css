@@ -868,13 +868,16 @@ button.bell.on {
     inset: auto 0 0;
     z-index: 40;
     max-height: 78dvh;
-    padding-bottom: calc(56px + env(safe-area-inset-bottom));
+    padding: 0 14px calc(56px + env(safe-area-inset-bottom));
     border-left: none;
     border-top: 1px solid var(--border-strong);
     border-radius: 16px 16px 0 0;
     background: rgb(12 12 12 / 96%);
     transform: translateY(100%);
     transition: transform 0.22s ease;
+    /* 내용이 화면보다 길다 — 시트 안에서 스크롤되어야 아래 항목에 닿는다. */
+    overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
     overscroll-behavior: contain;
   }
 
@@ -1130,4 +1133,64 @@ button.bell.on {
   select {
     font-size: 16px;
   }
+}
+
+/* ── 기기 간 동기화 ── */
+.sync-code-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.sync-code {
+  flex: 1;
+  padding: 7px 9px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: rgb(255 255 255 / 6%);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 13px;
+  letter-spacing: 0.06em;
+  user-select: all;
+}
+
+.sync-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.sync-actions button {
+  flex: 1;
+}
+
+.sync-status {
+  margin-top: 8px;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.sync-status.error {
+  color: var(--down);
+}
+
+.sync-status.syncing {
+  color: var(--text);
+}
+
+.sync-off,
+.sync-new {
+  width: 100%;
+  margin-top: 8px;
+}
+
+.sync-join {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.sync-join input {
+  flex: 1;
+  min-width: 0;
 }

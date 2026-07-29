@@ -13,6 +13,8 @@ import { useSymbols } from './hooks/useSymbols'
 import { usePipWindow } from './hooks/usePipWindow'
 import { useDrawings } from './hooks/useDrawings'
 import { useIsMobile } from './hooks/useIsMobile'
+import { useSync } from './hooks/useSync'
+import { SyncPanel } from './components/SyncPanel'
 import { DRAW_COLORS, type Drawing } from './lib/drawings'
 import type { Interval } from './lib/binance'
 import {
@@ -156,6 +158,7 @@ function App() {
 
   const { layout, active, cells, splitCol, splitRow } = layoutState
   const isMobile = useIsMobile()
+  const sync = useSync()
 
   const pip = usePipWindow()
 
@@ -228,6 +231,16 @@ function App() {
             permission={permission}
             onAdd={addAlert}
             onRemove={removeAlert}
+          />
+        )}
+        {popover === 'sync' && (
+          <SyncPanel
+            code={sync.code}
+            status={sync.status}
+            message={sync.message}
+            onSetCode={sync.setCode}
+            onPull={sync.pull}
+            onPush={sync.push}
           />
         )}
       </Toolbar>
@@ -383,6 +396,14 @@ function App() {
             permission={permission}
             onAdd={addAlert}
             onRemove={removeAlert}
+          />
+          <SyncPanel
+            code={sync.code}
+            status={sync.status}
+            message={sync.message}
+            onSetCode={sync.setCode}
+            onPull={sync.pull}
+            onPush={sync.push}
           />
         </aside>
       </div>
