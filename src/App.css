@@ -659,28 +659,150 @@ button.bell.on {
   min-width: 0;
 }
 
-/* ── 좁은 화면 ── */
+/* 모바일 하단 바 — 데스크톱에선 안 보인다. */
+.mobile-bar {
+  display: none;
+}
+
+.sheet-handle,
+.sheet-backdrop {
+  display: none;
+}
+
+/* ── 모바일 ── */
 @media (width <= 900px) {
-  .body {
-    flex-direction: column;
+  /* 주소창이 숨었다 나타나도 높이가 틀어지지 않게 실제 보이는 높이를 쓴다. */
+  .app {
+    height: 100dvh;
   }
 
   .chart-grid {
-    flex: 1 1 60%;
+    flex: 1 1 auto;
   }
 
-  /* 모바일에서는 분할을 세로 스택으로 */
+  /* 분할은 세로 스택으로 */
   .chart-grid.grid-2,
   .chart-grid.grid-4 {
     grid-template-columns: 1fr;
     grid-template-rows: none;
-    grid-auto-rows: minmax(220px, 1fr);
+    grid-auto-rows: minmax(200px, 1fr);
   }
 
+  /* 설정은 평소엔 내려가 있다가 버튼을 누를 때만 올라온다. */
   .settings-panel {
-    flex: 0 0 auto;
-    max-height: 40%;
+    position: fixed;
+    inset: auto 0 0;
+    z-index: 40;
+    max-height: 78dvh;
+    padding-bottom: calc(56px + env(safe-area-inset-bottom));
     border-left: none;
+    border-top: 1px solid var(--border-strong);
+    border-radius: 16px 16px 0 0;
+    background: rgb(12 12 12 / 96%);
+    transform: translateY(100%);
+    transition: transform 0.22s ease;
+    overscroll-behavior: contain;
+  }
+
+  .settings-panel.open {
+    transform: translateY(0);
+  }
+
+  .sheet-backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 39;
+    padding: 0;
+    border: none;
+    border-radius: 0;
+    background: rgb(0 0 0 / 55%);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+
+  /* 시트 상단의 잡이 — 눌러서 닫는다. */
+  .sheet-handle {
+    display: flex;
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    justify-content: center;
+    width: 100%;
+    padding: 10px 0 6px;
+    border: none;
+    border-radius: 0;
+    background: transparent;
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+
+  .sheet-handle span {
+    width: 40px;
+    height: 4px;
+    border-radius: 2px;
+    background: var(--border-strong);
+  }
+
+  .mobile-bar {
+    display: flex;
+    position: fixed;
+    inset: auto 0 0;
+    z-index: 41;
+    gap: 8px;
+    padding: 8px 10px calc(8px + env(safe-area-inset-bottom));
     border-top: 1px solid var(--border);
+    background: rgb(10 10 10 / 92%);
+    backdrop-filter: var(--blur);
+    -webkit-backdrop-filter: var(--blur);
+  }
+
+  .mobile-bar button {
+    flex: 1;
+    /* 손가락으로 누를 만큼 키운다. */
+    min-height: 44px;
+    font-size: 13px;
+  }
+
+  .mobile-bar button.active {
+    background: rgb(255 255 255 / 18%);
+    border-color: var(--border-strong);
+    color: #fff;
+  }
+
+  /* 하단 바에 차트가 가려지지 않게 자리를 비운다. */
+  .body {
+    padding-bottom: calc(52px + env(safe-area-inset-bottom));
+  }
+
+  /* 터치로 잡기 쉬우려면 잡이가 두툼워야 한다. */
+  .draw-handle {
+    height: 22px;
+    margin-top: -11px;
+  }
+
+  /* 모바일엔 미니창을 쓸 수 없다(브라우저 미지원). */
+  .pip-button {
+    display: none;
+  }
+
+  /* 헤더를 줄여 차트에 화면을 더 준다. */
+  .toolbar {
+    padding: 6px 10px;
+  }
+
+  .toolbar h1 {
+    font-size: 13px;
+  }
+
+  .cell-bar {
+    flex-wrap: wrap;
+    row-gap: 4px;
+  }
+
+  /* iOS 에서 입력할 때 화면이 확대되는 것을 막는다(16px 미만이면 확대됨). */
+  input,
+  select {
+    font-size: 16px;
   }
 }

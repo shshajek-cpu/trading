@@ -95,6 +95,9 @@ function App() {
     [updateDrawing],
   )
 
+  // 모바일에서는 설정 패널을 기본으로 숨기고 시트로 올린다.
+  const [sheetOpen, setSheetOpen] = useState(false)
+
   const [drawMode, setDrawMode] = useState(false)
   const [drawColor, setDrawColor] = useState<string>(DRAW_COLORS[0])
   const [drawAlert, setDrawAlert] = useState(true)
@@ -178,7 +181,20 @@ function App() {
           ))}
         </main>
 
-        <aside className="settings-panel">
+        {/* 모바일: 시트가 열렸을 때 뒤배경을 눌러 닫는다 */}
+        {sheetOpen && (
+          <button
+            type="button"
+            className="sheet-backdrop"
+            aria-label="설정 닫기"
+            onClick={() => setSheetOpen(false)}
+          />
+        )}
+
+        <aside className={`settings-panel${sheetOpen ? ' open' : ''}`}>
+          <button type="button" className="sheet-handle" onClick={() => setSheetOpen(false)}>
+            <span />
+          </button>
           <DrawingPanel
             symbol={activeSymbol}
             drawings={drawings}
@@ -202,6 +218,23 @@ function App() {
             onRemove={removeAlert}
           />
         </aside>
+      </div>
+
+      {/* 모바일 전용 하단 버튼 — 데스크톱에서는 CSS 로 숨긴다 */}
+      <div className="mobile-bar">
+        <button
+          type="button"
+          className={drawMode ? 'active' : undefined}
+          onClick={() => {
+            setDrawMode((v) => !v)
+            setSheetOpen(false)
+          }}
+        >
+          {drawMode ? '✓ 차트 탭' : '─ 수평선'}
+        </button>
+        <button type="button" onClick={() => setSheetOpen((v) => !v)}>
+          ⚙ 설정
+        </button>
       </div>
 
       <Toasts toasts={toasts} onDismiss={dismissToast} />
