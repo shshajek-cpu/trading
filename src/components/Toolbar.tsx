@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import type { LayoutMode } from '../lib/layoutConfig'
 
-export type PopoverId = 'indicators' | 'alerts' | 'drawings' | 'sync' | 'watchlist'
+export type PopoverId = 'indicators' | 'alerts' | 'drawings' | 'sync' | 'watchlist' | 'mtf'
 
 interface ToolbarProps {
   layout: LayoutMode
@@ -93,6 +93,7 @@ export function Toolbar({
 
       <div className="toolbar-tabs" ref={tabsRef}>
         {tab('watchlist', '☰ 종목')}
+        {tab('mtf', '⧉ 시간대')}
         {tab('indicators', '〜 지표')}
         {tab('drawings', '─ 선')}
         {tab('alerts', '🔔 알림', alertCount)}

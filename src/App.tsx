@@ -17,6 +17,7 @@ import { useSync } from './hooks/useSync'
 import { usePushAlerts } from './hooks/usePushAlerts'
 import { useWatchlist } from './hooks/useWatchlist'
 import { Watchlist } from './components/Watchlist'
+import { MtfPanel } from './components/MtfPanel'
 import { SyncPanel } from './components/SyncPanel'
 import { DRAW_COLORS, type Drawing } from './lib/drawings'
 import type { Interval } from './lib/binance'
@@ -27,6 +28,7 @@ import {
 } from './lib/indicatorConfig'
 import {
   clampSplit,
+  DEFAULT_LAYOUT,
   loadLayout,
   saveLayout,
   type LayoutMode,
@@ -186,6 +188,19 @@ function App() {
     }))
   }, [])
 
+  /** 활성 칸의 종목을 4칸에 그대로 복사하고 주기만 다르게 건다. */
+  const applyMtf = useCallback((intervals: Interval[]) => {
+    setLayoutState((prev) => {
+      const symbol = prev.cells[prev.active]?.symbol ?? DEFAULT_LAYOUT.cells[0].symbol
+      return {
+        ...prev,
+        layout: 4,
+        active: 0,
+        cells: prev.cells.map((c, i) => (intervals[i] ? { symbol, interval: intervals[i] } : c)),
+      }
+    })
+  }, [])
+
   const setCellInterval = useCallback((index: number, interval: Interval) => {
     setLayoutState((prev) => ({
       ...prev,
@@ -210,6 +225,16 @@ function App() {
         onOpenChange={setPopover}
         alertCount={alerts.filter((a) => a.active).length + drawings.filter((d) => d.alert).length}
       >
+        {popover === 'mtf' && (
+          <MtfPanel
+            symbol={activeSymbol}
+            current={cells.slice(0, 4).map((c) => c.interval)}
+            onApply={(ivs) => {
+              applyMtf(ivs)
+              setPopover(null)
+            }}
+          />
+        )}
         {popover === 'watchlist' && (
           <Watchlist
             symbols={watchlist.symbols}

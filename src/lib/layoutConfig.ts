@@ -32,6 +32,13 @@ export const DEFAULT_LAYOUT: LayoutState = {
   splitRow: 0.5,
 }
 
+/** 다중 시간대 프리셋. 한 종목을 여러 주기로 동시에 본다. */
+export const MTF_PRESETS: { id: string; label: string; intervals: Interval[] }[] = [
+  { id: 'scalp', label: '단타 1m·5m·15m·1h', intervals: ['1m', '5m', '15m', '1h'] },
+  { id: 'swing', label: '스윙 15m·1h·4h·1d', intervals: ['15m', '1h', '4h', '1d'] },
+  { id: 'wide', label: '넓게 5m·1h·4h·1d', intervals: ['5m', '1h', '4h', '1d'] },
+]
+
 /** 칸이 너무 짜불어져 쓸모없어지지 않게 범위를 제한한다. */
 export function clampSplit(value: number): number {
   return Math.min(0.8, Math.max(0.2, value))
