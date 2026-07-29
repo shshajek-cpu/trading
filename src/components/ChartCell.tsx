@@ -8,6 +8,8 @@ import type { Candle, Interval } from '../lib/binance'
 import type { IndicatorSettings } from '../lib/indicatorConfig'
 import type { PriceAlert } from '../hooks/usePriceAlerts'
 import type { Drawing } from '../lib/drawings'
+import type { Pin } from '../lib/pins'
+import { computeFeatures, MIN_HISTORY, type FeatureSet } from '../lib/features'
 import { COLORS } from '../lib/theme'
 
 const INTERVALS: Interval[] = ['1m', '5m', '15m', '1h', '4h', '1d']
@@ -23,6 +25,13 @@ interface ChartCellProps {
   drawings: Drawing[]
   drawMode: boolean
   onDrawPrice: (price: number) => void
+  /** 핀 모드와 이 칸에 찍힌 핀들. */
+  pinMode: boolean
+  pins: Pin[]
+  onAddPin: (input: { time: number; price: number; features: FeatureSet }) => void
+  onPinFail: (reason: string) => void
+  /** 이 칸이 활성일 때, 맨 끝 시점의 지표를 위로 올려준다. */
+  onLiveFeatures?: (f: FeatureSet | null) => void
   onMoveDrawing: (id: string, price: number) => void
   active: boolean
   showMiniBar: boolean
@@ -54,6 +63,11 @@ export function ChartCell({
   drawings,
   drawMode,
   onDrawPrice,
+  pinMode,
+  pins,
+  onAddPin,
+  onPinFail,
+  onLiveFeatures,
   onMoveDrawing,
   active,
   showMiniBar,
@@ -123,6 +137,41 @@ export function ChartCell({
     if (liveCandle.time === last.time) return [...candles.slice(0, -1), liveCandle]
     return [...candles, liveCandle]
   }, [candles, liveCandle])
+
+  // 핀을 찍은 캔들의 지표를 그 시점 기준으로 계산한다.
+  const handlePinPoint = useCallback(
+    (time: number, price: number) => {
+      const index = mergedCandles.findIndex((c) => c.time === time)
+      if (index < 0) {
+        onPinFail('캔들을 찾지 못했습니다.')
+        return
+      }
+      if (index < MIN_HISTORY) {
+        onPinFail(`지표를 계산하려면 앞쪽 캔들이 ${MIN_HISTORY}개 이상 필요합니다. 왼쪽으로 밀어 과거를 더 불러오세요.`)
+        return
+      }
+      const features = computeFeatures(mergedCandles, index)
+      if (!features) {
+        onPinFail('이 지점은 지표를 계산할 수 없습니다.')
+        return
+      }
+      onAddPin({ time, price, features })
+    },
+    [mergedCandles, onAddPin, onPinFail],
+  )
+
+  // 맨 끝 캔들 기준 지표. 매 틱마다 돌리면 무거우니 캔들 수가 바뀔 때만 계산한다.
+  const candleCount = mergedCandles.length
+  useEffect(() => {
+    if (!onLiveFeatures) return
+    if (candleCount <= MIN_HISTORY) {
+      onLiveFeatures(null)
+      return
+    }
+    onLiveFeatures(computeFeatures(mergedCandles, candleCount - 1))
+    // mergedCandles 는 틱마다 새 배열이 된다 — 길이로만 다시 계산한다.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [candleCount, symbol, interval, onLiveFeatures])
 
   const livePrice = mergedCandles.length > 0 ? mergedCandles[mergedCandles.length - 1].close : null
   const changePercent = ticker?.priceChangePercent ?? null
@@ -227,6 +276,9 @@ export function ChartCell({
           alerts={symbolAlerts}
           drawings={symbolDrawings}
           drawMode={drawMode}
+          pinMode={pinMode}
+          pins={pins}
+          onPinPoint={handlePinPoint}
           onDrawPrice={onDrawPrice}
           onMoveDrawing={onMoveDrawing}
           onReachStart={() => void loadOlder()}

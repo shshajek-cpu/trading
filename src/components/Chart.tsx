@@ -5,9 +5,11 @@ import {
   HistogramSeries,
   LineSeries,
   createChart,
+  createSeriesMarkers,
   type IChartApi,
   type IPriceLine,
   type ISeriesApi,
+  type ISeriesMarkersPluginApi,
   type LineData,
   type MouseEventParams,
   type Time,
@@ -20,6 +22,7 @@ import type { PriceAlert } from '../hooks/usePriceAlerts'
 import { loadPaneSizes, savePaneSizes } from '../lib/layoutConfig'
 import type { Drawing } from '../lib/drawings'
 import { COLORS } from '../lib/theme'
+import { SIDE_COLORS, type Pin } from '../lib/pins'
 
 interface ChartProps {
   candles: Candle[]
@@ -34,6 +37,11 @@ interface ChartProps {
   onMoveDrawing: (id: string, price: number) => void
   /** 왼쪽 끝에 닿으면 과거를 더 불러오기 위해 불린다. */
   onReachStart?: () => void
+  /** 핀 모드일 때 클릭한 캔들의 시각·가격을 돌려준다. */
+  pinMode: boolean
+  onPinPoint: (time: number, price: number) => void
+  /** 이 차트(심볼·주기)에 찍힌 핀들. */
+  pins: Pin[]
 }
 
 const INTERVAL_SECONDS: Record<Interval, number> = {
@@ -72,6 +80,9 @@ export function Chart({
   alerts,
   drawings,
   drawMode,
+  pinMode,
+  onPinPoint,
+  pins,
   onDrawPrice,
   onMoveDrawing,
   onReachStart,
@@ -95,6 +106,9 @@ export function Chart({
   reachStartRef.current = onReachStart
   const onDrawPriceRef = useRef(onDrawPrice)
   onDrawPriceRef.current = onDrawPrice
+  const onPinPointRef = useRef(onPinPoint)
+  onPinPointRef.current = onPinPoint
+  const markersRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null)
   const onMoveDrawingRef = useRef(onMoveDrawing)
   onMoveDrawingRef.current = onMoveDrawing
   const handleLayerRef = useRef<HTMLDivElement>(null)
@@ -567,10 +581,45 @@ export function Chart({
     return () => chart.unsubscribeClick(handler)
   }, [drawMode])
 
+  // 핀 모드: 클릭한 캔들의 시각과 가격을 넘긴다.
+  useEffect(() => {
+    const chart = chartRef.current
+    const series = candleSeriesRef.current
+    if (!chart || !series || !pinMode) return
+
+    const handler = (param: MouseEventParams<Time>) => {
+      if (!param.point || param.time === undefined) return
+      const price = series.coordinateToPrice(param.point.y)
+      if (price === null) return
+      onPinPointRef.current(Number(param.time), price)
+    }
+    chart.subscribeClick(handler)
+    return () => chart.unsubscribeClick(handler)
+  }, [pinMode])
+
+  // 찍힌 핀을 캔들 위 마커로 그린다.
+  useEffect(() => {
+    const series = candleSeriesRef.current
+    if (!series) return
+    if (!markersRef.current) markersRef.current = createSeriesMarkers(series, [])
+    markersRef.current.setMarkers(
+      [...pins]
+        .sort((a, b) => a.time - b.time)
+        .map((pin) => ({
+          time: pin.time as Time,
+          position: pin.side === 'short' ? ('aboveBar' as const) : ('belowBar' as const),
+          color: SIDE_COLORS[pin.side],
+          shape:
+            pin.side === 'short' ? ('arrowDown' as const) : pin.side === 'long' ? ('arrowUp' as const) : ('circle' as const),
+          text: pin.side === 'skip' ? '' : undefined,
+        })),
+    )
+  }, [pins])
+
   return (
     <div
       style={{ position: 'relative', width: '100%', height: '100%' }}
-      className={drawMode ? 'draw-mode' : undefined}
+      className={drawMode || pinMode ? 'draw-mode' : undefined}
     >
       <div ref={containerRef} style={{ width: '100%', height: '100%' }} />
       <div ref={handleLayerRef} className="draw-handles" />

@@ -1394,3 +1394,223 @@ button.bell.on {
   font-style: normal;
   color: var(--text-dim);
 }
+
+/* ── 매매 핀 ── */
+.pin-tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 9px;
+}
+
+.pin-tabs button {
+  flex: 1;
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: none;
+  font-size: 12px;
+}
+
+.pin-tabs button.active {
+  border-color: var(--border-strong);
+  background: rgb(255 255 255 / 8%);
+  color: var(--text);
+}
+
+.pin-tabs em {
+  margin-left: 4px;
+  font-style: normal;
+  font-size: 10px;
+  color: var(--text-dim);
+}
+
+.pin-toggle {
+  width: 100%;
+  padding: 9px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: none;
+  font-size: 12px;
+}
+
+.pin-toggle.on {
+  border-color: #26a69a;
+  color: #26a69a;
+}
+
+.pin-sides {
+  display: flex;
+  gap: 4px;
+  margin: 6px 0;
+}
+
+.pin-sides button {
+  flex: 1;
+  padding: 7px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: none;
+  font-size: 12px;
+}
+
+.pin-counts {
+  display: flex;
+  gap: 10px;
+  margin: 8px 0 4px;
+  font-size: 11px;
+}
+
+.pin-list {
+  list-style: none;
+  max-height: 210px;
+  overflow-y: auto;
+}
+
+.pin-list li {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 2px;
+  border-bottom: 1px solid var(--border);
+  font-size: 11px;
+}
+
+.pin-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.pin-meta {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pin-meta em {
+  margin-left: 5px;
+  font-style: normal;
+  color: var(--text-dim);
+}
+
+.pin-rsi {
+  color: var(--text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.pin-del {
+  border: none;
+  background: none;
+  color: var(--text-dim);
+  padding: 2px 4px;
+}
+
+.pin-clear {
+  width: 100%;
+  margin-top: 8px;
+  padding: 6px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: none;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.pin-score {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 9px 10px;
+  margin-bottom: 9px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+}
+
+.pin-score-title {
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.pin-score-val {
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.pin-rule {
+  margin-bottom: 11px;
+}
+
+.pin-rule h3 {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  font-size: 12px;
+  margin-bottom: 5px;
+}
+
+.pin-rule h3 em {
+  font-style: normal;
+  font-size: 10px;
+  color: var(--text-dim);
+}
+
+.pin-rule ul {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.pin-rule li {
+  padding: 4px 7px;
+  border-radius: 5px;
+  background: rgb(255 255 255 / 5%);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.pin-rule .warn {
+  margin-top: 5px;
+  font-size: 10px;
+  color: #ef9a9a;
+}
+
+.pin-now summary {
+  font-size: 11px;
+  color: var(--text-dim);
+  cursor: pointer;
+  padding: 5px 0;
+}
+
+.pin-now ul {
+  list-style: none;
+}
+
+.pin-now li {
+  display: flex;
+  justify-content: space-between;
+  padding: 3px 0;
+  font-size: 11px;
+  border-bottom: 1px solid var(--border);
+}
+
+.pin-now b {
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+}
+
+.pin-rule li {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.pin-rule li em {
+  flex-shrink: 0;
+  font-style: normal;
+  color: var(--text-dim);
+  font-size: 10px;
+}

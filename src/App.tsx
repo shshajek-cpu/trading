@@ -18,6 +18,10 @@ import { usePushAlerts } from './hooks/usePushAlerts'
 import { useWatchlist } from './hooks/useWatchlist'
 import { Watchlist } from './components/Watchlist'
 import { MtfPanel } from './components/MtfPanel'
+import { PinPanel } from './components/PinPanel'
+import { usePins } from './hooks/usePins'
+import type { PinSide } from './lib/pins'
+import type { FeatureSet } from './lib/features'
 import { SyncPanel } from './components/SyncPanel'
 import { DRAW_COLORS, type Drawing } from './lib/drawings'
 import type { Interval } from './lib/binance'
@@ -149,6 +153,9 @@ function App() {
   }, [])
 
   const [drawMode, setDrawMode] = useState(false)
+  const [pinMode, setPinMode] = useState(false)
+  const [pinSide, setPinSide] = useState<PinSide>('long')
+  const [liveFeatures, setLiveFeatures] = useState<FeatureSet | null>(null)
   const [drawColor, setDrawColor] = useState<string>(DRAW_COLORS[0])
   const [drawAlert, setDrawAlert] = useState(true)
 
@@ -166,6 +173,7 @@ function App() {
   const sync = useSync()
   const push = usePushAlerts(sync.code, alerts)
   const watchlist = useWatchlist()
+  const pinStore = usePins()
 
   const pip = usePipWindow()
 
@@ -225,6 +233,22 @@ function App() {
         onOpenChange={setPopover}
         alertCount={alerts.filter((a) => a.active).length + drawings.filter((d) => d.alert).length}
       >
+        {popover === 'pins' && (
+          <PinPanel
+            pins={pinStore.pins}
+            pinMode={pinMode}
+            pinSide={pinSide}
+            onPinModeChange={(on) => {
+              setPinMode(on)
+              if (on) setDrawMode(false)
+            }}
+            onPinSideChange={setPinSide}
+            onRemove={pinStore.remove}
+            onClear={pinStore.clear}
+            liveFeatures={liveFeatures}
+            symbol={activeSymbol}
+          />
+        )}
         {popover === 'mtf' && (
           <MtfPanel
             symbol={activeSymbol}
@@ -367,6 +391,22 @@ function App() {
                 addDrawing(cell.symbol, price, drawColor, drawAlert)
                 setDrawMode(false)
               }}
+              pinMode={pinMode && i === active}
+              pins={pinStore.pins.filter(
+                (pn) => pn.symbol === cell.symbol && pn.interval === cell.interval,
+              )}
+              onAddPin={({ time, price, features }) => {
+                pinStore.add({
+                  symbol: cell.symbol,
+                  interval: cell.interval,
+                  time,
+                  price,
+                  side: pinSide,
+                  features,
+                })
+              }}
+              onPinFail={(reason) => pushToast(reason)}
+              onLiveFeatures={i === active ? setLiveFeatures : undefined}
               onMoveDrawing={handleMoveDrawing}
               active={effectiveLayout > 1 && i === active}
               showMiniBar
@@ -432,6 +472,23 @@ function App() {
             }}
             onAdd={watchlist.add}
             onRemove={watchlist.remove}
+          />
+          <PinPanel
+            pins={pinStore.pins}
+            pinMode={pinMode}
+            pinSide={pinSide}
+            onPinModeChange={(on) => {
+              setPinMode(on)
+              if (on) {
+                setDrawMode(false)
+                setSheetOpen(false)
+              }
+            }}
+            onPinSideChange={setPinSide}
+            onRemove={pinStore.remove}
+            onClear={pinStore.clear}
+            liveFeatures={liveFeatures}
+            symbol={activeSymbol}
           />
           <DrawingPanel
             symbol={activeSymbol}
@@ -520,6 +577,13 @@ function App() {
             drawMode={false}
             onDrawPrice={() => {}}
             onMoveDrawing={handleMoveDrawing}
+            pinMode={false}
+            pins={pinStore.pins.filter(
+              (pn) =>
+                pn.symbol === cells[active].symbol && pn.interval === cells[active].interval,
+            )}
+            onAddPin={() => {}}
+            onPinFail={() => {}}
             active={false}
             showMiniBar
             onActivate={() => {}}
