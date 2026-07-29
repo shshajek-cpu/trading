@@ -11,6 +11,9 @@ export interface LayoutState {
   layout: LayoutMode
   active: number
   cells: CellConfig[]
+  /** 칸 나누는 비율 0~1. 2분할은 col 만, 4분할은 col·row 둘 다 쓴다. */
+  splitCol: number
+  splitRow: number
 }
 
 const STORAGE_KEY = 'trading.layout.v1'
@@ -24,6 +27,13 @@ export const DEFAULT_LAYOUT: LayoutState = {
     { symbol: 'SOLUSDT', interval: '1m' },
     { symbol: 'XRPUSDT', interval: '1m' },
   ],
+  splitCol: 0.5,
+  splitRow: 0.5,
+}
+
+/** 칸이 너무 짜불어져 쓸모없어지지 않게 범위를 제한한다. */
+export function clampSplit(value: number): number {
+  return Math.min(0.8, Math.max(0.2, value))
 }
 
 function isCell(value: unknown): value is CellConfig {
@@ -45,7 +55,14 @@ export function loadLayout(): LayoutState {
       typeof parsed.active === 'number' && parsed.active >= 0 && parsed.active < layout
         ? parsed.active
         : 0
-    return { layout, active, cells: filled }
+    const split = (v: unknown) => (typeof v === 'number' ? clampSplit(v) : 0.5)
+    return {
+      layout,
+      active,
+      cells: filled,
+      splitCol: split(parsed.splitCol),
+      splitRow: split(parsed.splitRow),
+    }
   } catch {
     return DEFAULT_LAYOUT
   }

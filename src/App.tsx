@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import './App.css'
 import { ChartCell } from './components/ChartCell'
@@ -20,6 +20,7 @@ import {
   type IndicatorSettings,
 } from './lib/indicatorConfig'
 import {
+  clampSplit,
   loadLayout,
   saveLayout,
   type LayoutMode,
@@ -100,6 +101,59 @@ function App() {
   // 모바일에서는 설정 패널을 기본으로 숨기고 시트로 올린다.
   const [sheetOpen, setSheetOpen] = useState(false)
 
+  // 데스크톱: 우측 패널을 접어 차트를 넓힌다.
+  const [panelOpen, setPanelOpen] = useState(() => {
+    try {
+      return localStorage.getItem('trading.panelOpen') !== '0'
+    } catch {
+      return true
+    }
+  })
+
+  useEffect(() => {
+    try {
+      localStorage.setItem('trading.panelOpen', panelOpen ? '1' : '0')
+    } catch {
+      /* 저장 실패는 무시 */
+    }
+  }, [panelOpen])
+
+  // 칸 경계 끌기 — 방향별로 비율을 고친다.
+  const gridRef = useRef<HTMLElement>(null)
+
+  const startSplitDrag = useCallback(
+    (axis: 'col' | 'row') => (e: React.PointerEvent) => {
+      e.preventDefault()
+      const grid = gridRef.current
+      if (!grid) return
+      const target = e.currentTarget as HTMLElement
+      target.setPointerCapture(e.pointerId)
+      grid.classList.add('resizing')
+
+      const move = (ev: PointerEvent) => {
+        const r = grid.getBoundingClientRect()
+        const ratio =
+          axis === 'col' ? (ev.clientX - r.left) / r.width : (ev.clientY - r.top) / r.height
+        setLayoutState((prev) => ({
+          ...prev,
+          [axis === 'col' ? 'splitCol' : 'splitRow']: clampSplit(ratio),
+        }))
+      }
+      const up = () => {
+        grid.classList.remove('resizing')
+        target.removeEventListener('pointermove', move)
+        target.removeEventListener('pointerup', up)
+      }
+      target.addEventListener('pointermove', move)
+      target.addEventListener('pointerup', up)
+    },
+    [],
+  )
+
+  const resetSplit = useCallback(() => {
+    setLayoutState((prev) => ({ ...prev, splitCol: 0.5, splitRow: 0.5 }))
+  }, [])
+
   const [drawMode, setDrawMode] = useState(false)
   const [drawColor, setDrawColor] = useState<string>(DRAW_COLORS[0])
   const [drawAlert, setDrawAlert] = useState(true)
@@ -113,7 +167,7 @@ function App() {
     [checkPrice, checkDrawings],
   )
 
-  const { layout, active, cells } = layoutState
+  const { layout, active, cells, splitCol, splitRow } = layoutState
 
   const pip = usePipWindow()
 
@@ -157,10 +211,78 @@ function App() {
       />
 
       <div className="body">
-        <main className={`chart-grid grid-${layout}`}>
+        {/* 좌측 도구 레일 — 자주 쓰는 것을 바로 닿게 한다(데스크톱 전용). */}
+        <nav className="tool-rail">
+          <button
+            type="button"
+            className={drawMode ? 'active' : undefined}
+            title="수평선 그리기"
+            onClick={() => setDrawMode((v) => !v)}
+          >
+            ─
+          </button>
+          <div className="rail-swatches">
+            {DRAW_COLORS.map((c) => (
+              <button
+                key={c}
+                type="button"
+                className={`swatch${c === drawColor ? ' active' : ''}`}
+                style={{ background: c }}
+                title={`선 색상 ${c}`}
+                onClick={() => setDrawColor(c)}
+              />
+            ))}
+          </div>
+          <button type="button" disabled={!canUndo} title="실행취소" onClick={undo}>
+            ↩
+          </button>
+          <button
+            type="button"
+            title={`${activeSymbol} 선 모두 지우기`}
+            onClick={() => clearSymbol(activeSymbol)}
+          >
+            🗑
+          </button>
+          <div className="rail-gap" />
+          {layout > 1 && (
+            <button type="button" title="칸 크기 균등하게" onClick={resetSplit}>
+              ⧉
+            </button>
+          )}
+          <button
+            type="button"
+            className={panelOpen ? 'active' : undefined}
+            title={panelOpen ? '우측 패널 접기' : '우측 패널 열기'}
+            onClick={() => setPanelOpen((v) => !v)}
+          >
+            {panelOpen ? '›' : '‹'}
+          </button>
+        </nav>
+
+        <main
+          ref={gridRef}
+          className={`chart-grid grid-${layout}`}
+          style={
+            layout === 1
+              ? undefined
+              : {
+                  gridTemplateColumns: `${splitCol}fr 1px ${1 - splitCol}fr`,
+                  ...(layout === 4
+                    ? { gridTemplateRows: `${splitRow}fr 1px ${1 - splitRow}fr` }
+                    : {}),
+                }
+          }
+        >
           {visibleCells.map((cell, i) => (
             <ChartCell
               key={i}
+              gridStyle={
+                layout === 1
+                  ? undefined
+                  : layout === 2
+                    ? { gridColumn: i === 0 ? 1 : 3, gridRow: 1 }
+                    : { gridColumn: i % 2 === 0 ? 1 : 3, gridRow: i < 2 ? 1 : 3 }
+              }
               symbol={cell.symbol}
               interval={cell.interval}
               symbols={symbols}
@@ -188,6 +310,26 @@ function App() {
               onOpenIndicatorSettings={() => setSheetOpen(true)}
             />
           ))}
+
+          {/* 칸 사이 경계 — 끌어서 크기를 바꿄다. */}
+          {layout > 1 && (
+            // eslint-disable-next-line jsx-a11y/no-static-element-interactions
+            <div
+              className="split-bar split-col"
+              style={{ gridColumn: 2, gridRow: layout === 4 ? '1 / -1' : 1 }}
+              onPointerDown={startSplitDrag('col')}
+              onDoubleClick={resetSplit}
+            />
+          )}
+          {layout === 4 && (
+            // eslint-disable-next-line jsx-a11y/no-static-element-interactions
+            <div
+              className="split-bar split-row"
+              style={{ gridColumn: '1 / -1', gridRow: 2 }}
+              onPointerDown={startSplitDrag('row')}
+              onDoubleClick={resetSplit}
+            />
+          )}
         </main>
 
         {/* 모바일: 시트가 열렸을 때 뒤배경을 눌러 닫는다 */}
@@ -200,7 +342,9 @@ function App() {
           />
         )}
 
-        <aside className={`settings-panel${sheetOpen ? ' open' : ''}`}>
+        <aside
+          className={`settings-panel${sheetOpen ? ' open' : ''}${panelOpen ? '' : ' collapsed'}`}
+        >
           <button type="button" className="sheet-handle" onClick={() => setSheetOpen(false)}>
             <span />
           </button>

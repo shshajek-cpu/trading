@@ -220,12 +220,113 @@
 }
 
 .chart-grid.grid-2 {
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: 1fr 1px 1fr;
 }
 
 .chart-grid.grid-4 {
+  grid-template-columns: 1fr 1px 1fr;
+  grid-template-rows: 1fr 1px 1fr;
+}
+
+/* 칸 경계 — 선은 1px 이지만 잡는 면적은 넘겨서 넣는다. */
+.split-bar {
+  position: relative;
+  z-index: 6;
+  background: var(--border);
+}
+
+.split-bar::after {
+  content: '';
+  position: absolute;
+}
+
+.split-col {
+  cursor: col-resize;
+}
+
+.split-col::after {
+  inset: 0 -4px;
+}
+
+.split-row {
+  cursor: row-resize;
+}
+
+.split-row::after {
+  inset: -4px 0;
+}
+
+.split-bar:hover,
+.chart-grid.resizing .split-bar {
+  background: var(--accent);
+}
+
+/* 끌고 있는 동안엔 차트가 마우스를 가로채지 않게 한다. */
+.chart-grid.resizing .chart-cell {
+  pointer-events: none;
+}
+
+.chart-grid.resizing {
+  user-select: none;
+}
+
+/* ── 좌측 도구 레일 ── */
+.tool-rail {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  width: 44px;
+  padding: 8px 0;
+  border-right: 1px solid var(--border);
+  background: var(--glass);
+  backdrop-filter: var(--blur);
+  -webkit-backdrop-filter: var(--blur);
+}
+
+.tool-rail button {
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  font-size: 14px;
+  line-height: 1;
+}
+
+.tool-rail button.active {
+  background: rgb(255 255 255 / 18%);
+  border-color: var(--border-strong);
+  color: #fff;
+}
+
+.tool-rail button:disabled {
+  opacity: 0.3;
+}
+
+.rail-swatches {
+  display: grid;
   grid-template-columns: 1fr 1fr;
-  grid-template-rows: 1fr 1fr;
+  gap: 3px;
+  padding: 4px 0;
+}
+
+.rail-swatches .swatch {
+  width: 13px;
+  height: 13px;
+}
+
+.rail-gap {
+  flex: 1 1 auto;
+}
+
+/* 접으면 폭만 주고 내용은 숨긴다 — 차트가 그만큼 넓어진다. */
+.settings-panel.collapsed {
+  flex-basis: 0;
+  width: 0;
+  min-width: 0;
+  padding: 0;
+  border-left: none;
+  overflow: hidden;
 }
 
 .chart-cell {
@@ -686,12 +787,23 @@ button.bell.on {
     flex: 1 1 auto;
   }
 
-  /* 분할은 세로 스택으로 */
+  /* 분할은 세로 스택으로 — 경계 끌기는 손가락으론 불편하니 안 쓴다. */
   .chart-grid.grid-2,
   .chart-grid.grid-4 {
-    grid-template-columns: 1fr;
-    grid-template-rows: none;
+    grid-template-columns: 1fr !important;
+    grid-template-rows: none !important;
     grid-auto-rows: minmax(200px, 1fr);
+  }
+
+  /* 모바일에선 칸이 세로로 쌓이므로 자리 지정을 무효화한다. */
+  .chart-cell {
+    grid-column: auto !important;
+    grid-row: auto !important;
+  }
+
+  .split-bar,
+  .tool-rail {
+    display: none;
   }
 
   /* 설정은 평소엔 내려가 있다가 버튼을 누를 때만 올라온다. */

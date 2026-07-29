@@ -33,6 +33,8 @@ interface ChartCellProps {
   /** 모바일 패널 컨트롤 — 지표를 접거나 그 지표 설정을 열때. */
   onToggleIndicator?: (which: 'rsi' | 'macd') => void
   onOpenIndicatorSettings?: () => void
+  /** 분할 그리드에서 이 칸이 차지할 자리. */
+  gridStyle?: React.CSSProperties
 }
 
 function formatPrice(value: number): string {
@@ -61,6 +63,7 @@ export function ChartCell({
   onPrice,
   onToggleIndicator,
   onOpenIndicatorSettings,
+  gridStyle,
 }: ChartCellProps) {
   const [liveCandle, setLiveCandle] = useState<Candle | null>(null)
   const [intervalOpen, setIntervalOpen] = useState(false)
@@ -172,6 +175,7 @@ export function ChartCell({
     // eslint-disable-next-line jsx-a11y/no-static-element-interactions, jsx-a11y/click-events-have-key-events
     <section
       className={`chart-cell${active ? ' active' : ''}`}
+      style={gridStyle}
       onMouseDownCapture={onActivate}
     >
       {showMiniBar && (
