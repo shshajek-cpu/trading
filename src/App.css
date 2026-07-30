@@ -1086,10 +1086,16 @@ button.bell.on {
 
   .pane-ctl {
     position: absolute;
-    left: 6px;
+    /* 지표선은 왼쪽에서 자라므로 오른쪽 끝(가격축 옆)이 가장 덜 가린다. */
+    right: 4px;
     display: flex;
-    gap: 4px;
+    gap: 2px;
     pointer-events: auto;
+    opacity: 0.5;
+  }
+
+  .pane-ctl:active {
+    opacity: 1;
   }
 
   /* 패널은 아래에서부터 쌓는다 — MACD 가 막차, RSI 가 그 위. */
@@ -1101,13 +1107,15 @@ button.bell.on {
     bottom: 8%;
   }
 
+  /* 보이는 크기는 작게 두되 손가락이 닿는 범위는 44px 로 넓힌다. */
   .pane-ctl button {
-    min-width: 30px;
-    min-height: 30px;
+    min-width: 44px;
+    min-height: 44px;
     padding: 0;
-    font-size: 13px;
+    border: none;
+    font-size: 15px;
     line-height: 1;
-    background: rgb(20 20 20 / 88%);
+    background: rgb(20 20 20 / 55%);
   }
 
   .mobile-bar button:disabled {
@@ -1885,4 +1893,75 @@ button.bell.on {
   width: 8px;
   height: 8px;
   border-radius: 2px;
+}
+
+/* ── 모바일 바텀시트 탭 ── */
+.sheet-tabs {
+  display: flex;
+  gap: 4px;
+  padding: 0 4px 10px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.sheet-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.sheet-tabs button {
+  flex: 1 0 auto;
+  min-height: 44px;
+  padding: 0 14px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: none;
+  color: var(--text-dim);
+  font-size: 13px;
+  white-space: nowrap;
+}
+
+.sheet-tabs button.active {
+  border-color: var(--border-strong);
+  background: rgb(255 255 255 / 8%);
+  color: var(--text);
+  font-weight: 600;
+}
+
+/* ── 모바일 터치 최소 44px ── */
+@media (width <= 900px) {
+  /* 지우기·색상칩처럼 작은 표적은 보이는 크기는 두고 닿는 범위만 넓힌다. */
+  /* 지우기 표적은 보이는 크기는 두고 닿는 범위만 넓힌다. */
+  .watch-del,
+  .alert-list .remove,
+  .draw-opts .remove {
+    min-width: 44px;
+    min-height: 44px;
+  }
+
+  .watch-rows li {
+    min-height: 44px;
+  }
+
+  /* 색 고르는 칩 — 20px 로는 엄지로 못 짚는다. */
+  .swatches button,
+  .draw-dot {
+    min-width: 36px;
+    min-height: 36px;
+  }
+
+  .symbol-button,
+  .interval-current,
+  .layout-switch button {
+    min-height: 44px;
+  }
+
+  .pin-sides button,
+  .pin-tabs button,
+  .field input,
+  .alert-form input,
+  .alert-form select,
+  .alert-form button,
+  .clear-all {
+    min-height: 44px;
+  }
 }

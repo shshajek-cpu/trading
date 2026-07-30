@@ -43,6 +43,18 @@ import {
 
 const TOAST_MS = 6000
 
+/** 모바일 바텀시트는 한 번에 한 묶음만 보여준다 — 전부 쌓으면 지표가 화면 밖으로 밀린다. */
+type SheetSection = 'watchlist' | 'pins' | 'drawings' | 'indicators' | 'alerts' | 'sync'
+
+const SHEET_TABS: { id: SheetSection; label: string }[] = [
+  { id: 'indicators', label: '지표' },
+  { id: 'drawings', label: '선' },
+  { id: 'watchlist', label: '종목' },
+  { id: 'pins', label: '핀' },
+  { id: 'alerts', label: '알림' },
+  { id: 'sync', label: '동기화' },
+]
+
 function App() {
   const [layoutState, setLayoutState] = useState<LayoutState>(loadLayout)
   const [indicators, setIndicators] = useState<IndicatorSettings>(loadIndicators)
@@ -114,6 +126,12 @@ function App() {
 
   // 모바일에서는 설정 패널을 기본으로 숨기고 시트로 올린다.
   const [sheetOpen, setSheetOpen] = useState(false)
+  const [sheetSection, setSheetSection] = useState<SheetSection>('indicators')
+
+  const openSheet = useCallback((section: SheetSection) => {
+    setSheetSection(section)
+    setSheetOpen(true)
+  }, [])
 
   // 상단바 팭오버 — 우측 사이드바를 없애고 이걸로 대체했다.
   const [popover, setPopover] = useState<PopoverId | null>(null)
@@ -430,7 +448,7 @@ function App() {
                   [which]: { ...prev[which], enabled: !prev[which].enabled },
                 }))
               }
-              onOpenIndicatorSettings={() => setSheetOpen(true)}
+              onOpenIndicatorSettings={() => openSheet('indicators')}
             />
           ))}
 
@@ -471,6 +489,19 @@ function App() {
           <button type="button" className="sheet-handle" onClick={() => setSheetOpen(false)}>
             <span />
           </button>
+          <div className="sheet-tabs">
+            {SHEET_TABS.map((t) => (
+              <button
+                key={t.id}
+                type="button"
+                className={t.id === sheetSection ? 'active' : undefined}
+                onClick={() => setSheetSection(t.id)}
+              >
+                {t.label}
+              </button>
+            ))}
+          </div>
+          {sheetSection === 'watchlist' && (
           <Watchlist
             symbols={watchlist.symbols}
             rows={watchlist.rows}
@@ -483,6 +514,8 @@ function App() {
             onAdd={watchlist.add}
             onRemove={watchlist.remove}
           />
+          )}
+          {sheetSection === 'pins' && (
           <PinPanel
             pins={pinStore.pins}
             pinMode={pinMode}
@@ -500,6 +533,8 @@ function App() {
             liveFeatures={liveFeatures}
             symbol={activeSymbol}
           />
+          )}
+          {sheetSection === 'drawings' && (
           <DrawingPanel
             symbol={activeSymbol}
             drawings={drawings}
@@ -514,7 +549,11 @@ function App() {
             onUpdate={updateDrawing}
             onClear={() => clearSymbol(activeSymbol)}
           />
-          <IndicatorPanel settings={indicators} onChange={setIndicators} />
+          )}
+          {sheetSection === 'indicators' && (
+            <IndicatorPanel settings={indicators} onChange={setIndicators} />
+          )}
+          {sheetSection === 'alerts' && (
           <AlertPanel
             symbol={activeSymbol}
             alerts={alerts}
@@ -525,6 +564,8 @@ function App() {
             hasSyncCode={Boolean(sync.code)}
             onCreateSyncCode={() => sync.setCode(randomCode())}
           />
+          )}
+          {sheetSection === 'sync' && (
           <SyncPanel
             code={sync.code}
             status={sync.status}
@@ -533,6 +574,7 @@ function App() {
             onPull={sync.pull}
             onPush={sync.push}
           />
+          )}
         </aside>
       </div>
 
@@ -562,9 +604,13 @@ function App() {
             setSheetOpen(false)
           }}
         >
-          {drawMode ? '✓ 차트 탭' : '─ 수평선'}
+          ─ 수평선
         </button>
-        <button type="button" onClick={() => setSheetOpen((v) => !v)}>
+        <button
+          type="button"
+          className={sheetOpen ? 'active' : undefined}
+          onClick={() => (sheetOpen ? setSheetOpen(false) : openSheet('indicators'))}
+        >
           〰 지표
         </button>
         <button type="button" disabled={!canUndo} onClick={undo} title="실행취소">
