@@ -78,6 +78,7 @@ export function IndicatorPanel({ settings, onChange }: IndicatorPanelProps) {
           <select value={newType} onChange={(e) => setNewType(e.target.value as MaType)}>
             <option value="sma">SMA</option>
             <option value="ema">EMA</option>
+            <option value="vwma">VWMA</option>
           </select>
           <input
             type="number"
@@ -156,14 +157,78 @@ export function IndicatorPanel({ settings, onChange }: IndicatorPanelProps) {
         ))}
       </div>
 
-      <div className="vol-legend">
-        거래량 급증
-        {(Object.keys(VOLUME_TIER_COLORS) as unknown as (1 | 2 | 3)[]).map((t) => (
-          <span key={t}>
-            <i style={{ background: VOLUME_TIER_COLORS[t] }} />
-            {VOLUME_TIER_LABELS[t]}
-          </span>
-        ))}
+      <div className="panel-group">
+        <h3>
+          <label>
+            <input
+              type="checkbox"
+              checked={settings.volumeSurge.enabled}
+              onChange={(e) =>
+                onChange({
+                  ...settings,
+                  volumeSurge: { ...settings.volumeSurge, enabled: e.target.checked },
+                })
+              }
+            />
+            거래량 급증
+          </label>
+        </h3>
+        {settings.volumeSurge.enabled && (
+          <>
+            <div className="vol-legend">
+              {([
+                [1, 'low'],
+                [2, 'mid'],
+                [3, 'high'],
+              ] as const).map(([tier, key]) => (
+                <span key={tier}>
+                  <i style={{ background: VOLUME_TIER_COLORS[tier] }} />
+                  {VOLUME_TIER_LABELS[tier]}
+                  <b>{settings.volumeSurge[key]}배</b>
+                </span>
+              ))}
+            </div>
+            <p className="hint">평균 대비 몇 배부터 표시할지</p>
+            {([
+              ['low', '보통'],
+              ['mid', '강함'],
+              ['high', '폭발'],
+            ] as const).map(([key, label]) => (
+              <label className="field" key={key}>
+                {label}
+                <input
+                  type="number"
+                  min={1.1}
+                  max={50}
+                  step={0.5}
+                  value={settings.volumeSurge[key]}
+                  onChange={(e) => {
+                    const value = Number(e.target.value)
+                    if (!Number.isFinite(value) || value <= 1) return
+                    const next = { ...settings.volumeSurge, [key]: value }
+                    // 단계가 뒤집히면 색이 뒤엉킨다.
+                    if (!(next.low < next.mid && next.mid < next.high)) return
+                    onChange({ ...settings, volumeSurge: next })
+                  }}
+                />
+              </label>
+            ))}
+            <label className="field">
+              평균 구간
+              <input
+                type="number"
+                min={5}
+                max={200}
+                value={settings.volumeSurge.window}
+                onChange={(e) => {
+                  const value = Number(e.target.value)
+                  if (!Number.isInteger(value) || value < 5 || value > 200) return
+                  onChange({ ...settings, volumeSurge: { ...settings.volumeSurge, window: value } })
+                }}
+              />
+            </label>
+          </>
+        )}
       </div>
     </section>
   )

@@ -4,7 +4,7 @@ import { onSettingsChanged } from '../lib/syncBus'
 /** 동기화 대상 — 기기마다 달라야 하는 것(패널 접힘 등)은 넣지 않는다. */
 const SYNCED_KEYS = [
   'trading.layout.v1',
-  'trading.indicators.v1',
+  'trading.indicators.v2',
   'trading.drawings.v1',
   'trading.priceAlerts.v1',
   'trading.panes.v1',

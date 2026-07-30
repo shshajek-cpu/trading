@@ -21,6 +21,7 @@ import {
   macd,
   rsi,
   sma,
+  vwma,
   volumeTiers,
   VOLUME_TIER_COLORS,
   type LinePoint,
@@ -229,10 +230,15 @@ export function Chart({
       })),
     )
     // 거래량이 갑자기 터진 봉만 형광색으로 눈에 띄게 한다.
-    const tiers = volumeTiers(candles.map((c) => c.volume))
+    const surge = indicators.volumeSurge
+    const tiers = surge.enabled
+      ? volumeTiers(candles.map((c) => c.volume), surge.window, surge)
+      : null
     volumeSeries.setData(
       candles.map((c, i) => {
-        const tier = tiers[i]
+        const tier = tiers ? tiers[i] : 0
+        // 급증봉이 있을 땐 평범한 봉을 더 죽여 대비를 키운다.
+        const dim = tiers ? '45' : '80'
         return {
           time: asTime(c.time),
           value: c.volume,
@@ -240,8 +246,8 @@ export function Chart({
             tier > 0
               ? VOLUME_TIER_COLORS[tier as 1 | 2 | 3]
               : c.close >= c.open
-                ? `${COLORS.up}80`
-                : `${COLORS.down}80`,
+                ? `${COLORS.up}${dim}`
+                : `${COLORS.down}${dim}`,
         }
       }),
     )
@@ -261,7 +267,7 @@ export function Chart({
       chartRef.current?.timeScale().fitContent()
       fittedRef.current = true
     }
-  }, [candles])
+  }, [candles, indicators.volumeSurge])
 
   // 패널 높이 — 저장된 비율을 복원하고, 사용자가 경계를 끌면 저장한다.
   useEffect(() => {
@@ -357,7 +363,7 @@ export function Chart({
       } else {
         series.applyOptions({ color: config.color })
       }
-      const calc = config.type === 'ema' ? ema : sma
+      const calc = config.type === 'ema' ? ema : config.type === 'vwma' ? vwma : sma
       series.setData(toLineData(calc(candles, config.period)))
     }
   }, [candles, indicators.mas])

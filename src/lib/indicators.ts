@@ -9,6 +9,11 @@ export interface Candle<T = Time> {
   close: number
 }
 
+/** VWMA 는 거래량이 있어야 계산된다. */
+export interface VolumeCandle<T = Time> extends Candle<T> {
+  volume: number
+}
+
 export interface LinePoint<T = Time> {
   time: T
   value: number
@@ -29,6 +34,35 @@ export function sma<T>(candles: Candle<T>[], period: number): LinePoint<T>[] {
     sum += candles[i].close
     if (i >= period) sum -= candles[i - period].close
     if (i >= period - 1) out.push({ time: candles[i].time, value: sum / period })
+  }
+  return out
+}
+
+/**
+ * 거래량 가중 이동평균(VWMA).
+ *
+ * 그냥 평균은 모든 봉을 똑같이 취급하지만, 이건 거래량이 많았던 봉의 가격에
+ * 더 무게를 준다. 사람이 많이 붙은 가격이 진짜 가격에 가깝다는 생각이다.
+ */
+export function vwma<T>(candles: VolumeCandle<T>[], period: number): LinePoint<T>[] {
+  if (!Number.isFinite(period) || period < 1 || candles.length < period) return []
+
+  const out: LinePoint<T>[] = []
+  let pv = 0
+  let vol = 0
+  for (let i = 0; i < candles.length; i++) {
+    pv += candles[i].close * candles[i].volume
+    vol += candles[i].volume
+    if (i >= period) {
+      pv -= candles[i - period].close * candles[i - period].volume
+      vol -= candles[i - period].volume
+    }
+    // 거래량이 0인 구간은 나눌 수 없다 — 단순 평균으로 물러선다.
+    if (i >= period - 1) {
+      const window = candles.slice(i - period + 1, i + 1)
+      const value = vol > 0 ? pv / vol : window.reduce((a, c) => a + c.close, 0) / period
+      out.push({ time: candles[i].time, value })
+    }
   }
   return out
 }
@@ -126,15 +160,15 @@ export type VolumeTier = 0 | 1 | 2 | 3
 
 /** 단계별 형광색. 평범한 봉은 기존 초록·빨강을 그대로 쓴다. */
 export const VOLUME_TIER_COLORS: Record<Exclude<VolumeTier, 0>, string> = {
-  1: '#ffe14d',
-  2: '#ff9500',
-  3: '#ff2ec4',
+  1: '#fff23d',
+  2: '#ff8a00',
+  3: '#ff17d4',
 }
 
 export const VOLUME_TIER_LABELS: Record<Exclude<VolumeTier, 0>, string> = {
-  1: '2배',
-  2: '3배',
-  3: '5배 이상',
+  1: '보통',
+  2: '강함',
+  3: '폭발',
 }
 
 /**
@@ -146,7 +180,11 @@ export const VOLUME_TIER_LABELS: Record<Exclude<VolumeTier, 0>, string> = {
  * 평균은 **자기 자신을 뺀** 직전 20봉으로 낸다. 급증한 봉이 평균에 섞이면
  * 스스로를 희석해 배율이 낮게 나온다.
  */
-export function volumeTiers(volumes: number[], window = 20): VolumeTier[] {
+export function volumeTiers(
+  volumes: number[],
+  window = 20,
+  thresholds: { low: number; mid: number; high: number } = { low: 2, mid: 3, high: 5 },
+): VolumeTier[] {
   const out: VolumeTier[] = new Array(volumes.length).fill(0)
   if (volumes.length <= window) return out
 
@@ -156,8 +194,8 @@ export function volumeTiers(volumes: number[], window = 20): VolumeTier[] {
   for (let i = window; i < volumes.length; i++) {
     const avg = sum / window
     if (avg > 0) {
-      const ratio = volumes[i] / avg
-      out[i] = ratio >= 5 ? 3 : ratio >= 3 ? 2 : ratio >= 2 ? 1 : 0
+      const r = volumes[i] / avg
+      out[i] = r >= thresholds.high ? 3 : r >= thresholds.mid ? 2 : r >= thresholds.low ? 1 : 0
     }
     // 창을 한 칸 밀어 자기 자신은 항상 평균에서 제외한다.
     sum += volumes[i] - volumes[i - window]

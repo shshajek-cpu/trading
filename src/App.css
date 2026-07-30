@@ -1864,10 +1864,15 @@ button.bell.on {
 .vol-legend {
   display: flex;
   align-items: center;
-  gap: 9px;
-  margin-top: 9px;
+  gap: 11px;
+  margin: 4px 0 8px;
   font-size: 10px;
   color: var(--text-dim);
+}
+
+.vol-legend b {
+  color: var(--text);
+  font-weight: 600;
 }
 
 .vol-legend span {
