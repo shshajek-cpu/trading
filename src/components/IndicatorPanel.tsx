@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { VOLUME_TIER_COLORS, VOLUME_TIER_LABELS } from '../lib/indicators'
 import {
   nextMaColor,
   type IndicatorSettings,
@@ -152,6 +153,16 @@ export function IndicatorPanel({ settings, onChange }: IndicatorPanelProps) {
               }}
             />
           </label>
+        ))}
+      </div>
+
+      <div className="vol-legend">
+        거래량 급증
+        {(Object.keys(VOLUME_TIER_COLORS) as unknown as (1 | 2 | 3)[]).map((t) => (
+          <span key={t}>
+            <i style={{ background: VOLUME_TIER_COLORS[t] }} />
+            {VOLUME_TIER_LABELS[t]}
+          </span>
         ))}
       </div>
     </section>

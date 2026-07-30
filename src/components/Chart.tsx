@@ -16,7 +16,15 @@ import {
   type UTCTimestamp,
 } from 'lightweight-charts'
 import type { Candle, Interval } from '../lib/binance'
-import { ema, macd, rsi, sma, type LinePoint } from '../lib/indicators'
+import {
+  ema,
+  macd,
+  rsi,
+  sma,
+  volumeTiers,
+  VOLUME_TIER_COLORS,
+  type LinePoint,
+} from '../lib/indicators'
 import type { IndicatorSettings } from '../lib/indicatorConfig'
 import type { PriceAlert } from '../hooks/usePriceAlerts'
 import { loadPaneSizes, savePaneSizes } from '../lib/layoutConfig'
@@ -220,12 +228,22 @@ export function Chart({
         close: c.close,
       })),
     )
+    // 거래량이 갑자기 터진 봉만 형광색으로 눈에 띄게 한다.
+    const tiers = volumeTiers(candles.map((c) => c.volume))
     volumeSeries.setData(
-      candles.map((c) => ({
-        time: asTime(c.time),
-        value: c.volume,
-        color: c.close >= c.open ? `${COLORS.up}80` : `${COLORS.down}80`,
-      })),
+      candles.map((c, i) => {
+        const tier = tiers[i]
+        return {
+          time: asTime(c.time),
+          value: c.volume,
+          color:
+            tier > 0
+              ? VOLUME_TIER_COLORS[tier as 1 | 2 | 3]
+              : c.close >= c.open
+                ? `${COLORS.up}80`
+                : `${COLORS.down}80`,
+        }
+      }),
     )
 
     lastCandleRef.current = candles[candles.length - 1]

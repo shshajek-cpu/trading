@@ -1793,3 +1793,91 @@ button.bell.on {
   color: #26a69a;
   background: rgb(38 166 154 / 14%);
 }
+
+/* ── 백그라운드 알림 안내 ── */
+.push-box {
+  padding: 10px 11px;
+  margin-bottom: 10px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+}
+
+.push-box.on {
+  border-color: #26a69a;
+}
+
+.push-title {
+  font-size: 12px;
+  font-weight: 600;
+  margin-bottom: 3px;
+}
+
+.push-box.on .push-title {
+  color: #26a69a;
+}
+
+.push-desc {
+  font-size: 11px;
+  color: var(--text-dim);
+  line-height: 1.45;
+  margin-bottom: 8px;
+}
+
+.push-on {
+  width: 100%;
+  padding: 9px;
+  border: 1px solid #26a69a;
+  border-radius: 7px;
+  background: rgb(38 166 154 / 14%);
+  color: #26a69a;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.push-on:disabled {
+  opacity: 0.55;
+}
+
+.push-off {
+  padding: 5px 11px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: none;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.push-warn {
+  margin-top: 7px;
+  font-size: 10px;
+  line-height: 1.45;
+  color: #e0b34d;
+}
+
+.push-msg {
+  margin-top: 7px;
+  font-size: 10px;
+  color: var(--text-dim);
+}
+
+/* ── 거래량 급증 범례 ── */
+.vol-legend {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-top: 9px;
+  font-size: 10px;
+  color: var(--text-dim);
+}
+
+.vol-legend span {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+
+.vol-legend i {
+  width: 8px;
+  height: 8px;
+  border-radius: 2px;
+}

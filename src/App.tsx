@@ -22,6 +22,7 @@ import { PinPanel } from './components/PinPanel'
 import { DiscoverPanel } from './components/DiscoverPanel'
 import { usePins } from './hooks/usePins'
 import type { PinSide } from './lib/pins'
+import { randomCode } from './lib/syncCode'
 import type { FeatureSet } from './lib/features'
 import { SyncPanel } from './components/SyncPanel'
 import { DRAW_COLORS, type Drawing } from './lib/drawings'
@@ -309,6 +310,7 @@ function App() {
             onRemove={removeAlert}
             push={push}
             hasSyncCode={Boolean(sync.code)}
+            onCreateSyncCode={() => sync.setCode(randomCode())}
           />
         )}
         {popover === 'sync' && (
@@ -521,6 +523,7 @@ function App() {
             onRemove={removeAlert}
             push={push}
             hasSyncCode={Boolean(sync.code)}
+            onCreateSyncCode={() => sync.setCode(randomCode())}
           />
           <SyncPanel
             code={sync.code}

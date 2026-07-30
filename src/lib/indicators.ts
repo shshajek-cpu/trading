@@ -120,3 +120,47 @@ export function macd<T>(
 
   return { macd: macdLine, signal: signalLine, histogram }
 }
+
+/** 거래량 급증 단계. 0 은 평범, 1~3 은 세기. */
+export type VolumeTier = 0 | 1 | 2 | 3
+
+/** 단계별 형광색. 평범한 봉은 기존 초록·빨강을 그대로 쓴다. */
+export const VOLUME_TIER_COLORS: Record<Exclude<VolumeTier, 0>, string> = {
+  1: '#ffe14d',
+  2: '#ff9500',
+  3: '#ff2ec4',
+}
+
+export const VOLUME_TIER_LABELS: Record<Exclude<VolumeTier, 0>, string> = {
+  1: '2배',
+  2: '3배',
+  3: '5배 이상',
+}
+
+/**
+ * 각 봉의 거래량이 직전 평균의 몇 배인지 재서 단계를 매긴다.
+ *
+ * 고정 기준을 쓸 수 없다 — 종목마다 거래량 단위가 전혀 다르다. 그래서 자기
+ * 직전 구간과 비교한 배율로 판단한다.
+ *
+ * 평균은 **자기 자신을 뺀** 직전 20봉으로 낸다. 급증한 봉이 평균에 섞이면
+ * 스스로를 희석해 배율이 낮게 나온다.
+ */
+export function volumeTiers(volumes: number[], window = 20): VolumeTier[] {
+  const out: VolumeTier[] = new Array(volumes.length).fill(0)
+  if (volumes.length <= window) return out
+
+  let sum = 0
+  for (let i = 0; i < window; i++) sum += volumes[i]
+
+  for (let i = window; i < volumes.length; i++) {
+    const avg = sum / window
+    if (avg > 0) {
+      const ratio = volumes[i] / avg
+      out[i] = ratio >= 5 ? 3 : ratio >= 3 ? 2 : ratio >= 2 ? 1 : 0
+    }
+    // 창을 한 칸 밀어 자기 자신은 항상 평균에서 제외한다.
+    sum += volumes[i] - volumes[i - window]
+  }
+  return out
+}
