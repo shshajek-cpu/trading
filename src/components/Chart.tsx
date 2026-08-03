@@ -51,6 +51,8 @@ interface ChartProps {
   onPinPoint: (time: number, price: number) => void
   /** 이 차트(심볼·주기)에 찍힌 핀들. */
   pins: Pin[]
+  /** 크로스헤어가 올라간 봉. 안 올렸으면 null — 부모가 마지막 봉을 보여준다. */
+  onHoverCandle?: (candle: Candle | null) => void
 }
 
 const INTERVAL_SECONDS: Record<Interval, number> = {
@@ -95,6 +97,7 @@ export function Chart({
   onDrawPrice,
   onMoveDrawing,
   onReachStart,
+  onHoverCandle,
 }: ChartProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<IChartApi | null>(null)
@@ -125,6 +128,8 @@ export function Chart({
   const dragRef = useRef<{ id: string; price: number } | null>(null)
   const countdownRef = useRef<HTMLDivElement>(null)
   const lastCandleRef = useRef<Candle | null>(null)
+  // 크로스헤어가 가리키는 봉의 거래량을 찾으려면 원본이 필요하다.
+  const candlesRef = useRef<Candle[]>([])
 
   // 패널 높이 비율을 구성별로 저장한다(예: "rsi+macd").
   const paneConfig = `${indicators.rsi.enabled ? 'rsi' : ''}${indicators.macd.enabled ? '+macd' : ''}` || 'main'
@@ -193,6 +198,41 @@ export function Chart({
     }
   }, [])
 
+  // 크로스헤어를 올린 봉을 부모에게 알린다(트레이딩뷰식 OHLC 표시).
+  useEffect(() => {
+    const chart = chartRef.current
+    const series = candleSeriesRef.current
+    if (!chart || !series || !onHoverCandle) return
+
+    const handler = (param: MouseEventParams) => {
+      if (param.time === undefined) {
+        onHoverCandle(null)
+        return
+      }
+      const bar = param.seriesData.get(series)
+      if (!bar || !('open' in bar)) {
+        onHoverCandle(null)
+        return
+      }
+      // 거래량은 시리즈에 없으므로 원본에서 같은 시각을 찾아 붙인다.
+      const time = Number(param.time)
+      const found = candlesRef.current.find((c) => c.time === time)
+      onHoverCandle({
+        time,
+        open: bar.open,
+        high: bar.high,
+        low: bar.low,
+        close: bar.close,
+        volume: found ? found.volume : 0,
+      })
+    }
+    chart.subscribeCrosshairMove(handler)
+    return () => {
+      chart.unsubscribeCrosshairMove(handler)
+      onHoverCandle(null)
+    }
+  }, [onHoverCandle])
+
   // 왼쪽 끝에 가까워지면 과거를 더 달라고 알린다.
   useEffect(() => {
     const chart = chartRef.current
@@ -253,6 +293,7 @@ export function Chart({
     )
 
     lastCandleRef.current = candles[candles.length - 1]
+    candlesRef.current = candles
 
     if (keepRange) {
       chartRef.current?.timeScale().setVisibleLogicalRange({

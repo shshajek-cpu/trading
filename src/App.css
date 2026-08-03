@@ -1965,3 +1965,49 @@ button.bell.on {
     min-height: 44px;
   }
 }
+
+/* ── 트레이딩뷰식 OHLC 정보바 ── */
+.ohlc-legend {
+  display: flex;
+  position: absolute;
+  top: 6px;
+  left: 8px;
+  z-index: 3;
+  flex-wrap: wrap;
+  gap: 9px;
+  align-items: center;
+  padding: 3px 8px;
+  border-radius: 6px;
+  background: rgb(10 10 10 / 62%);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+.ohlc-legend em {
+  margin-right: 3px;
+  color: var(--text-dim);
+  font-style: normal;
+}
+
+.ohlc-sym {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.ohlc-vol {
+  color: var(--text-dim);
+}
+
+@media (width <= 900px) {
+  .ohlc-legend {
+    gap: 6px;
+    font-size: 10px;
+  }
+
+  /* 폰에서는 거래량까지 넣으면 두 줄로 넘친다. */
+  .ohlc-vol {
+    display: none;
+  }
+}

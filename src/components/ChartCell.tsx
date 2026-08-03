@@ -46,6 +46,14 @@ interface ChartCellProps {
   gridStyle?: React.CSSProperties
 }
 
+/** 거래량은 자리수가 커서 그대로 쓰면 정보바가 밀린다. */
+function formatVolume(value: number): string {
+  if (value >= 1e9) return `${(value / 1e9).toFixed(2)}B`
+  if (value >= 1e6) return `${(value / 1e6).toFixed(2)}M`
+  if (value >= 1e3) return `${(value / 1e3).toFixed(2)}K`
+  return value.toFixed(2)
+}
+
 function formatPrice(value: number): string {
   const digits = value >= 1000 ? 2 : value >= 1 ? 4 : 6
   return value.toLocaleString('en-US', {
@@ -81,6 +89,8 @@ export function ChartCell({
 }: ChartCellProps) {
   const [liveCandle, setLiveCandle] = useState<Candle | null>(null)
   const [intervalOpen, setIntervalOpen] = useState(false)
+  // 크로스헤어를 올린 봉. 안 올렸으면 마지막 봉을 보여준다(트레이딩뷰와 같은 동작).
+  const [hoverCandle, setHoverCandle] = useState<Candle | null>(null)
   const ticker = useTicker24h(symbol)
   const { candles, loading, error, reload, loadOlder, loadingOlder } = useBinanceKlines(
     symbol,
@@ -137,6 +147,14 @@ export function ChartCell({
     if (liveCandle.time === last.time) return [...candles.slice(0, -1), liveCandle]
     return [...candles, liveCandle]
   }, [candles, liveCandle])
+
+  // 정보바에 쓸 봉 — 크로스헤어를 올렸으면 그 봉, 아니면 맨 끝.
+  const legendCandle = hoverCandle ?? mergedCandles[mergedCandles.length - 1] ?? null
+  const legendUp = legendCandle ? legendCandle.close >= legendCandle.open : true
+  const legendChange =
+    legendCandle && legendCandle.open > 0
+      ? ((legendCandle.close - legendCandle.open) / legendCandle.open) * 100
+      : 0
 
   // 핀을 찍은 캔들의 지표를 그 시점 기준으로 계산한다.
   const handlePinPoint = useCallback(
@@ -282,7 +300,35 @@ export function ChartCell({
           onDrawPrice={onDrawPrice}
           onMoveDrawing={onMoveDrawing}
           onReachStart={() => void loadOlder()}
+          onHoverCandle={setHoverCandle}
         />
+        {/* 트레이딩뷰식 OHLC 정보바 — 크로스헤어를 올린 봉, 안 올렸으면 마지막 봉. */}
+        {legendCandle && (
+          <div className="ohlc-legend">
+            <span className="ohlc-sym">
+              {symbol.replace('USDT', '')} · {interval}
+            </span>
+            {([
+              ['시', legendCandle.open],
+              ['고', legendCandle.high],
+              ['저', legendCandle.low],
+              ['종', legendCandle.close],
+            ] as const).map(([label, value]) => (
+              <span key={label} style={{ color: legendUp ? COLORS.up : COLORS.down }}>
+                <em>{label}</em>
+                {formatPrice(value)}
+              </span>
+            ))}
+            <span className="ohlc-chg" style={{ color: legendUp ? COLORS.up : COLORS.down }}>
+              {legendUp ? '+' : ''}
+              {legendChange.toFixed(2)}%
+            </span>
+            <span className="ohlc-vol">
+              <em>거래량</em>
+              {formatVolume(legendCandle.volume)}
+            </span>
+          </div>
+        )}
         {loadingOlder && <div className="loading-older">과거 불러오는 중…</div>}
         {/* 모바일: 지표 패널마다 접기/설정 — 트레이딩뷰처럼 차트 위에 얹는다. */}
         {onToggleIndicator && (indicators.rsi.enabled || indicators.macd.enabled) && (
