@@ -21,7 +21,7 @@ function loadList(): string[] {
     const parsed: unknown = JSON.parse(raw)
     if (!Array.isArray(parsed)) return DEFAULT_LIST
     const list = parsed.filter((s): s is string => typeof s === 'string')
-    return list.length > 0 ? list : DEFAULT_LIST
+    return list
   } catch {
     return DEFAULT_LIST
   }

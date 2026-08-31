@@ -44,6 +44,9 @@ export function useBinanceKlines(
   const reloadRef = useRef<(() => void) | null>(null)
   // 상태가 아니라 ref 로 가진다 — 스크롤 중 연달아 불려도 중복 요청을 막아야 한다.
   const busyRef = useRef(false)
+  const seriesKeyRef = useRef(`${symbol}|${interval}`)
+  seriesKeyRef.current = `${symbol}|${interval}`
+  const olderControllerRef = useRef<AbortController | null>(null)
   const candlesRef = useRef<Candle[]>([])
   candlesRef.current = candles
 
@@ -82,12 +85,18 @@ export function useBinanceKlines(
 
   useEffect(() => {
     const controller = new AbortController()
+    olderControllerRef.current?.abort()
+    olderControllerRef.current = null
+    busyRef.current = false
+    setLoadingOlder(false)
     setCandles([])
     setExhausted(false)
     void load(controller.signal)
     reloadRef.current = () => void load(controller.signal)
     return () => {
       controller.abort()
+      olderControllerRef.current?.abort()
+      olderControllerRef.current = null
       reloadRef.current = null
     }
   }, [load])
@@ -113,6 +122,8 @@ export function useBinanceKlines(
     // 받아오는 사이에 종목·주기가 바뀔 수 있다. 그때 온 것을 그대로 앞에 붙이면
     // 다른 주기의 캔들이 섞여 시간 순서가 깨진다.
     const token = `${symbol}|${interval}`
+    const controller = new AbortController()
+    olderControllerRef.current = controller
     busyRef.current = true
     setLoadingOlder(true)
     try {
@@ -121,10 +132,10 @@ export function useBinanceKlines(
         symbol,
         interval,
         OLDER_CHUNK,
-        undefined,
+        controller.signal,
         oldest.time * 1000 - 1,
       )
-      if (token !== `${symbol}|${interval}`) return
+      if (controller.signal.aborted || seriesKeyRef.current !== token) return
       const current = candlesRef.current[0]
       // 그 사이 새로 불러왔다면 기준점이 달라졌다는 뜻이다. 버린다.
       if (!current || current.time !== oldest.time) return
@@ -139,9 +150,13 @@ export function useBinanceKlines(
     } catch {
       /* 과거 로딩 실패는 조용히 넘긴다 — 이미 보고 있는 차트는 멀쩡하다. */
     } finally {
-      busyRef.current = false
-      setLoadingOlder(false)
+      if (olderControllerRef.current === controller) {
+        olderControllerRef.current = null
+        busyRef.current = false
+        setLoadingOlder(false)
+      }
     }
+
   }, [symbol, interval, exhausted])
 
   const reload = useCallback(() => load(), [load])
