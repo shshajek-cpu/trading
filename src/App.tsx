@@ -141,7 +141,8 @@ function App() {
   const [maximized, setMaximized] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
   const [shortcutsOpen, setShortcutsOpen] = useState(false)
-  const [widgetOpen, setWidgetOpen] = useState<WidgetId | null>('watchlist')
+  // 오른쪽 위젯 페이지는 접힌 채로 시작한다(차트를 넓게). 탭을 누르면 펼친다.
+  const [widgetOpen, setWidgetOpen] = useState<WidgetId | null>(null)
   /** 폰 앱: 아래 탭과 열린 아래 시트. */
   const [mobileTab, setMobileTab] = useState<MobileTab>('chart')
   const [mobileSheet, setMobileSheet] = useState<MobileSheet | null>(null)

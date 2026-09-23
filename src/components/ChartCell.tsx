@@ -16,7 +16,7 @@ import type { Drawing, DrawingTool, MagnetMode, NewDrawing } from '../lib/drawin
 import type { Pin } from '../lib/pins'
 import { computeFeatures, MIN_HISTORY, type FeatureSet } from '../lib/features'
 import { CHART_PALETTES } from '../lib/theme'
-import { computeIndicator, indicatorLegend, type ComputedIndicator } from '../chart/compute'
+import { computeIndicator, displayParts, indicatorLegend, type ComputedIndicator } from '../chart/compute'
 import { formatPrice, barCloseTime } from '../chart/format'
 import { getChart } from '../lib/chartRegistry'
 import type { ChartMenuRequest } from '../lib/chartMenu'
@@ -362,11 +362,13 @@ export function ChartCell({
         .map((i) => computeIndicator(i, indicatorCandles, palette)),
     [indicatorCandles, indicators, palette],
   )
-  const computedById = useMemo(() => {
+  // 차트·범례는 부분 단위로 다룬다 — 세트 지표는 이평선(가격 칸)·거래량 급증·RSI(각자 칸)로 펴진다.
+  const parts = useMemo(() => computed.flatMap(displayParts), [computed])
+  const partById = useMemo(() => {
     const map: Record<string, ComputedIndicator> = {}
-    for (const c of computed) map[c.instanceId] = c
+    for (const c of parts) map[c.instanceId] = c
     return map
-  }, [computed])
+  }, [parts])
 
   // 범례에 쓸 봉 — 크로스헤어를 올렸으면 그 봉, 아니면 마지막.
   const legendCandle = useMemo(() => {
@@ -436,38 +438,39 @@ export function ChartCell({
   // 미니창(PiP)은 보기 전용이다 — 설정·알림 창이 본 창에 뜨므로 범례 조작 버튼을 두지 않는다.
   const legendControls = cellIndex !== null
 
-  const overlays = indicators.filter((i) => {
-    const c = computedById[i.id]
-    return !c || c.overlay || c.isVolume
+  // 가격 칸 범례 줄: 가격 칸에 그리는 부분마다 한 줄. 숨겼거나 아직 계산 전인 지표도 한 줄(“숨김”).
+  type LegendRow = { inst: IndicatorInstance; part: ComputedIndicator | null }
+  const mainRows = indicators.flatMap((inst): LegendRow[] => {
+    const own = parts.filter((c) => (c.parentId ?? c.instanceId) === inst.id)
+    if (own.length === 0) return [{ inst, part: null }]
+    return own.filter((c) => c.overlay || c.isVolume).map((part) => ({ inst, part }))
   })
-  const oscillators = indicators.filter((i) => {
-    const c = computedById[i.id]
-    return c && !c.overlay && !c.isVolume
-  })
-  const ctlOpen = ctlOpenFor !== null && indicators.some((i) => i.id === ctlOpenFor) ? ctlOpenFor : null
+  const rowKeys = new Set([...indicators.map((i) => i.id), ...parts.map((c) => c.instanceId)])
+  const ctlOpen = ctlOpenFor !== null && rowKeys.has(ctlOpenFor) ? ctlOpenFor : null
 
   const fmtPrice = (v: number) => formatPrice(v, pricePrecision)
 
-  const renderIndicatorRow = (inst: IndicatorInstance) => {
-    const comp = computedById[inst.id]
+  /** 범례 한 줄. 조작 버튼(숨기기·설정·알림·삭제)은 원래 지표 전체에 건다 — 세트의 어느 줄에서 눌러도 같다. */
+  const renderIndicatorRow = (inst: IndicatorInstance, comp: ComputedIndicator | null) => {
+    const rowKey = comp?.instanceId ?? inst.id
     const entries = comp && inst.visible ? indicatorLegend(comp, hoverTime, fmtPrice) : []
-    const open = ctlOpen === inst.id
+    const open = ctlOpen === rowKey
     return (
       // 줄을 누르면(터치) 조작 버튼을 펴고 접는다. 버튼 누름은 버튼이 처리한다.
       // eslint-disable-next-line jsx-a11y/no-static-element-interactions, jsx-a11y/click-events-have-key-events
       <div
         className={`tv-ind-row${open ? ' open' : ''}`}
-        key={inst.id}
+        key={rowKey}
         onClick={(e) => {
           if (!legendControls || (e.target as Element).closest('button')) return
-          setCtlOpenFor(open ? null : inst.id)
+          setCtlOpenFor(open ? null : rowKey)
         }}
       >
         <span
           className="tv-ind-title"
           onDoubleClick={legendControls && onEditIndicator ? () => onEditIndicator(inst.id) : undefined}
         >
-          {indicatorTitle(inst)}
+          {comp?.title ?? indicatorTitle(inst)}
         </span>
         {inst.visible ? (
           entries.map((e, i) => (
@@ -535,7 +538,7 @@ export function ChartCell({
           invertScale={invertScale}
           lockedTime={lockedTime}
           compare={compare}
-          indicators={computed}
+          indicators={parts}
           settings={settings}
           alerts={symbolAlerts}
           drawings={symbolDrawings}
@@ -607,7 +610,7 @@ export function ChartCell({
             </div>
           )}
 
-          {settings.showIndicatorLegend && (overlays.length > 0 || compare.length > 0) && (
+          {settings.showIndicatorLegend && (mainRows.length > 0 || compare.length > 0) && (
             <div className="tv-legend-inds">
               <button
                 type="button"
@@ -622,7 +625,7 @@ export function ChartCell({
               </button>
               {!collapsed && (
                 <div className="tv-legend-inds-list">
-                  {overlays.map(renderIndicatorRow)}
+                  {mainRows.map(({ inst, part }) => renderIndicatorRow(inst, part))}
                   {compare.map((sym) => {
                     const info = compareInfo.find((c) => c.symbol === sym)
                     return (
@@ -655,11 +658,12 @@ export function ChartCell({
         {/* 오실레이터 패널 범례 — 잰 패널 상단 위치에 놓는다. */}
         {settings.showIndicatorLegend &&
           panes.list.map((pane) => {
-            const inst = oscillators.find((o) => o.id === pane.instanceId)
-            if (!inst) return null
+            const part = partById[pane.instanceId]
+            const inst = part && indicators.find((i) => i.id === (part.parentId ?? part.instanceId))
+            if (!part || !inst) return null
             return (
               <div className="tv-osc-legend" key={pane.instanceId} style={{ top: `${pane.top + 4}px` }}>
-                {renderIndicatorRow(inst)}
+                {renderIndicatorRow(inst, part)}
               </div>
             )
           })}

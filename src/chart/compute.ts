@@ -35,6 +35,7 @@ import {
   INDICATOR_DEFS,
   indicatorTitle,
   multiMaSlots,
+  setParts,
   type IndicatorInstance,
   type IndicatorKind,
 } from '../lib/indicatorConfig'
@@ -66,6 +67,8 @@ export interface PlotLine {
    * 지금 봉으로 계산한 최신 값이다 — 알림은 그 값으로 판정한다.
    */
   displaced?: boolean
+  /** 여러 칸에 걸친 지표(세트)에서 이 선이 속한 부분(`ComputedIndicator.parts` 의 key). */
+  part?: string
 }
 
 export interface LevelLine {
@@ -86,6 +89,42 @@ export interface ComputedIndicator {
   band?: { top: number; bottom: number; color: string }
   /** 패널 배경을 봉 단위로 옅게 칠하는 구간(예: 거래량 급증 봉). */
   highlights?: { time: number; color: string }[]
+  /**
+   * 한 지표가 여러 칸에 나뉘어 그려질 때(세트: 이평선은 가격 칸, 거래량 급증·RSI 는 각자 칸) 부분 목록.
+   * 선은 `lines` 에 모두 있고 `part` 로 나뉜다. 그릴 때는 `displayParts` 로 부분마다 따로 편다.
+   */
+  parts?: IndicatorPart[]
+  /** `displayParts` 로 편 부분이면 원래 지표의 instanceId. */
+  parentId?: string
+}
+
+export interface IndicatorPart {
+  key: string
+  overlay: boolean
+  title: string
+  levels: LevelLine[]
+  band?: ComputedIndicator['band']
+  highlights?: ComputedIndicator['highlights']
+}
+
+/**
+ * 차트·범례용으로 부분마다 하나씩 편다. 부분이 없는 보통 지표는 그대로 한 개.
+ * 부분의 instanceId 는 `${원래 id}/${부분 key}` — 칸·시리즈 식별자로 쓴다.
+ */
+export function displayParts(c: ComputedIndicator): ComputedIndicator[] {
+  if (!c.parts) return [c]
+  return c.parts.map((p) => ({
+    instanceId: `${c.instanceId}/${p.key}`,
+    parentId: c.instanceId,
+    kind: c.kind,
+    overlay: p.overlay,
+    isVolume: false,
+    title: p.title,
+    lines: c.lines.filter((l) => l.part === p.key),
+    levels: p.levels,
+    band: p.band,
+    highlights: p.highlights,
+  }))
 }
 
 
@@ -180,6 +219,24 @@ export function computeIndicator(
           const r = ratioAt.get(k.time)
           if (r === undefined || r < p.backgroundAt) return []
           return [{ time: k.time, color: k.close >= k.open ? `${palette.up}33` : `${palette.down}33` }]
+        })
+      }
+      break
+    }
+    case 'maSet': {
+      // 부분마다 원래 지표로 계산해 선에 부분 key 를 달아 모은다. 꺼 둔 부분은 칸도 만들지 않는다.
+      base.parts = []
+      for (const part of setParts(instance)) {
+        if (!part.on) continue
+        const sub = computeIndicator(part.instance, candles, palette)
+        base.lines.push(...sub.lines.map((l) => ({ ...l, part: part.key })))
+        base.parts.push({
+          key: part.key,
+          overlay: sub.overlay || sub.isVolume,
+          title: sub.title,
+          levels: sub.levels,
+          band: sub.band,
+          highlights: sub.highlights,
         })
       }
       break

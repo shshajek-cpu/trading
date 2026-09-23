@@ -5,7 +5,7 @@ import { useSymbols } from '../hooks/useSymbols'
 import { displaySymbol, priceDecimals } from '../lib/symbols'
 import type { Interval } from '../lib/binance'
 import { INTERVAL_INFO } from '../lib/intervals'
-import { indicatorTitle, type IndicatorInstance } from '../lib/indicatorConfig'
+import { indicatorTitle, setParts, type IndicatorInstance } from '../lib/indicatorConfig'
 import { computeIndicator, plotName } from '../chart/compute'
 import { CHART_PALETTES } from '../lib/theme'
 import {
@@ -78,6 +78,13 @@ function alertLines(instance: IndicatorInstance) {
 
 /** 지표를 고르면 처음 채워 줄 기준값. 급증 배율은 Lv2 배율(끄면 Lv1), 오실레이터는 첫 기준선(RSI 70 등). */
 function defaultIndicatorValue(instance: IndicatorInstance, lineKey: string, livePrice: number | null): number | null {
+  // 세트는 그 선이 속한 부분(원래 지표)으로 따진다.
+  if (instance.kind === 'maSet') {
+    const part = setParts(instance).find((p) =>
+      computeIndicator(p.instance, [], CHART_PALETTES.dark).lines.some((l) => l.key === lineKey),
+    )
+    return part ? defaultIndicatorValue(part.instance, lineKey, livePrice) : null
+  }
   if (instance.kind === 'volumeSpike' && lineKey === 'ratio') return instance.params.lv2 || instance.params.lv1
   const computed = computeIndicator(instance, [], CHART_PALETTES.dark)
   if (computed.levels[0]) return computed.levels[0].price

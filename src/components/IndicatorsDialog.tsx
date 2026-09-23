@@ -4,9 +4,7 @@ import {
   ALL_INDICATOR_KINDS,
   INDICATOR_CATEGORIES,
   INDICATOR_DEFS,
-  INDICATOR_SET,
   createIndicator,
-  withIndicatorSet,
   type IndicatorCategory,
   type IndicatorInstance,
   type IndicatorKind,
@@ -108,17 +106,6 @@ export function IndicatorsDialog({ open, onClose, indicators, onChange }: Indica
           ))}
         </nav>
         <div className="ind-list">
-          {section === 'all' && !query.trim() && (
-            // 세트 한 줄: 누르면 묶음 전체를 넣는다(이미 있는 종류는 건너뛴다).
-            // eslint-disable-next-line jsx-a11y/no-static-element-interactions, jsx-a11y/click-events-have-key-events
-            <div className="ind-list-row ind-set-row" onClick={() => onChange(withIndicatorSet(indicators))}>
-              <span className="ind-star on" aria-hidden="true">
-                ★
-              </span>
-              <span className="ind-name">{INDICATOR_SET.name}</span>
-              <span className="ind-cat">세트</span>
-            </div>
-          )}
           {rows.length === 0 ? (
             <div className="ind-empty">{query ? '검색 결과가 없습니다.' : '즐겨찾기한 지표가 없습니다.'}</div>
           ) : (

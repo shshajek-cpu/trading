@@ -6,6 +6,7 @@ import { notifySettingsChanged } from './syncBus'
  * 같은 종류를 여러 개(예: MA 9, MA 21, MA 50) 올릴 수 있다.
  */
 export type IndicatorKind =
+  | 'maSet'
   | 'volume'
   | 'volumeSpike'
   | 'multiMa'
@@ -36,7 +37,7 @@ export interface IndicatorInstance {
   visible: boolean
 }
 
-export type IndicatorCategory = '이동평균' | '오실레이터' | '변동성' | '거래량' | '추세'
+export type IndicatorCategory = '세트' | '이동평균' | '오실레이터' | '변동성' | '거래량' | '추세'
 
 export interface IndicatorParamDef {
   key: string
@@ -49,6 +50,8 @@ export interface IndicatorParamDef {
   kind?: 'number' | 'flag'
   /** 설정 창의 "스타일" 탭에 둔다(선 굵기 등). 없으면 "입력" 탭. */
   tab?: 'style'
+  /** 설정 창에서 이 값 위에 붙는 묶음 제목(여러 지표를 합친 세트용). 바뀔 때마다 제목 줄이 생긴다. */
+  section?: string
 }
 
 export interface IndicatorDef {
@@ -65,6 +68,8 @@ export interface IndicatorDef {
   colors: string[]
   /** 색상 편집 UI 라벨. */
   colorLabels?: string[]
+  /** 색마다 속한 묶음 제목(세트용). colors 와 같은 길이. */
+  colorSections?: string[]
 }
 
 /** 이동평균 계열 — 새로 추가할 때 색을 팔레트에서 돌려 쓴다. */
@@ -79,7 +84,112 @@ const len = (def: number): IndicatorParamDef => ({ key: 'length', label: '기간
 const MULTI_MA_LENGTHS = [0, 50, 100, 200, 400, 0]
 const MULTI_MA_WIDTHS = [1, 1, 3, 2, 3, 4]
 
+const VOLUME_SPIKE_DEF: IndicatorDef = {
+  kind: 'volumeSpike',
+  name: '거래량 급증',
+  shortName: 'Vol 급증',
+  overlay: false,
+  category: '거래량',
+  params: [
+    { key: 'count', label: '볼륨 카운트 (평균 구간)', default: 70, min: 2, max: 1000, step: 1 },
+    { key: 'lv1', label: 'Lv1 배율 (x)', default: 3, min: 0.1, max: 100, step: 0.1 },
+    { key: 'lv2', label: 'Lv2 배율 (x, 0 = 사용 안 함)', default: 5, min: 0, max: 100, step: 0.1 },
+    { key: 'lv3', label: 'Lv3 배율 (x, 0 = 사용 안 함)', default: 7, min: 0, max: 100, step: 0.1 },
+    { key: 'background', label: '배경 강조', default: 1, min: 0, max: 1, kind: 'flag' },
+    { key: 'backgroundAt', label: '배경 강조 기준 배율 (x)', default: 5, min: 0.1, max: 100, step: 0.1 },
+  ],
+  colors: ['#00ff88', '#fff59d', '#ec407a', '#00796b', '#c62828'],
+  colorLabels: ['Lv1 (메로나)', 'Lv2 (옐로우)', 'Lv3 (레드)', '양봉', '음봉'],
+}
+
+const MULTI_MA_DEF: IndicatorDef = {
+  kind: 'multiMa',
+  name: '멀티 이동평균',
+  shortName: 'MA',
+  overlay: true,
+  category: '이동평균',
+  params: [
+    { key: 'ema', label: '지수이동평균(EMA)으로 계산', default: 0, min: 0, max: 1, kind: 'flag' },
+    ...MULTI_MA_LENGTHS.map((d, i) => ({
+      key: `len${i + 1}`,
+      label: `선 ${i + 1} 기간 (0 = 사용 안 함)`,
+      default: d,
+      min: 0,
+      max: 2000,
+      step: 1,
+    })),
+    ...MULTI_MA_WIDTHS.map((d, i) => ({
+      key: `width${i + 1}`,
+      label: `선 ${i + 1} 굵기`,
+      default: d,
+      min: 1,
+      max: 4,
+      step: 1,
+      tab: 'style' as const,
+    })),
+  ],
+  colors: ['#c39bd3', '#fdd835', '#ffffff', '#43a047', '#e53935', '#26c6da'],
+  colorLabels: MULTI_MA_LENGTHS.map((_, i) => `선 ${i + 1}`),
+}
+
+const RSI_DEF: IndicatorDef = {
+  kind: 'rsi',
+  name: '상대강도지수',
+  shortName: 'RSI',
+  overlay: false,
+  category: '오실레이터',
+  params: [
+    { key: 'length', label: '기간', default: 14, min: 1, max: 1000, step: 1 },
+    { key: 'upper', label: '과매수', default: 70, min: 50, max: 100, step: 1 },
+    { key: 'lower', label: '과매도', default: 30, min: 0, max: 50, step: 1 },
+  ],
+  colors: ['#7e57c2'],
+  colorLabels: ['선'],
+}
+
+/**
+ * 이평선 · 거래량 급증 · RSI 를 한 지표로 묶은 세트. 각 부분의 설정은 접두어를 붙여 한 인스턴스에 담는다
+ * (예: `ma_len2`, `vs_lv1`, `rsi_length`). 그릴 때는 부분마다 원래 지표로 풀어 계산한다(`setParts`).
+ */
+const SET_PARTS = [
+  { key: 'ma', def: MULTI_MA_DEF, section: '이동평균' },
+  { key: 'vs', def: VOLUME_SPIKE_DEF, section: '거래량 급증' },
+  { key: 'rsi', def: RSI_DEF, section: 'RSI' },
+] as const
+
+const MA_SET_DEF: IndicatorDef = {
+  kind: 'maSet',
+  name: '이평선 · 거래량 급증 · RSI',
+  shortName: '이평·급증·RSI',
+  overlay: true,
+  category: '세트',
+  params: SET_PARTS.flatMap((part) => [
+    { key: `${part.key}_on`, label: `${part.section} 표시`, default: 1, min: 0, max: 1, kind: 'flag' as const, section: part.section },
+    ...part.def.params.map((p) => ({ ...p, key: `${part.key}_${p.key}`, section: part.section })),
+  ]),
+  colors: SET_PARTS.flatMap((part) => part.def.colors),
+  colorLabels: SET_PARTS.flatMap((part) => part.def.colors.map((_, i) => part.def.colorLabels?.[i] ?? `색 ${i + 1}`)),
+  colorSections: SET_PARTS.flatMap((part) => part.def.colors.map(() => part.section)),
+}
+
+/** 세트를 부분(이평선·거래량 급증·RSI)별 원래 지표 인스턴스로 푼다. 꺼 둔 부분도 on=false 로 돌려준다. */
+export function setParts(i: IndicatorInstance): { key: string; on: boolean; instance: IndicatorInstance }[] {
+  let colorAt = 0
+  return SET_PARTS.map((part) => {
+    const params: Record<string, number> = {}
+    for (const p of part.def.params) params[p.key] = i.params[`${part.key}_${p.key}`] ?? p.default
+    const colors = part.def.colors.map((c, k) => i.colors[colorAt + k] ?? c)
+    colorAt += part.def.colors.length
+    return {
+      key: part.key,
+      on: (i.params[`${part.key}_on`] ?? 1) !== 0,
+      instance: { id: `${i.id}/${part.key}`, kind: part.def.kind, params, colors, visible: true },
+    }
+  })
+}
+
 export const INDICATOR_DEFS: Record<IndicatorKind, IndicatorDef> = {
+  maSet: MA_SET_DEF,
   volume: {
     kind: 'volume',
     name: '거래량',
@@ -95,52 +205,8 @@ export const INDICATOR_DEFS: Record<IndicatorKind, IndicatorDef> = {
     ],
     colors: [],
   },
-  volumeSpike: {
-    kind: 'volumeSpike',
-    name: '거래량 급증',
-    shortName: 'Vol 급증',
-    overlay: false,
-    category: '거래량',
-    params: [
-      { key: 'count', label: '볼륨 카운트 (평균 구간)', default: 70, min: 2, max: 1000, step: 1 },
-      { key: 'lv1', label: 'Lv1 배율 (x)', default: 3, min: 0.1, max: 100, step: 0.1 },
-      { key: 'lv2', label: 'Lv2 배율 (x, 0 = 사용 안 함)', default: 5, min: 0, max: 100, step: 0.1 },
-      { key: 'lv3', label: 'Lv3 배율 (x, 0 = 사용 안 함)', default: 7, min: 0, max: 100, step: 0.1 },
-      { key: 'background', label: '배경 강조', default: 1, min: 0, max: 1, kind: 'flag' },
-      { key: 'backgroundAt', label: '배경 강조 기준 배율 (x)', default: 5, min: 0.1, max: 100, step: 0.1 },
-    ],
-    colors: ['#00ff88', '#fff59d', '#ec407a', '#00796b', '#c62828'],
-    colorLabels: ['Lv1 (메로나)', 'Lv2 (옐로우)', 'Lv3 (레드)', '양봉', '음봉'],
-  },
-  multiMa: {
-    kind: 'multiMa',
-    name: '멀티 이동평균',
-    shortName: 'MA',
-    overlay: true,
-    category: '이동평균',
-    params: [
-      { key: 'ema', label: '지수이동평균(EMA)으로 계산', default: 0, min: 0, max: 1, kind: 'flag' },
-      ...MULTI_MA_LENGTHS.map((d, i) => ({
-        key: `len${i + 1}`,
-        label: `선 ${i + 1} 기간 (0 = 사용 안 함)`,
-        default: d,
-        min: 0,
-        max: 2000,
-        step: 1,
-      })),
-      ...MULTI_MA_WIDTHS.map((d, i) => ({
-        key: `width${i + 1}`,
-        label: `선 ${i + 1} 굵기`,
-        default: d,
-        min: 1,
-        max: 4,
-        step: 1,
-        tab: 'style' as const,
-      })),
-    ],
-    colors: ['#c39bd3', '#fdd835', '#ffffff', '#43a047', '#e53935', '#26c6da'],
-    colorLabels: MULTI_MA_LENGTHS.map((_, i) => `선 ${i + 1}`),
-  },
+  volumeSpike: VOLUME_SPIKE_DEF,
+  multiMa: MULTI_MA_DEF,
   sma: {
     kind: 'sma',
     name: '이동평균',
@@ -233,20 +299,7 @@ export const INDICATOR_DEFS: Record<IndicatorKind, IndicatorDef> = {
     colors: ['#2962ff'],
     colorLabels: ['점'],
   },
-  rsi: {
-    kind: 'rsi',
-    name: '상대강도지수',
-    shortName: 'RSI',
-    overlay: false,
-    category: '오실레이터',
-    params: [
-      { key: 'length', label: '기간', default: 14, min: 1, max: 1000, step: 1 },
-      { key: 'upper', label: '과매수', default: 70, min: 50, max: 100, step: 1 },
-      { key: 'lower', label: '과매도', default: 30, min: 0, max: 50, step: 1 },
-    ],
-    colors: ['#7e57c2'],
-    colorLabels: ['선'],
-  },
+  rsi: RSI_DEF,
   macd: {
     kind: 'macd',
     name: 'MACD',
@@ -354,6 +407,7 @@ export const INDICATOR_DEFS: Record<IndicatorKind, IndicatorDef> = {
 
 /** 카테고리 표시 순서(다이얼로그 사이드바). */
 export const INDICATOR_CATEGORIES: IndicatorCategory[] = [
+  '세트',
   '이동평균',
   '오실레이터',
   '변동성',
@@ -442,24 +496,6 @@ export function multiMaSlots(i: IndicatorInstance): { slot: number; length: numb
     if (length > 0) out.push({ slot: s, length })
   }
   return out
-}
-
-/** 한 번에 넣는 묶음: 멀티 이동평균(50·100·200·400) + 거래량 급증 + RSI. 아래 칸 순서도 이 순서다. */
-export const INDICATOR_SET: { name: string; kinds: IndicatorKind[] } = {
-  name: '이평선 · 거래량 급증 · RSI 세트',
-  kinds: ['multiMa', 'volumeSpike', 'rsi'],
-}
-
-/**
- * 세트를 넣는다. 이미 있는 종류는 그대로 두고 빠진 것만 더한다. 거래량 급증이 거래량을 대신하므로
- * 일반 거래량은 뺀다(같은 막대가 두 번 그려지지 않게).
- */
-export function withIndicatorSet(existing: IndicatorInstance[]): IndicatorInstance[] {
-  const next = existing.filter((i) => i.kind !== 'volume')
-  for (const kind of INDICATOR_SET.kinds) {
-    if (!next.some((i) => i.kind === kind)) next.push(createIndicator(kind, next))
-  }
-  return next
 }
 
 /* ── 저장/불러오기 (v3) + v2 마이그레이션 ─────────────────────────────── */

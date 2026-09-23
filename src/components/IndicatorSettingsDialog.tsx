@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { Fragment, useEffect, useState } from 'react'
 import { Dialog } from './ui/Dialog'
 import { INDICATOR_DEFS, indicatorTitle, type IndicatorInstance, type IndicatorParamDef } from '../lib/indicatorConfig'
 import './indicators.css'
@@ -33,6 +33,14 @@ export function IndicatorSettingsDialog({ instance, onChange, onClose }: Indicat
   const def = INDICATOR_DEFS[instance.kind]
   const inputParams = def.params.filter((p) => p.tab !== 'style')
   const styleParams = def.params.filter((p) => p.tab === 'style')
+  // 스타일 탭: 색과 굵기를 묶음(세트의 이동평균·거래량 급증·RSI)끼리 모아 보여준다. 묶음 순서는 처음 나온 순서.
+  const styleUngrouped = [
+    ...def.colors.map((fallback, idx) => ({ kind: 'color' as const, idx, fallback, section: def.colorSections?.[idx] })),
+    ...styleParams.map((param) => ({ kind: 'param' as const, param, section: param.section })),
+  ]
+  const styleItems = [...new Set(styleUngrouped.map((item) => item.section))].flatMap((section) =>
+    styleUngrouped.filter((item) => item.section === section),
+  )
 
   const cancel = () => {
     if (session.original) onChange(session.original)
@@ -87,41 +95,51 @@ export function IndicatorSettingsDialog({ instance, onChange, onClose }: Indicat
           (inputParams.length === 0 ? (
             <p className="ind-settings-empty">바꿀 입력값이 없습니다.</p>
           ) : (
-            inputParams.map((param) => (
-              <ParamField
-                key={`${instance.id}-${param.key}`}
-                param={param}
-                value={instance.params[param.key] ?? param.default}
-                onCommit={(v) => onChange({ ...instance, params: { ...instance.params, [param.key]: v } })}
-              />
+            inputParams.map((param, i) => (
+              <Fragment key={`${instance.id}-${param.key}`}>
+                {param.section && param.section !== inputParams[i - 1]?.section && (
+                  <p className="ind-settings-section">{param.section}</p>
+                )}
+                <ParamField
+                  param={param}
+                  value={instance.params[param.key] ?? param.default}
+                  onCommit={(v) => onChange({ ...instance, params: { ...instance.params, [param.key]: v } })}
+                />
+              </Fragment>
             ))
           ))}
 
         {tab === 'style' && (
           <>
-            {def.colors.map((fallback, idx) => (
-              <label className="tv-field" key={`color-${idx}`}>
-                <span className="tv-field-label">{def.colorLabels?.[idx] ?? `색 ${idx + 1}`}</span>
-                <input
-                  type="color"
-                  className="tv-color"
-                  value={instance.colors[idx] ?? fallback}
-                  onChange={(e) => {
-                    const colors = [...instance.colors]
-                    colors[idx] = e.target.value
-                    onChange({ ...instance, colors })
-                  }}
-                />
-              </label>
+            {styleItems.map((item, i) => (
+              <Fragment key={item.kind === 'color' ? `color-${item.idx}` : `${instance.id}-${item.param.key}`}>
+                {item.section && item.section !== styleItems[i - 1]?.section && (
+                  <p className="ind-settings-section">{item.section}</p>
+                )}
+                {item.kind === 'color' ? (
+                  <label className="tv-field">
+                    <span className="tv-field-label">{def.colorLabels?.[item.idx] ?? `색 ${item.idx + 1}`}</span>
+                    <input
+                      type="color"
+                      className="tv-color"
+                      value={instance.colors[item.idx] ?? item.fallback}
+                      onChange={(e) => {
+                        const colors = [...instance.colors]
+                        colors[item.idx] = e.target.value
+                        onChange({ ...instance, colors })
+                      }}
+                    />
+                  </label>
+                ) : (
+                  <ParamField
+                    param={item.param}
+                    value={instance.params[item.param.key] ?? item.param.default}
+                    onCommit={(v) => onChange({ ...instance, params: { ...instance.params, [item.param.key]: v } })}
+                  />
+                )}
+              </Fragment>
             ))}
-            {styleParams.map((param) => (
-              <ParamField
-                key={`${instance.id}-${param.key}`}
-                param={param}
-                value={instance.params[param.key] ?? param.default}
-                onCommit={(v) => onChange({ ...instance, params: { ...instance.params, [param.key]: v } })}
-              />
-            ))}
+            {styleItems.some((item) => item.section) && <p className="ind-settings-section">전체</p>}
             <label className="tv-field">
               <span className="tv-field-label">차트에 표시</span>
               <input

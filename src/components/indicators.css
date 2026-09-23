@@ -79,20 +79,17 @@
   font-size: var(--tv-fs-xs);
 }
 
-/* 한 번에 넣는 세트 줄 — 목록 맨 위에 테두리로 구분한다. */
-.ind-set-row {
-  margin-bottom: 4px;
-  border: 1px solid var(--tv-border);
-}
-.ind-set-row .ind-star {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  cursor: inherit;
-}
-.ind-set-row .ind-name {
-  color: var(--tv-text-strong);
+/* 세트 지표 설정 창의 묶음 제목(이동평균 · 거래량 급증 · RSI). */
+.ind-settings-section {
+  margin: 14px 0 2px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--tv-border);
+  color: var(--tv-text-dim);
+  font-size: var(--tv-fs-xs);
   font-weight: 600;
+}
+.ind-settings-section:first-child {
+  margin-top: 4px;
 }
 
 .ind-empty {
