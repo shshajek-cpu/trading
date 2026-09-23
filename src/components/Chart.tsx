@@ -1094,9 +1094,9 @@ function createChartWithDefaults(container: HTMLElement): IChartApi {
       background: { color: 'transparent' },
       textColor: '#dbdbdb',
       fontFamily: CHART_FONT,
-      // Lightweight Charts 라이선스(Apache-2.0 + NOTICE)는 공개 화면에 TradingView 표기와
-      // tradingview.com 링크를 요구한다. 내장 로고가 둘 다 충족한다(TradingView 화면과도 같은 자리).
-      attributionLogo: true,
+      // 차트 위 TradingView 로고는 끈다. Lightweight Charts 라이선스(Apache-2.0 + NOTICE)가 요구하는
+      // tradingview.com 링크는 메뉴 맨 아래 표기(데스크톱 ≡ 서랍·폰 메뉴 탭)로 대신한다.
+      attributionLogo: false,
     },
     // 좁은 폰 화면에서도 기간 버튼(1개월=30분봉 1440개 등)이 전 구간을 담을 수 있게 봉 간격 하한을 낮춘다.
     timeScale: { timeVisible: true, secondsVisible: false, minBarSpacing: 0.1 },

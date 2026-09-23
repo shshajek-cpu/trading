@@ -54,6 +54,14 @@ export function MobileMenuPage({ theme, onThemeChange, rows, install }: MobileMe
             </button>
           </div>
         )}
+
+        <p className="tv-credit">
+          차트 엔진:{' '}
+          <a href="https://www.tradingview.com/" target="_blank" rel="noreferrer">
+            TradingView
+          </a>{' '}
+          Lightweight Charts™
+        </p>
       </div>
     </>
   )

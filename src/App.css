@@ -1057,6 +1057,18 @@
   border-bottom: 1px solid var(--tv-border);
 }
 
+/* 메뉴 맨 아래 차트 엔진 표기 — Lightweight Charts 라이선스의 tradingview.com 링크(차트 위 로고 대신). */
+.tv-credit {
+  margin: auto 0 0;
+  padding: 16px;
+  color: var(--tv-text-faint);
+  font-size: var(--tv-fs-xs);
+}
+.tv-credit a {
+  color: inherit;
+  text-decoration: underline;
+}
+
 .tv-drawer-item {
   display: flex;
   align-items: center;

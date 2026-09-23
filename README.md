@@ -81,8 +81,8 @@ worker/, functions/   웹 푸시 알림 백엔드(Cloudflare)
 
 ## 라이선스 표기
 
-Lightweight Charts™는 Apache-2.0이며, 공개 화면에 TradingView 표기와 tradingview.com 링크가 필요하다.
-차트 왼쪽 아래 TradingView 로고(링크 포함)로 이를 충족한다.
+Lightweight Charts™는 Apache-2.0이며, 화면에 TradingView 표기와 tradingview.com 링크가 필요하다.
+차트 위 로고는 끄고, 메뉴(데스크톱 ≡ 서랍·폰 메뉴 탭) 맨 아래 "차트 엔진: TradingView Lightweight Charts™" 링크로 이를 충족한다.
 
 ## 주의
 
