@@ -10,6 +10,7 @@ import { WidgetBar } from './components/WidgetBar'
 import type { WidgetId } from './lib/widgets'
 import { MainMenuDrawer } from './components/MainMenuDrawer'
 import { SettingsDialog } from './components/SettingsDialog'
+import { IndicatorSettingsDialog } from './components/IndicatorSettingsDialog'
 import { QuickSearchDialog } from './components/QuickSearchDialog'
 import { QuickIntervalBox } from './components/QuickIntervalBox'
 import { Toasts, type Toast } from './components/Toasts'
@@ -131,6 +132,8 @@ function App() {
   const [alertPrice, setAlertPrice] = useState<number | null>(null)
   /** 범례 🔔 로 열면 그 지표를 미리 고른다. */
   const [alertIndicatorId, setAlertIndicatorId] = useState<string | null>(null)
+  /** 설정 창을 연 지표(범례 ⚙·지표 이름 두 번 누르기·객체 트리). */
+  const [editIndicatorId, setEditIndicatorId] = useState<string | null>(null)
   const [chartMenu, setChartMenu] = useState<(ChartMenuRequest & { cellIndex: number }) | null>(null)
   /** 칸별 "시간 기준 세로 커서 고정" 시각. */
   const [cursorLocks, setCursorLocks] = useState<Record<number, number | null>>({})
@@ -807,6 +810,7 @@ function App() {
         onPrice={handlePrice}
         onContextMenu={(req) => setChartMenu({ ...req, cellIndex: index })}
         onIndicatorAlert={openIndicatorAlert}
+        onEditIndicator={setEditIndicatorId}
         onScaleMenu={isMobile ? () => setMobileSheet('scale') : undefined}
       />
       </ErrorBoundary>
@@ -874,6 +878,7 @@ function App() {
               setIndicators((prev) => prev.map((i) => (i.id === indId ? { ...i, visible: !i.visible } : i)))
             }
             onRemoveIndicator={(indId) => setIndicators((prev) => prev.filter((i) => i.id !== indId))}
+            onEditIndicator={setEditIndicatorId}
           />
         )
       case 'mtf':
@@ -1044,6 +1049,12 @@ function App() {
       <ContextMenu at={chartMenu} entries={chartMenu ? chartMenuEntries(chartMenu) : []} onClose={closeChartMenu} />
 
       <SettingsDialog open={settingsOpen} onClose={() => setSettingsOpen(false)} settings={settings} onChange={setSettings} />
+
+      <IndicatorSettingsDialog
+        instance={editIndicatorId ? indicators.find((i) => i.id === editIndicatorId) ?? null : null}
+        onChange={(next) => setIndicators((prev) => prev.map((i) => (i.id === next.id ? next : i)))}
+        onClose={() => setEditIndicatorId(null)}
+      />
 
       <QuickSearchDialog
         open={quickOpen}

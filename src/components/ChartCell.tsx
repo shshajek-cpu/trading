@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Chart, type PaneInfo, type CompareInfo } from './Chart'
 import { CoinIcon } from './CoinIcon'
-import { IndicatorSettingsDialog } from './IndicatorSettingsDialog'
 import { useBinanceKlines } from '../hooks/useBinanceKlines'
 import { useBinanceWebSocket } from '../hooks/useBinanceWebSocket'
 import { useTicker24h } from '../hooks/useTicker24h'
@@ -81,25 +80,34 @@ export interface ChartCellProps {
   onContextMenu?: (req: ChartMenuRequest) => void
   /** 범례의 🔔 — 그 지표로 알림 만들기. */
   onIndicatorAlert?: (instanceId: string) => void
+  /** 범례의 ⚙(또는 지표 이름 두 번 누르기) — 그 지표의 설정 창을 연다. */
+  onEditIndicator?: (instanceId: string) => void
   /** 폰: 시간축 오른쪽 모서리의 ⚙ — 가격 축 시트를 연다. */
   onScaleMenu?: () => void
 }
 
 /** 범례 조작용 소형 아이콘(직접 그린 SVG). */
-function Ctl({ name }: { name: 'eye' | 'eyeOff' | 'gear' | 'trash' | 'caret' | 'close' | 'bell' }) {
+function Ctl({ name }: { name: 'eye' | 'eyeOff' | 'gear' | 'caret' | 'close' | 'bell' }) {
   const p: Record<typeof name, string> = {
     eye: 'M8 3.5C4.5 3.5 2 8 2 8s2.5 4.5 6 4.5S14 8 14 8 11.5 3.5 8 3.5Zm0 7A2.5 2.5 0 1 1 8 5.5a2.5 2.5 0 0 1 0 5Z',
     eyeOff: 'M2 2l12 12M6 6.2A2.5 2.5 0 0 0 9.8 9.8M8 3.5c3.5 0 6 4.5 6 4.5a12 12 0 0 1-1.8 2.3M4 4.6A12 12 0 0 0 2 8s2.5 4.5 6 4.5',
     gear: 'M8 5.5A2.5 2.5 0 1 0 8 10.5 2.5 2.5 0 0 0 8 5.5Zm5.4 2.5-1.3-.4a4 4 0 0 0-.4-1l.7-1.2-1-1-1.2.7a4 4 0 0 0-1-.4L8.9 2.6H7.1L6.8 3.9a4 4 0 0 0-1 .4L4.6 3.6l-1 1 .7 1.2a4 4 0 0 0-.4 1l-1.3.4v1.6l1.3.4a4 4 0 0 0 .4 1l-.7 1.2 1 1 1.2-.7a4 4 0 0 0 1 .4l.3 1.3h1.8l.3-1.3a4 4 0 0 0 1-.4l1.2.7 1-1-.7-1.2a4 4 0 0 0 .4-1l1.3-.4Z',
-    trash: 'M5 3V2h6v1h3v1.5H2V3h3Zm-1 3h8l-.6 8H4.6L4 6Z',
     caret: 'M4 6l4 4 4-4',
     close: 'M3 3l10 10M13 3 3 13',
     bell: 'M8 2.5a3.5 3.5 0 0 0-3.5 3.5v2.6L3 11h10l-1.5-2.4V6A3.5 3.5 0 0 0 8 2.5ZM6.6 12.8a1.5 1.5 0 0 0 2.8 0',
   }
   const stroke = name === 'caret' || name === 'close' || name === 'eyeOff' || name === 'bell'
   return (
-    <svg viewBox="0 0 16 16" width={14} height={14} aria-hidden="true">
-      <path d={p[name]} fill={stroke ? 'none' : 'currentColor'} stroke={stroke ? 'currentColor' : 'none'} strokeWidth={1.4} strokeLinecap="round" strokeLinejoin="round" />
+    <svg viewBox="0 0 16 16" width={16} height={16} aria-hidden="true">
+      <path
+        d={p[name]}
+        fill={stroke ? 'none' : 'currentColor'}
+        fillRule="evenodd"
+        stroke={stroke ? 'currentColor' : 'none'}
+        strokeWidth={1.4}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
     </svg>
   )
 }
@@ -146,12 +154,14 @@ export function ChartCell({
   gridStyle,
   onContextMenu,
   onIndicatorAlert,
+  onEditIndicator,
   onScaleMenu,
 }: ChartCellProps) {
   const [liveCandle, setLiveCandle] = useState<Candle | null>(null)
   const [hoverTime, setHoverTime] = useState<number | null>(null)
   const [collapsed, setCollapsed] = useState(false)
-  const [settingsFor, setSettingsFor] = useState<string | null>(null)
+  // 손가락으로 지표 줄을 눌러 조작 버튼을 편 지표(마우스는 올리기만 해도 보인다).
+  const [ctlOpenFor, setCtlOpenFor] = useState<string | null>(null)
   const [panes, setPanes] = useState<{ list: PaneInfo[]; axisWidth: number }>({ list: [], axisWidth: 64 })
   const [compareInfo, setCompareInfo] = useState<CompareInfo[]>([])
   const [narrow, setNarrow] = useState(false)
@@ -423,10 +433,8 @@ export function ChartCell({
     (id: string) => onIndicatorsChange(indicators.filter((i) => i.id !== id)),
     [indicators, onIndicatorsChange],
   )
-  const updateIndicator = useCallback(
-    (next: IndicatorInstance) => onIndicatorsChange(indicators.map((i) => (i.id === next.id ? next : i))),
-    [indicators, onIndicatorsChange],
-  )
+  // 미니창(PiP)은 보기 전용이다 — 설정·알림 창이 본 창에 뜨므로 범례 조작 버튼을 두지 않는다.
+  const legendControls = cellIndex !== null
 
   const overlays = indicators.filter((i) => {
     const c = computedById[i.id]
@@ -436,16 +444,31 @@ export function ChartCell({
     const c = computedById[i.id]
     return c && !c.overlay && !c.isVolume
   })
-  const settingsInstance = settingsFor ? indicators.find((i) => i.id === settingsFor) ?? null : null
+  const ctlOpen = ctlOpenFor !== null && indicators.some((i) => i.id === ctlOpenFor) ? ctlOpenFor : null
 
   const fmtPrice = (v: number) => formatPrice(v, pricePrecision)
 
   const renderIndicatorRow = (inst: IndicatorInstance) => {
     const comp = computedById[inst.id]
     const entries = comp && inst.visible ? indicatorLegend(comp, hoverTime, fmtPrice) : []
+    const open = ctlOpen === inst.id
     return (
-      <div className="tv-ind-row" key={inst.id}>
-        <span className="tv-ind-title">{indicatorTitle(inst)}</span>
+      // 줄을 누르면(터치) 조작 버튼을 펴고 접는다. 버튼 누름은 버튼이 처리한다.
+      // eslint-disable-next-line jsx-a11y/no-static-element-interactions, jsx-a11y/click-events-have-key-events
+      <div
+        className={`tv-ind-row${open ? ' open' : ''}`}
+        key={inst.id}
+        onClick={(e) => {
+          if (!legendControls || (e.target as Element).closest('button')) return
+          setCtlOpenFor(open ? null : inst.id)
+        }}
+      >
+        <span
+          className="tv-ind-title"
+          onDoubleClick={legendControls && onEditIndicator ? () => onEditIndicator(inst.id) : undefined}
+        >
+          {indicatorTitle(inst)}
+        </span>
         {inst.visible ? (
           entries.map((e, i) => (
             <span key={i} className="tv-ind-val" style={{ color: e.color }}>
@@ -456,22 +479,36 @@ export function ChartCell({
         ) : (
           <span className="tv-ind-hidden">숨김</span>
         )}
-        <span className="tv-ind-ctl">
-          <button type="button" title={inst.visible ? '숨기기' : '표시'} onClick={() => toggleVisible(inst.id)}>
-            <Ctl name={inst.visible ? 'eye' : 'eyeOff'} />
-          </button>
-          <button type="button" title="설정" onClick={() => setSettingsFor(inst.id)}>
-            <Ctl name="gear" />
-          </button>
-          {onIndicatorAlert && (
-            <button type="button" title="이 지표에 알림 추가" onClick={() => onIndicatorAlert(inst.id)}>
-              <Ctl name="bell" />
+        {legendControls && (
+          <span className="tv-ind-ctl">
+            <button
+              type="button"
+              title={inst.visible ? '숨기기' : '표시'}
+              aria-label={inst.visible ? '숨기기' : '표시'}
+              onClick={() => toggleVisible(inst.id)}
+            >
+              <Ctl name={inst.visible ? 'eye' : 'eyeOff'} />
             </button>
-          )}
-          <button type="button" title="삭제" onClick={() => removeIndicator(inst.id)}>
-            <Ctl name="trash" />
-          </button>
-        </span>
+            {onEditIndicator && (
+              <button type="button" title="설정" aria-label="설정" onClick={() => onEditIndicator(inst.id)}>
+                <Ctl name="gear" />
+              </button>
+            )}
+            {onIndicatorAlert && (
+              <button
+                type="button"
+                title="이 지표에 알림 추가"
+                aria-label="이 지표에 알림 추가"
+                onClick={() => onIndicatorAlert(inst.id)}
+              >
+                <Ctl name="bell" />
+              </button>
+            )}
+            <button type="button" title="삭제" aria-label="삭제" onClick={() => removeIndicator(inst.id)}>
+              <Ctl name="close" />
+            </button>
+          </span>
+        )}
       </div>
     )
   }
@@ -714,14 +751,6 @@ export function ChartCell({
           </div>
         )}
       </div>
-
-      {settingsInstance && (
-        <IndicatorSettingsDialog
-          instance={settingsInstance}
-          onChange={updateIndicator}
-          onClose={() => setSettingsFor(null)}
-        />
-      )}
     </section>
   )
 }

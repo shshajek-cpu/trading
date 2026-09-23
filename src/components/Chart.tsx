@@ -886,13 +886,13 @@ export function Chart({
     const first = window.setTimeout(report, 80)
     const timer = window.setInterval(report, 500)
 
-    // 리사이즈 종료 저장: 차트 안에서 시작(pointerdown)한 드래그가 끝나면(document 의 pointerup) 저장한다.
-    // 컨테이너 밖에서 손을 떼도 잡히도록 pointerup 은 document 에 건다(예전엔 컨테이너에만 걸려 밖에서
-    // 끝난 드래그가 저장되지 않아 1초 안에 되돌아갔다).
+    // 리사이즈 종료 저장: 차트 안에서 시작(pointerdown)한 드래그가 끝나면(문서의 pointerup) 저장한다.
+    // 컨테이너 밖에서 손을 떼도 잡히도록 pointerup 은 문서에 건다. 미니창(PiP)에서는 그 창의 문서다.
     const container = containerRef.current
+    const doc = container?.ownerDocument ?? document
     let downInside = false
-    const onDown = (e: PointerEvent) => {
-      downInside = !!container && e.target instanceof Node && container.contains(e.target)
+    const onDown = () => {
+      downInside = true
     }
     const onUp = () => {
       if (!downInside) return
@@ -903,13 +903,13 @@ export function Chart({
       if (sizes.length > 1) savePaneSizes(oscKey, sizes)
     }
     container?.addEventListener('pointerdown', onDown)
-    document.addEventListener('pointerup', onUp)
+    doc.addEventListener('pointerup', onUp)
 
     return () => {
       window.clearTimeout(first)
       window.clearInterval(timer)
       container?.removeEventListener('pointerdown', onDown)
-      document.removeEventListener('pointerup', onUp)
+      doc.removeEventListener('pointerup', onUp)
     }
   }, [oscKey])
 

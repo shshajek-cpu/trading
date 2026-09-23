@@ -1,6 +1,7 @@
 import { useMemo } from 'react'
 import { DRAWING_LABELS, type Drawing } from '../lib/drawings'
 import { ToolIcon, type IconName } from '../chart/drawing/toolIcons'
+import { Icon } from './Icon'
 import './ObjectTree.css'
 
 export interface ObjectTreeProps {
@@ -11,6 +12,7 @@ export interface ObjectTreeProps {
   onRemoveDrawing: (id: string) => void
   onToggleIndicator: (id: string) => void
   onRemoveIndicator: (id: string) => void
+  onEditIndicator: (id: string) => void
 }
 
 export function ObjectTree({
@@ -21,6 +23,7 @@ export function ObjectTree({
   onRemoveDrawing,
   onToggleIndicator,
   onRemoveIndicator,
+  onEditIndicator,
 }: ObjectTreeProps) {
   const mine = useMemo(
     () => drawings.filter((d) => d.symbol === symbol),
@@ -119,6 +122,15 @@ export function ObjectTree({
                 onClick={() => onToggleIndicator(ind.id)}
               >
                 <ToolIcon name={ind.visible ? 'eye' : 'hideAll'} size={16} />
+              </button>
+              <button
+                type="button"
+                className="tv-objtree-act"
+                title="설정"
+                aria-label="설정"
+                onClick={() => onEditIndicator(ind.id)}
+              >
+                <Icon name="settings" size={16} />
               </button>
               <button
                 type="button"

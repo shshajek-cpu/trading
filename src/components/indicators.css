@@ -100,6 +100,14 @@
   width: 96px;
   text-align: right;
 }
+.ind-num.invalid {
+  border-color: var(--tv-down);
+}
+.ind-settings-empty {
+  margin: 12px 0;
+  color: var(--tv-text-dim);
+  font-size: var(--tv-fs-sm);
+}
 
 /* ── 템플릿 메뉴 ── */
 .tpl-menu {

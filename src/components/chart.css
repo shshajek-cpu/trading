@@ -160,16 +160,39 @@
   opacity: 0;
   transition: opacity var(--tv-fast);
 }
-.tv-ind-row:hover .tv-ind-ctl {
+.tv-ind-row:hover .tv-ind-ctl,
+.tv-ind-row.open .tv-ind-ctl {
   opacity: 1;
+}
+/* 지표 줄은 눌러서 조작 버튼을 펼 수 있어야 한다(터치). 줄 밖 범례는 차트 조작을 가리지 않는다. */
+.tv-legend .tv-ind-row,
+.tv-osc-legend .tv-ind-row {
+  pointer-events: auto;
+}
+.tv-ind-row.open {
+  background: color-mix(in srgb, var(--tv-elevated) 85%, transparent);
+}
+/* 손가락: 접힌 버튼이 눌리지 않게 숨기고, 펴면 누르기 쉬운 크기로. */
+@media (hover: none) {
+  .tv-ind-row:not(.open) .tv-ind-ctl {
+    display: none;
+  }
+  .tv-ind-row.open .tv-ind-ctl button {
+    width: 30px;
+    height: 30px;
+  }
+  .tv-ind-row.open .tv-ind-ctl svg {
+    width: 18px;
+    height: 18px;
+  }
 }
 .tv-ind-ctl button,
 .tv-ind-row.compare button {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 18px;
-  height: 18px;
+  width: 22px;
+  height: 22px;
   border: 0;
   border-radius: var(--tv-radius-sm);
   background: none;

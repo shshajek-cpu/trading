@@ -1273,3 +1273,23 @@
   font-size: var(--tv-fs-xs);
   word-break: break-word;
 }
+
+/* ══ 미니창(Document PiP) ══════════════════════════════════════════ */
+/* 포털 대상이 창 전체를 채워야 차트가 제 높이를 받는다(없으면 범례 한 줄 높이로 쪼그라든다). */
+html:has(> .pip-body),
+.pip-body {
+  height: 100%;
+  margin: 0;
+}
+.pip-body {
+  overflow: hidden;
+  background: var(--tv-bg);
+}
+.pip-root {
+  display: flex;
+  height: 100%;
+}
+.pip-root > .chart-cell {
+  flex: 1;
+  min-width: 0;
+}
