@@ -8,7 +8,7 @@ export interface ChartSettings {
   /** Candle / bar colors. Wicks and borders follow the body color. */
   upColor: string
   downColor: string
-  /** Status line (legend): 왼쪽 위 심볼 이름 줄 + 시고저종 줄. 끄면 둘 다 숨긴다(지표 범례는 따로). */
+  /** Status line (legend): 왼쪽 위 심볼 이름 줄 + 시고저종 줄. 끄면 둘 다 숨긴다. */
   showStatusLine: boolean
   showLegendOhlc: boolean
   showIndicatorLegend: boolean
@@ -89,4 +89,15 @@ export function saveChartSettings(settings: ChartSettings): void {
   } catch {
     /* quota errors keep the in-memory value */
   }
+}
+
+/** 범례(심볼 이름·시고저종 줄 또는 지표 이름 줄)가 하나라도 보이는지 — 상단 바 범례 버튼의 눌림 상태. */
+export function legendShown(s: ChartSettings): boolean {
+  return s.showStatusLine || s.showIndicatorLegend
+}
+
+/** 범례 버튼: 하나라도 보이면 모두 숨기고, 모두 숨었으면 모두 보인다. 세부는 설정 → 상태 줄에서 따로 켠다. */
+export function toggleLegend(s: ChartSettings): ChartSettings {
+  const show = !legendShown(s)
+  return { ...s, showStatusLine: show, showIndicatorLegend: show }
 }

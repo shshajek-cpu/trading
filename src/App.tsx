@@ -79,7 +79,13 @@ import {
   indicatorTitle,
   type IndicatorInstance,
 } from './lib/indicatorConfig'
-import { loadChartSettings, saveChartSettings, type ChartSettings } from './lib/chartSettings'
+import {
+  legendShown,
+  loadChartSettings,
+  saveChartSettings,
+  toggleLegend,
+  type ChartSettings,
+} from './lib/chartSettings'
 import { describeSymbol, displaySymbol, priceDecimals } from './lib/symbols'
 import { defaultStyle, type Drawing, type DrawingTool, type MagnetMode, type NewDrawing } from './lib/drawings'
 import type { PinSide } from './lib/pins'
@@ -962,8 +968,8 @@ function App() {
     saved,
     onQuickSearch: () => setQuickOpen(true),
     onSettings: () => setSettingsOpen(true),
-    statusLine: settings.showStatusLine,
-    onToggleStatusLine: () => setSettings((prev) => ({ ...prev, showStatusLine: !prev.showStatusLine })),
+    legend: legendShown(settings),
+    onToggleLegend: () => setSettings(toggleLegend),
     fullscreen: fullscreen.active,
     onFullscreen: () => void fullscreen.toggle(),
     onSnapshotDownload: snapshotDownload,
@@ -1138,7 +1144,7 @@ function App() {
 
   // ── mobile app (TradingView 앱 구조: 아래 탭 + 차트 도구 줄 + 아래 시트) ──
   if (isMobile) {
-    const toggleSetting = (key: 'showCountdown' | 'showPriceLine' | 'showLastPriceLabel' | 'showStatusLine') => () =>
+    const toggleSetting = (key: 'showCountdown' | 'showPriceLine' | 'showLastPriceLabel') => () =>
       setSettings((prev) => ({ ...prev, [key]: !prev[key] }))
     const scaleEntries: MenuEntry[] = [
       ...chartMenuEntries({ x: 0, y: 0, target: { kind: 'priceScale' }, cellIndex: active }),
@@ -1147,7 +1153,7 @@ function App() {
       { type: 'item', label: '현재가 선', checked: settings.showPriceLine, onSelect: toggleSetting('showPriceLine') },
       { type: 'item', label: '현재가 라벨', checked: settings.showLastPriceLabel, onSelect: toggleSetting('showLastPriceLabel') },
       { type: 'divider' },
-      { type: 'item', label: '심볼 이름 · 시고저종 줄', checked: settings.showStatusLine, onSelect: toggleSetting('showStatusLine') },
+      { type: 'item', label: '범례 (심볼 · 지표 이름)', checked: legendShown(settings), onSelect: () => setSettings(toggleLegend) },
     ]
     return (
       <>

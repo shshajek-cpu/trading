@@ -42,9 +42,9 @@ export interface TopToolbarProps {
   saved: boolean
   onQuickSearch: () => void
   onSettings: () => void
-  /** 왼쪽 위 심볼 이름·시고저종 줄(상태 줄)을 보이는지. */
-  statusLine: boolean
-  onToggleStatusLine: () => void
+  /** 왼쪽 위 범례(심볼 이름·시고저종 줄, 지표 이름 줄)가 보이는지. */
+  legend: boolean
+  onToggleLegend: () => void
   fullscreen: boolean
   onFullscreen: () => void
   onSnapshotDownload: () => void
@@ -84,8 +84,8 @@ export function TopToolbar(props: TopToolbarProps) {
     saved,
     onQuickSearch,
     onSettings,
-    statusLine,
-    onToggleStatusLine,
+    legend,
+    onToggleLegend,
     fullscreen,
     onFullscreen,
     onSnapshotDownload,
@@ -259,13 +259,13 @@ export function TopToolbar(props: TopToolbarProps) {
 
       <button
         type="button"
-        className={`tv-tb-btn${statusLine ? ' active' : ''}`}
-        title={statusLine ? '심볼 이름·시고저종 줄 숨기기' : '심볼 이름·시고저종 줄 보이기'}
-        aria-label="심볼 이름·시고저종 줄"
-        aria-pressed={statusLine}
-        onClick={onToggleStatusLine}
+        className={`tv-tb-btn${legend ? ' active' : ''}`}
+        title={legend ? '범례 숨기기 (심볼·지표 이름)' : '범례 보이기 (심볼·지표 이름)'}
+        aria-label="범례"
+        aria-pressed={legend}
+        onClick={onToggleLegend}
       >
-        <Icon name="statusLine" size={22} />
+        <Icon name="legend" size={22} />
       </button>
 
       <button type="button" className="tv-tb-btn" title="설정" aria-label="설정" onClick={onSettings}>
