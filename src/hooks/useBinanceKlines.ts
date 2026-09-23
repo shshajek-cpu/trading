@@ -13,6 +13,11 @@ export interface UseBinanceKlinesResult {
   loadingOlder: boolean
   /** 거래소에 더 이상 과거가 없음. */
   exhausted: boolean
+  /**
+   * 실시간으로 끝난 봉을 목록에 확정한다(같은 시각이면 바꾸고, 바로 다음 봉이면 붙인다).
+   * 사이에 빠진 봉이 있으면(끊겨 있던 동안) 붙이지 않고 다시 받아 메운다.
+   */
+  commit: (candle: Candle) => void
 }
 
 const MAX_ATTEMPTS = 4
@@ -194,5 +199,24 @@ export function useBinanceKlines(
 
   const reload = useCallback(() => load(), [load])
 
-  return { candles, loading, error, reload, loadOlder, loadingOlder, exhausted }
+  const commit = useCallback(
+    (candle: Candle) => {
+      const last = candlesRef.current[candlesRef.current.length - 1]
+      if (!last || candle.time < last.time) return
+      if (candle.time - last.time > INTERVAL_SECONDS[interval] * 1.5) {
+        // 붙이면 그 사이 봉이 빠진 채 이어져 가격이 뚝 끊겨 보인다 — 다시 받아 메운다.
+        if (rateLimitedUntil() <= Date.now()) reloadRef.current?.()
+        return
+      }
+      setCandles((prev) => {
+        const tail = prev[prev.length - 1]
+        if (!tail || candle.time < tail.time) return prev
+        if (candle.time === tail.time) return [...prev.slice(0, -1), candle]
+        return [...prev, candle]
+      })
+    },
+    [interval],
+  )
+
+  return { candles, loading, error, reload, loadOlder, loadingOlder, exhausted, commit }
 }

@@ -331,6 +331,8 @@ export function Chart({
       candles.length === prev.length + 1 &&
       candles[candles.length - 2].time === prev[prev.length - 1].time
     ) {
+      // 막 끝난 봉의 마지막 값(마감 틱)이 아직 안 들어갔을 수 있다 — 그 봉을 먼저 고치고 새 봉을 붙인다.
+      series.update(mainSeriesPoint(chartType, candles[candles.length - 2], colors) as never)
       series.update(mainSeriesPoint(chartType, candles[candles.length - 1], colors) as never)
       tick = true
     } else {

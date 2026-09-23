@@ -177,7 +177,7 @@ export function ChartCell({
   const replayBaseRef = useRef<Candle[]>([])
 
   const ticker = useTicker24h(symbol)
-  const { candles, loading, error, reload, loadOlder, loadingOlder, exhausted } = useBinanceKlines(symbol, interval)
+  const { candles, loading, error, reload, loadOlder, loadingOlder, exhausted, commit } = useBinanceKlines(symbol, interval)
 
   const lastTickRef = useRef(0)
   const onPriceRef = useRef(onPrice)
@@ -211,10 +211,14 @@ export function ChartCell({
   const handleCandle = useCallback(
     (candle: Candle) => {
       lastTickRef.current = Date.now()
+      // 새 봉이 시작되면 방금 끝난 봉을 목록에 확정한다. 차트에는 받아 둔 목록 + 진행 중인 봉 하나만 얹히므로,
+      // 확정하지 않으면 지켜보는 동안 끝난 봉들이 사라지고 새 봉이 한참 전 봉 옆에 붙어 가격이 뚝 끊겨 보인다.
+      const current = pendingRef.current ?? liveRef.current
+      if (current && candle.time > current.time) commit(current)
       pendingRef.current = candle
       scheduleFlush()
     },
-    [scheduleFlush],
+    [scheduleFlush, commit],
   )
 
   // 체결로 현재 봉의 종가·고가·저가·거래량을 바로 움직인다. 봉 이벤트가 오면 그 값으로 바로잡힌다.
