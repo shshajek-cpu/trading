@@ -31,9 +31,22 @@ export interface WatchRecord {
     condition: 'above' | 'below'
     price: number
   }[]
-  /** 마지막으로 관측한 가격 — 교차 판정 기준점. */
-  seen: Record<string, number>
   firedIds: string[]
+}
+
+/** 감시기(worker/index.ts)가 매분 읽는 감시 대상 코드 목록. 두 곳의 키 이름이 같아야 한다. */
+const INDEX_KEY = 'w-index'
+
+/**
+ * 구독과 알림이 모두 있는 코드만 색인에 둔다. 바뀔 때만 쓴다(무료 플랜 KV 쓰기 한도 아끼기).
+ * 동시에 두 코드가 바뀌어 한쪽이 빠져도 감시기가 정각마다 목록 조회로 색인을 바로잡는다.
+ */
+async function syncIndex(env: Env, code: string, watching: boolean): Promise<void> {
+  const index = (await env.SETTINGS.get<string[]>(INDEX_KEY, 'json')) ?? []
+  const has = index.includes(code)
+  if (watching === has) return
+  const next = watching ? [...index, code].sort() : index.filter((c) => c !== code)
+  await env.SETTINGS.put(INDEX_KEY, JSON.stringify(next))
 }
 
 function bad(message: string, status: number): Response {
@@ -65,11 +78,11 @@ export const onRequestPut: PagesFunction<Env> = async ({ request, env }) => {
     subs: uniqueSubs.slice(0, 10),
     alerts: alerts.slice(0, 100),
     // 사라진 알림의 흔적은 같이 지운다.
-    seen: prev?.seen ?? {},
     firedIds: (prev?.firedIds ?? []).filter((id) => alive.has(id)),
   }
 
   await env.SETTINGS.put(`w:${code}`, JSON.stringify(record))
+  await syncIndex(env, code, record.subs.length > 0 && record.alerts.length > 0)
   return new Response(JSON.stringify({ ok: true, watching: alerts.length }), {
     headers: JSON_HEADERS,
   })
@@ -109,5 +122,6 @@ export const onRequestDelete: PagesFunction<Env> = async ({ request, env }) => {
 
   record.subs = endpoint ? record.subs.filter((s) => s.endpoint !== endpoint) : []
   await env.SETTINGS.put(`w:${code}`, JSON.stringify(record))
+  await syncIndex(env, code, record.subs.length > 0 && record.alerts.length > 0)
   return new Response(JSON.stringify({ ok: true }), { headers: JSON_HEADERS })
 }

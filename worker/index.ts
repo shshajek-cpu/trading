@@ -1,9 +1,14 @@
 /**
- * 가격 알림 감시기 (Cron).
+ * 가격 알림 감시기 (Cron, 1분마다).
  *
  * 앱이 꺼져 있어도 알림이 가야 하므로 서버가 대신 시세를 본다.
  * 바이낸스·Bybit 는 데이터센터 IP 를 막아서(403) 같은 USDT 무기한 선물 시세를 gate.io 에서 읽는다.
  * 가격차는 0.01% 미만이라 알림 용도에 충분하다.
+ *
+ * Workers 무료 플랜 KV 한도(하루 목록 조회 1,000회·쓰기 1,000회) 안에서 돈다:
+ * - 매분 목록을 조회하지 않고 감시 대상 코드 목록 키(`w-index`) 하나만 읽는다.
+ *   목록 조회는 정각마다 한 번(하루 24회) 색인을 다시 맞출 때만 쓴다.
+ * - 기록은 알림이 실제로 울렸을 때만 한다(예전에는 매분 모든 코드를 다시 썼다).
  */
 import { sendPush, type PushSubscription } from './webpush'
 
@@ -24,10 +29,11 @@ interface WatchAlert {
 interface WatchRecord {
   subs: PushSubscription[]
   alerts: WatchAlert[]
-  /** 알림 id → 직전 관측가. 심볼별로 두면 새 알림이 남의 관측값에 막힌다. */
-  seen: Record<string, number>
   firedIds: string[]
 }
+
+/** 감시할 동기화 코드 목록. /api/push 가 구독·알림이 바뀔 때 맞춘다. */
+const INDEX_KEY = 'w-index'
 
 const TICKERS_URL = 'https://api.gateio.ws/api/v4/futures/usdt/tickers'
 
@@ -44,56 +50,65 @@ async function fetchPrices(): Promise<Map<string, number>> {
   return map
 }
 
-/**
- * 알림을 울려야 하는지 본다.
- *
- * 기준점을 잡았을 때 이미 조건을 넘어서있으면 교차를 기다려도 오지 않는다.
- * 그런 건 등록 직후 한 번 알려주는 게 맞다 — 사용자는 "그 값이 되면"을 원한 것이다.
- */
-function shouldFire(alert: WatchAlert, prev: number | undefined, now: number): boolean {
-  const meets = alert.condition === 'above' ? now >= alert.price : now <= alert.price
-  if (!meets) return false
-  // 직전에도 이미 만족하고 있었다면 새로 울릴 일이 아니다(중복 방지).
-  if (prev === undefined) return true
-  const metBefore = alert.condition === 'above' ? prev >= alert.price : prev <= alert.price
-  return !metBefore
+/** 조건을 만족하면 울린다. 한 번 울린 알림은 firedIds 에 남아 다시 울리지 않는다. */
+function meets(alert: WatchAlert, now: number): boolean {
+  return alert.condition === 'above' ? now >= alert.price : now <= alert.price
 }
 
-async function checkAll(env: Env): Promise<void> {
-  const prices = await fetchPrices()
-  const list = await env.SETTINGS.list({ prefix: 'w:' })
+/**
+ * 목록 조회로 감시 대상 색인을 다시 만든다(색인이 없을 때, 그리고 정각마다 — 동시 수정으로 어긋난 색인을 바로잡는다).
+ * 구독과 알림이 모두 있는 코드만 넣어 매분 읽을 기록 수를 줄인다.
+ */
+async function rebuildIndex(env: Env, current: string[] | null): Promise<string[]> {
+  const codes: string[] = []
+  let cursor: string | undefined
+  do {
+    const page = await env.SETTINGS.list({ prefix: 'w:', cursor })
+    for (const key of page.keys) {
+      const record = await env.SETTINGS.get<WatchRecord>(key.name, 'json')
+      if (record && record.subs.length > 0 && record.alerts.length > 0) codes.push(key.name.slice(2))
+    }
+    cursor = page.list_complete ? undefined : page.cursor
+  } while (cursor)
+  codes.sort()
+  if (!current || current.join(',') !== codes.join(',')) {
+    await env.SETTINGS.put(INDEX_KEY, JSON.stringify(codes))
+  }
+  return codes
+}
 
-  for (const key of list.keys) {
-    const record = await env.SETTINGS.get<WatchRecord>(key.name, 'json')
+async function checkAll(env: Env, rebuild: boolean): Promise<void> {
+  const stored = await env.SETTINGS.get<string[]>(INDEX_KEY, 'json')
+  const codes = rebuild || !stored ? await rebuildIndex(env, stored) : stored
+  if (codes.length === 0) return
+  const prices = await fetchPrices()
+
+  for (const code of codes) {
+    const key = `w:${code}`
+    const record = await env.SETTINGS.get<WatchRecord>(key, 'json')
     if (!record || record.subs.length === 0 || record.alerts.length === 0) continue
 
     const fired = new Set(record.firedIds)
-    const seen: Record<string, number> = { ...record.seen }
-    const hits: WatchAlert[] = []
-
-    const alive = new Set(record.alerts.map((a) => a.id))
-    for (const alert of record.alerts) {
+    const hits = record.alerts.filter((alert) => {
       const now = prices.get(alert.symbol)
-      if (now === undefined) continue
-      if (!fired.has(alert.id) && shouldFire(alert, seen[alert.id], now)) {
-        hits.push(alert)
-        fired.add(alert.id)
-      }
-      seen[alert.id] = now
-    }
-    // 지운 알림의 흔적은 남기지 않는다.
-    for (const id of Object.keys(seen)) if (!alive.has(id)) delete seen[id]
+      return now !== undefined && !fired.has(alert.id) && meets(alert, now)
+    })
+    // 울릴 것이 없으면 아무것도 쓰지 않는다 — 무료 한도의 대부분이 여기서 아껴진다.
+    if (hits.length === 0) continue
 
-    if (hits.length > 0) {
-      const dead: string[] = []
-      for (const alert of hits) {
-        const price = prices.get(alert.symbol) ?? alert.price
-        const payload = JSON.stringify({
-          title: `${alert.symbol} ${alert.condition === 'above' ? '▲' : '▼'} ${alert.price}`,
-          body: `현재가 ${price}`,
-          tag: alert.id,
-        })
-        for (const sub of record.subs) {
+    const dead: string[] = []
+    for (const alert of hits) {
+      fired.add(alert.id)
+      const price = prices.get(alert.symbol) ?? alert.price
+      const payload = JSON.stringify({
+        title: `${alert.symbol} ${alert.condition === 'above' ? '▲' : '▼'} ${alert.price}`,
+        body: `현재가 ${price}`,
+        tag: alert.id,
+      })
+      for (const sub of record.subs) {
+        // 한 기기의 발송 실패(네트워크 등)가 나머지 기기와 발동 기록을 막지 않게 한다.
+        // 기록이 안 남으면 매분 같은 알림이 다시 울린다.
+        try {
           const r = await sendPush(sub, payload, {
             publicKey: env.VAPID_PUBLIC_KEY,
             privateKey: env.VAPID_PRIVATE_KEY,
@@ -101,21 +116,28 @@ async function checkAll(env: Env): Promise<void> {
           })
           // 404/410 은 구독이 죽은 것 — 다음부터 빼둔다.
           if (!r.ok && (r.status === 404 || r.status === 410)) dead.push(sub.endpoint)
+        } catch (e) {
+          console.error('push failed', sub.endpoint, e)
         }
       }
-      if (dead.length > 0) record.subs = record.subs.filter((s) => !dead.includes(s.endpoint))
     }
 
     await env.SETTINGS.put(
-      key.name,
-      JSON.stringify({ ...record, seen, firedIds: [...fired] } satisfies WatchRecord),
+      key,
+      JSON.stringify({
+        subs: record.subs.filter((s) => !dead.includes(s.endpoint)),
+        alerts: record.alerts,
+        firedIds: [...fired],
+      } satisfies WatchRecord),
     )
   }
 }
 
 export default {
-  async scheduled(_event: ScheduledEvent, env: Env, ctx: ExecutionContext) {
-    ctx.waitUntil(checkAll(env))
+  async scheduled(event: ScheduledEvent, env: Env, ctx: ExecutionContext) {
+    // 정각에만 목록 조회로 색인을 다시 맞춘다(하루 24회 — 무료 한도 1,000회의 2.4%).
+    const rebuild = new Date(event.scheduledTime).getUTCMinutes() === 0
+    ctx.waitUntil(checkAll(env, rebuild))
   },
 
   /** 수동 점검용 — 크론을 기다리지 않고 바로 돌려본다. */
@@ -124,7 +146,7 @@ export default {
 
     if (url.pathname === '/run') {
       try {
-        await checkAll(env)
+        await checkAll(env, url.searchParams.get('rebuild') === '1')
         return new Response('ok')
       } catch (e) {
         return new Response(e instanceof Error ? e.message : String(e), { status: 500 })
@@ -140,7 +162,7 @@ export default {
       return Response.json({
         subs: rec?.subs.length ?? 0,
         alerts: rec?.alerts ?? [],
-        seen: rec?.seen ?? {},
+        watched: ((await env.SETTINGS.get<string[]>(INDEX_KEY, 'json')) ?? []).includes(code),
         firedIds: rec?.firedIds ?? [],
         livePrices: Object.fromEntries(
           (rec?.alerts ?? []).map((a) => [a.symbol, prices.get(a.symbol) ?? null]),
