@@ -334,10 +334,18 @@ export function Chart({
   }, [candles, mainSeries, chartType, colors, applyPendingRange])
 
   // ── 4) 스케일 모드 + 자동 스케일. ────────────────────────────────────
+  // 새로 만든 차트·새 메인 시리즈에는 아직 가격 구간이 없다. 이때 수동 스케일(auto 꺼짐)을 그대로
+  // 넘기면 캔들이 화면 밖에 남아 빈 차트가 된다(차트를 위아래로 끌면 auto 가 꺼지고, 그 상태가
+  // 저장돼 주기·종목·차트 종류를 바꾸거나 새로고침할 때마다 빈 화면이 됐다).
+  // TradingView 처럼 새 시리즈는 항상 auto 로 시작하고, 꺼져 있었다면 부모 상태도 켠다.
+  const scaleSeriesRef = useRef<MainSeries | null>(null)
   useEffect(() => {
     const chart = chartRef.current
-    if (!chart) return
-    chart.priceScale('right').applyOptions({ mode: SCALE_MODE_MAP[effectiveScale], autoScale })
+    if (!chart || !mainSeries) return
+    const fresh = scaleSeriesRef.current !== mainSeries
+    scaleSeriesRef.current = mainSeries
+    chart.priceScale('right').applyOptions({ mode: SCALE_MODE_MAP[effectiveScale], autoScale: fresh || autoScale })
+    if (fresh && !autoScale) cbRef.current.onAutoScaleChange?.(true)
   }, [effectiveScale, autoScale, mainSeries])
 
   // ── 4b) 가격 포맷: 천단위 구분 + 심볼 정밀도(축·라벨·카운트다운 공통). ─
