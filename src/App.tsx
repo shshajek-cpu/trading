@@ -13,8 +13,14 @@ import { SettingsDialog } from './components/SettingsDialog'
 import { QuickSearchDialog } from './components/QuickSearchDialog'
 import { QuickIntervalBox } from './components/QuickIntervalBox'
 import { Toasts, type Toast } from './components/Toasts'
-import { Icon } from './components/Icon'
+import { Icon, type IconName } from './components/Icon'
 import { Dialog } from './components/ui/Dialog'
+import { ContextMenu, type MenuEntry } from './components/ContextMenu'
+import { GoToDateDialog } from './components/GoToDateDialog'
+import { ToolIcon } from './chart/drawing/toolIcons'
+import { buildPoints, cloneOffset } from './chart/drawing/builders'
+import { copyDrawing, hasCopiedDrawing, pasteDrawing } from './chart/drawing/clipboard'
+import { formatPrice } from './chart/format'
 
 import { DrawingToolbar } from './components/DrawingToolbar'
 import { ObjectTree } from './components/ObjectTree'
@@ -63,33 +69,63 @@ import {
 } from './lib/indicatorConfig'
 import { loadChartSettings, saveChartSettings, type ChartSettings } from './lib/chartSettings'
 import { describeSymbol, displaySymbol, priceDecimals } from './lib/symbols'
-import type { Drawing, DrawingTool, MagnetMode, NewDrawing } from './lib/drawings'
+import { defaultStyle, type Drawing, type DrawingTool, type MagnetMode, type NewDrawing } from './lib/drawings'
 import type { PinSide } from './lib/pins'
 import type { FeatureSet } from './lib/features'
 import { randomCode } from './lib/syncCode'
 import { getChart } from './lib/chartRegistry'
-import type { ChartType } from './lib/chartTypes'
+import { SCALE_MODES, type ChartType, type ScaleMode } from './lib/chartTypes'
 import type { Interval } from './lib/binance'
+import type { ChartMenuRequest } from './lib/chartMenu'
+import { INTERVAL_SECONDS } from './lib/intervals'
 
 const TOAST_MS = 6000
 
-const SHORTCUTS: { keys: string; label: string }[] = [
-  { keys: 'Alt+T', label: '추세선' },
-  { keys: 'Alt+H', label: '수평선' },
-  { keys: 'Alt+J', label: '수평 광선' },
-  { keys: 'Alt+V', label: '수직선' },
-  { keys: 'Alt+C', label: '크로스라인' },
-  { keys: 'Alt+F', label: '피보나치' },
-  { keys: 'Alt+Shift+R', label: '사각형' },
-  { keys: 'Esc', label: '십자선으로 · 메뉴 닫기' },
-  { keys: 'Ctrl+Z / Ctrl+Y', label: '실행 취소 / 다시 실행' },
-  { keys: 'Alt+R', label: '차트 보기 초기화' },
-  { keys: 'Alt+A', label: '알림 만들기' },
-  { keys: 'Alt+S', label: '스냅샷' },
-  { keys: 'Ctrl+K', label: '빠른 검색' },
-  { keys: 'Shift+F', label: '전체 화면' },
-  { keys: '글자', label: '심볼 검색' },
-  { keys: '숫자', label: '주기 변경' },
+/** 키보드 단축키 도움말 — TradingView 단축키 표를 따른다. */
+const SHORTCUTS: { title: string; items: { keys: string; label: string }[] }[] = [
+  {
+    title: '차트',
+    items: [
+      { keys: '글자', label: '심볼 검색' },
+      { keys: '숫자 · ,', label: '주기 변경' },
+      { keys: '/', label: '지표' },
+      { keys: 'Ctrl+K', label: '빠른 검색' },
+      { keys: 'Ctrl+S', label: '레이아웃 저장' },
+      { keys: 'Ctrl+Z / Ctrl+Y', label: '실행 취소 / 다시 실행' },
+      { keys: '← / →', label: '차트 한 봉씩 이동' },
+      { keys: 'Ctrl+← / →', label: '차트 멀리 이동' },
+      { keys: 'Ctrl+↑ / ↓', label: '확대 / 축소' },
+      { keys: 'Alt+R', label: '차트 보기 초기화' },
+      { keys: 'Alt+G', label: '날짜로 이동' },
+      { keys: 'Alt+I', label: '눈금 반전' },
+      { keys: 'Alt+L', label: '로그 눈금 켜기/끄기' },
+      { keys: 'Alt+P', label: '퍼센트 눈금 켜기/끄기' },
+      { keys: 'Alt+A', label: '알림 만들기' },
+      { keys: 'Alt+W', label: '관심 목록에 추가' },
+      { keys: 'Alt+S', label: '스냅샷' },
+      { keys: 'Alt+Enter', label: '분할 화면에서 차트 최대화 / 복원' },
+      { keys: 'Shift+F', label: '전체 화면' },
+      { keys: '우클릭', label: '차트 · 그림 · 가격축 · 시간축 메뉴' },
+    ],
+  },
+  {
+    title: '그리기',
+    items: [
+      { keys: 'Alt+T', label: '추세선' },
+      { keys: 'Alt+H', label: '수평선' },
+      { keys: 'Alt+J', label: '수평 레이' },
+      { keys: 'Alt+V', label: '수직선' },
+      { keys: 'Alt+C', label: '교차선' },
+      { keys: 'Alt+F', label: '피보나치 되돌림' },
+      { keys: 'Alt+Shift+R', label: '사각형' },
+      { keys: 'Ctrl+C / Ctrl+V', label: '선택한 그림 복사 / 붙여넣기' },
+      { keys: '방향키', label: '선택한 그림 옮기기' },
+      { keys: 'Delete', label: '선택한 그림 삭제' },
+      { keys: 'Ctrl+Alt+H', label: '그림 모두 숨기기 / 보이기' },
+      { keys: 'Shift+드래그', label: '측정' },
+      { keys: 'Esc', label: '십자선으로 · 그리기 취소 · 메뉴 닫기' },
+    ],
+  },
 ]
 
 function App() {
@@ -124,6 +160,14 @@ function App() {
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [quickOpen, setQuickOpen] = useState(false)
   const [ivSeed, setIvSeed] = useState<string | null>(null)
+  const [goToOpen, setGoToOpen] = useState(false)
+  /** 우클릭 "…에 알림 추가"가 정한 가격. 단축키·툴바로 열면 null(현재가). */
+  const [alertPrice, setAlertPrice] = useState<number | null>(null)
+  const [chartMenu, setChartMenu] = useState<(ChartMenuRequest & { cellIndex: number }) | null>(null)
+  /** 칸별 "시간 기준 세로 커서 고정" 시각. */
+  const [cursorLocks, setCursorLocks] = useState<Record<number, number | null>>({})
+  /** 분할 화면에서 활성 차트만 크게(Alt+Enter). */
+  const [maximized, setMaximized] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
   const [shortcutsOpen, setShortcutsOpen] = useState(false)
   const [widgetOpen, setWidgetOpen] = useState<WidgetId | null>('watchlist')
@@ -190,6 +234,7 @@ function App() {
     updateDrawing,
     removeDrawing,
     removeAll,
+    reorderDrawing,
     checkPrice: checkDrawings,
     undo,
     redo,
@@ -236,11 +281,27 @@ function App() {
     })
   }, [])
 
+  // Alt+L / Alt+P: 같은 눈금을 다시 누르면 일반으로 돌아간다.
+  const toggleScaleMode = useCallback((index: number, mode: ScaleMode) => {
+    setLayoutState((prev) => ({
+      ...prev,
+      cells: prev.cells.map((c, i) => (i === index ? { ...c, scaleMode: c.scaleMode === mode ? 'normal' : mode } : c)),
+    }))
+  }, [])
+
+  const toggleInvert = useCallback((index: number) => {
+    setLayoutState((prev) => ({
+      ...prev,
+      cells: prev.cells.map((c, i) => (i === index ? { ...c, invertScale: !c.invertScale } : c)),
+    }))
+  }, [])
+
   const setActive = useCallback((index: number) => {
     setLayoutState((prev) => (prev.active === index ? prev : { ...prev, active: index }))
   }, [])
 
   const setLayout = useCallback((mode: LayoutMode) => {
+    setMaximized(false)
     setLayoutState((prev) => ({ ...prev, layout: mode, active: Math.min(prev.active, mode - 1) }))
   }, [])
 
@@ -356,6 +417,34 @@ function App() {
     setSymbolSearchOpen(true)
   }, [])
 
+  // ── context-menu / shortcut helpers ───────────────────────────────
+  const addToWatchlist = (symbol: string) => {
+    const name = displaySymbol(symbol, symbols)
+    if (watchlist.symbols.includes(symbol)) {
+      pushToast(`이미 관심 목록에 있음: ${name}`)
+      return
+    }
+    watchlist.add(symbol)
+    pushToast(`관심 목록에 추가: ${name}`)
+  }
+
+  const toggleMaximize = () => {
+    if (isMobile || layout === 1) return
+    setMaximized((v) => !v)
+  }
+
+  const openAlertAt = (price: number | null) => {
+    setAlertPrice(price)
+    setAlertOpen(true)
+  }
+
+  const copyText = (text: string) => {
+    navigator.clipboard
+      .writeText(text)
+      .then(() => pushToast(`복사됨: ${text}`))
+      .catch(() => pushToast('클립보드 복사 실패'))
+  }
+
   // ── shortcuts ─────────────────────────────────────────────────────
   useShortcuts({
     onTool: setTool,
@@ -368,12 +457,23 @@ function App() {
     onUndo: undo,
     onRedo: redo,
     onResetView: () => getChart(active)?.resetView(),
-    onCreateAlert: () => setAlertOpen(true),
+    onCreateAlert: () => openAlertAt(null),
     onSnapshot: snapshotDownload,
     onQuickSearch: () => setQuickOpen(true),
     onFullscreen: () => void fullscreen.toggle(),
     onSymbolChar: (ch) => openSymbolSearch(ch),
     onIntervalChar: (ch) => setIvSeed(ch),
+    onOpenIndicators: () => setIndicatorsOpen(true),
+    onSave: handleSave,
+    onScroll: (direction, far) => getChart(active)?.scrollBars(direction, far),
+    onZoom: (direction) => getChart(active)?.zoom(direction),
+    onGoToDate: () => setGoToOpen(true),
+    onInvertScale: () => toggleInvert(active),
+    onToggleLog: () => toggleScaleMode(active, 'log'),
+    onTogglePercent: () => toggleScaleMode(active, 'percent'),
+    onAddToWatchlist: () => addToWatchlist(activeSymbol),
+    onToggleDrawingsHidden: () => patchPrefs({ drawingsHidden: !prefs.drawingsHidden }),
+    onToggleMaximize: toggleMaximize,
   })
 
   // ── widget bar tabs (desktop) ─────────────────────────────────────
@@ -388,6 +488,168 @@ function App() {
     },
     [isMobile],
   )
+
+  // ── right-click menus: 차트 영역 · 그림 · 가격축 · 시간축 (TradingView 항목 순서) ─
+  const closeChartMenu = useCallback(() => setChartMenu(null), [])
+  const chartMenuEntries = (menu: ChartMenuRequest & { cellIndex: number }): MenuEntry[] => {
+    const index = menu.cellIndex
+    const cell = cells[index]
+    if (!cell) return []
+    const handle = getChart(index)
+    const target = menu.target
+    const divider: MenuEntry = { type: 'divider' }
+    const icon = (name: IconName) => <Icon name={name} size={18} />
+    const item = (
+      label: string,
+      onSelect: () => void,
+      extra: { icon?: React.ReactNode; shortcut?: string; checked?: boolean; disabled?: boolean } = {},
+    ): MenuEntry => ({ type: 'item', label, onSelect, ...extra })
+
+    switch (target.kind) {
+      case 'priceScale':
+        return [
+          item('가격 축 초기화', () => setCellField(index, { autoScale: true }), { icon: icon('refresh') }),
+          divider,
+          item('자동 (화면에 맞춤)', () => setCellField(index, { autoScale: !cell.autoScale }), { checked: cell.autoScale }),
+          item('눈금 반전', () => toggleInvert(index), { checked: cell.invertScale, shortcut: 'Alt+I' }),
+          divider,
+          ...SCALE_MODES.map((m) =>
+            item(`${m.label} 눈금`, () => setCellField(index, { scaleMode: m.id }), {
+              checked: cell.scaleMode === m.id,
+              shortcut: m.id === 'log' ? 'Alt+L' : m.id === 'percent' ? 'Alt+P' : undefined,
+            }),
+          ),
+        ]
+      case 'timeScale':
+        return [
+          item('시간 축 초기화', () => handle?.resetTimeScale(), { icon: icon('refresh') }),
+          item('실시간으로 이동', () => handle?.scrollToRealtime(), { icon: icon('chevronRight') }),
+          item('날짜로 이동…', () => setGoToOpen(true), { icon: icon('calendar'), shortcut: 'Alt+G' }),
+        ]
+      case 'drawing': {
+        const d = drawings.find((x) => x.id === target.drawingId)
+        if (!d) return []
+        return [
+          ...(d.kind === 'horizontal'
+            ? [
+                item(
+                  d.alert ? '알림 끄기' : '알림 켜기',
+                  () => updateDrawing(d.id, d.alert ? { alert: false } : { alert: true, fired: false, above: null }),
+                  { icon: icon(d.alert ? 'bellOff' : 'bell') },
+                ),
+              ]
+            : []),
+          item(
+            '복제',
+            () =>
+              addDrawing({
+                symbol: d.symbol,
+                kind: d.kind,
+                points: cloneOffset(d.points, cell.interval),
+                style: { ...d.style },
+                alert: false,
+              }),
+            { icon: <ToolIcon name="clone" size={18} /> },
+          ),
+          item('복사', () => copyDrawing(d), { icon: icon('copy'), shortcut: 'Ctrl+C' }),
+          divider,
+          item('맨 앞으로 가져오기', () => reorderDrawing(d.id, 'front'), { icon: icon('arrowUp') }),
+          item('맨 뒤로 보내기', () => reorderDrawing(d.id, 'back'), { icon: icon('arrowDown') }),
+          divider,
+          item(d.locked ? '잠금 해제' : '잠금', () => updateDrawing(d.id, { locked: !d.locked }), {
+            icon: icon(d.locked ? 'unlock' : 'lock'),
+          }),
+          item('숨기기', () => updateDrawing(d.id, { hidden: true }), { icon: icon('eyeOff') }),
+          item('삭제', () => removeDrawing(d.id), { icon: icon('trash'), shortcut: 'Delete' }),
+        ]
+      }
+      case 'chart': {
+        const dec = priceDecimals(cell.symbol, symbols)
+        const name = displaySymbol(cell.symbol, symbols)
+        const price = target.price !== null && Number.isFinite(target.price) ? Number(target.price.toFixed(dec)) : null
+        const priceText = price !== null ? formatPrice(price, dec) : ''
+        const lockedTime = cursorLocks[index] ?? null
+        const drawingCount = drawings.filter((d) => d.symbol === cell.symbol).length
+        const inList = watchlist.symbols.includes(cell.symbol)
+        const time = target.time
+        return [
+          item('차트 보기 초기화', () => handle?.resetView(), { icon: icon('refresh'), shortcut: 'Alt+R' }),
+          ...(price !== null
+            ? [item(`가격 복사 ${priceText}`, () => copyText(price.toFixed(dec)), { icon: icon('copy') })]
+            : []),
+          item(
+            '붙여넣기',
+            () => {
+              const next = pasteDrawing(cell.symbol, cell.interval)
+              if (next) addDrawing(next)
+            },
+            { icon: icon('clipboard'), shortcut: 'Ctrl+V', disabled: !hasCopiedDrawing() },
+          ),
+          divider,
+          ...(price !== null
+            ? [
+                item(`${name} ${priceText}에 알림 추가…`, () => openAlertAt(price), {
+                  icon: icon('alarm'),
+                  shortcut: 'Alt+A',
+                }),
+                item(
+                  `${priceText}에 수평선 그리기`,
+                  () =>
+                    addDrawing({
+                      symbol: cell.symbol,
+                      kind: 'horizontal',
+                      points: buildPoints('horizontal', [{ time: time ?? Math.floor(Date.now() / 1000), price }], cell.interval),
+                      style: defaultStyle('horizontal'),
+                    }),
+                  { icon: <ToolIcon name="horizontal" size={18} /> },
+                ),
+              ]
+            : []),
+          item(inList ? `${name} 관심 목록에 있음` : `${name} 관심 목록에 추가`, () => addToWatchlist(cell.symbol), {
+            icon: icon('plus'),
+            shortcut: 'Alt+W',
+            disabled: inList,
+          }),
+          ...(lockedTime !== null || time !== null
+            ? [
+                item(
+                  lockedTime !== null ? '세로 커서 고정 해제' : '시간 기준 세로 커서 고정',
+                  () => setCursorLocks((prev) => ({ ...prev, [index]: lockedTime !== null ? null : time })),
+                  { icon: icon(lockedTime !== null ? 'unlock' : 'lock') },
+                ),
+              ]
+            : []),
+          divider,
+          item('날짜로 이동…', () => setGoToOpen(true), { icon: icon('calendar'), shortcut: 'Alt+G' }),
+          ...(!isMobile && layout > 1
+            ? [
+                item(maximized ? '차트 복원' : '차트 최대화', toggleMaximize, {
+                  icon: icon(maximized ? (layout === 2 ? 'layout2' : 'layout4') : 'layout1'),
+                  shortcut: 'Alt+Enter',
+                }),
+              ]
+            : []),
+          item('객체 트리', () => openWidgetFromMenu('objectTree'), { icon: icon('objectTree') }),
+          divider,
+          item(
+            prefs.drawingsHidden ? '그림 보이기' : '그림 숨기기',
+            () => patchPrefs({ drawingsHidden: !prefs.drawingsHidden }),
+            { icon: icon(prefs.drawingsHidden ? 'eye' : 'eyeOff'), shortcut: 'Ctrl+Alt+H' },
+          ),
+          item(`그림 ${drawingCount}개 삭제`, () => removeAll(cell.symbol), {
+            icon: icon('trash'),
+            disabled: drawingCount === 0,
+          }),
+          item(`지표 ${indicators.length}개 삭제`, () => setIndicators([]), {
+            icon: icon('trash'),
+            disabled: indicators.length === 0,
+          }),
+          divider,
+          item('설정…', () => setSettingsOpen(true), { icon: icon('settings') }),
+        ]
+      }
+    }
+  }
 
   const alertBadge = alerts.filter((a) => a.active).length + drawings.filter((d) => d.alert).length
 
@@ -419,6 +681,8 @@ function App() {
         scaleMode={cell.scaleMode}
         autoScale={cell.autoScale}
         onAutoScaleChange={(v) => setCellField(index, { autoScale: v })}
+        invertScale={cell.invertScale}
+        lockedTime={cursorLocks[index] ?? null}
         compare={cell.compare}
         onCompareChange={(next) => setCellField(index, { compare: next })}
         indicators={indicators}
@@ -448,6 +712,7 @@ function App() {
         highlightActive={!isMobile && layout > 1}
         onActivate={() => setActive(index)}
         onPrice={handlePrice}
+        onContextMenu={(req) => setChartMenu({ ...req, cellIndex: index })}
       />
       </ErrorBoundary>
     )
@@ -569,7 +834,7 @@ function App() {
     onOpenIndicators: () => setIndicatorsOpen(true),
     indicators,
     onIndicatorsChange: setIndicators,
-    onOpenAlert: () => setAlertOpen(true),
+    onOpenAlert: () => openAlertAt(null),
     replay,
     onToggleReplay: () => setReplay((v) => !v),
     canUndo,
@@ -609,8 +874,10 @@ function App() {
     onRemoveIndicators: () => setIndicators([]),
   }
 
-  const visibleCells = isMobile ? [activeCell] : cells.slice(0, layout)
-  const effectiveLayout: LayoutMode = isMobile ? 1 : layout
+  // Alt+Enter 로 최대화하면 분할 화면에서도 활성 칸 하나만 크게 보인다.
+  const maximizedNow = maximized && !isMobile && layout > 1
+  const visibleCells = isMobile || maximizedNow ? [activeCell] : cells.slice(0, layout)
+  const effectiveLayout: LayoutMode = isMobile || maximizedNow ? 1 : layout
 
   // ── dialogs & overlays (shared between desktop/mobile) ─────────────
   const dialogs = (
@@ -644,13 +911,27 @@ function App() {
 
       <CreateAlertDialog
         open={alertOpen}
-        onClose={() => setAlertOpen(false)}
+        onClose={() => {
+          setAlertOpen(false)
+          setAlertPrice(null)
+        }}
         symbol={activeSymbol}
         livePrice={livePrice}
+        initialPrice={alertPrice}
         onCreate={(symbol: string, condition: AlertCondition, price: number, message?: string) =>
           addAlert(symbol, condition, price, message)
         }
       />
+
+      <GoToDateDialog
+        open={goToOpen}
+        onClose={() => setGoToOpen(false)}
+        timezone={settings.timezone}
+        intraday={INTERVAL_SECONDS[activeCell.interval] < 86400}
+        onGo={(time) => getChart(active)?.goToTime(time)}
+      />
+
+      <ContextMenu at={chartMenu} entries={chartMenu ? chartMenuEntries(chartMenu) : []} onClose={closeChartMenu} />
 
       <SettingsDialog open={settingsOpen} onClose={() => setSettingsOpen(false)} settings={settings} onChange={setSettings} />
 
@@ -682,15 +963,20 @@ function App() {
         install={{ canShow: install.canShow, ios: install.ios, installable: install.installable, install: () => void install.install() }}
       />
 
-      <Dialog open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} title="키보드 단축키" width={420}>
-        <ul className="tv-shortcuts-list">
-          {SHORTCUTS.map((s) => (
-            <li key={s.keys}>
-              <kbd>{s.keys}</kbd>
-              <span>{s.label}</span>
-            </li>
-          ))}
-        </ul>
+      <Dialog open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} title="키보드 단축키" width={460}>
+        {SHORTCUTS.map((group) => (
+          <section key={group.title} className="tv-shortcuts-group">
+            <h3>{group.title}</h3>
+            <ul className="tv-shortcuts-list">
+              {group.items.map((s) => (
+                <li key={s.keys}>
+                  <kbd>{s.keys}</kbd>
+                  <span>{s.label}</span>
+                </li>
+              ))}
+            </ul>
+          </section>
+        ))}
       </Dialog>
 
       <Toasts toasts={toasts} onDismiss={dismissToast} />
@@ -708,6 +994,8 @@ function App() {
             scaleMode={activeCell.scaleMode}
             autoScale={activeCell.autoScale}
             onAutoScaleChange={(v) => setCellField(active, { autoScale: v })}
+            invertScale={activeCell.invertScale}
+            lockedTime={null}
             compare={activeCell.compare}
             onCompareChange={(next) => setCellField(active, { compare: next })}
             indicators={indicators}
@@ -812,7 +1100,7 @@ function App() {
           {visibleCells.map((cell, i) =>
             renderCell(
               cell,
-              i,
+              maximizedNow ? active : i,
               effectiveLayout === 1
                 ? undefined
                 : effectiveLayout === 2

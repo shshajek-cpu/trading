@@ -218,6 +218,28 @@
   opacity: 0.85;
 }
 
+/* ── 시간 기준 세로 커서 고정 ── */
+.cursor-lock-line {
+  position: absolute;
+  top: 0;
+  width: 0;
+  border-left: 1px dashed var(--tv-text-dim);
+  z-index: 3;
+  pointer-events: none;
+}
+.cursor-lock-label {
+  position: absolute;
+  z-index: 4;
+  padding: 3px 6px;
+  transform: translateX(-50%);
+  background: var(--tv-text-dim);
+  color: var(--tv-bg);
+  font-size: 11px;
+  white-space: nowrap;
+  border-radius: 2px;
+  pointer-events: none;
+}
+
 /* ── 리플레이 ── */
 .replay-preview-line {
   position: absolute;

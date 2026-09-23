@@ -19,6 +19,7 @@ import { CHART_PALETTES } from '../lib/theme'
 import { computeIndicator, indicatorLegend, type ComputedIndicator } from '../chart/compute'
 import { formatPrice } from '../chart/format'
 import { getChart } from '../lib/chartRegistry'
+import type { ChartMenuRequest } from '../lib/chartMenu'
 import './chart.css'
 import './indicators.css'
 
@@ -44,6 +45,9 @@ export interface ChartCellProps {
   scaleMode: ScaleMode
   autoScale: boolean
   onAutoScaleChange: (v: boolean) => void
+  invertScale: boolean
+  /** "시간 기준 세로 커서 고정" 시각(없으면 null). */
+  lockedTime: number | null
   compare: string[]
   onCompareChange: (next: string[]) => void
   indicators: IndicatorInstance[]
@@ -56,7 +60,7 @@ export interface ChartCellProps {
   stayInDrawingMode: boolean
   drawingsLocked: boolean
   drawingsHidden: boolean
-  onCreateDrawing: (d: NewDrawing) => void
+  onCreateDrawing: (d: NewDrawing) => string
   onUpdateDrawing: (id: string, patch: Partial<Omit<Drawing, 'id'>>, opts?: { history?: boolean }) => void
   onRemoveDrawing: (id: string) => void
   onToolDone: () => void
@@ -72,6 +76,8 @@ export interface ChartCellProps {
   onActivate: () => void
   onPrice: (symbol: string, price: number) => void
   gridStyle?: React.CSSProperties
+  /** 우클릭 메뉴 요청. PiP 창처럼 메뉴가 없는 곳은 넘기지 않는다. */
+  onContextMenu?: (req: ChartMenuRequest) => void
 }
 
 /** 범례 조작용 소형 아이콘(직접 그린 SVG). */
@@ -102,6 +108,8 @@ export function ChartCell({
   scaleMode,
   autoScale,
   onAutoScaleChange,
+  invertScale,
+  lockedTime,
   compare,
   onCompareChange,
   indicators,
@@ -130,6 +138,7 @@ export function ChartCell({
   onActivate,
   onPrice,
   gridStyle,
+  onContextMenu,
 }: ChartCellProps) {
   const [liveCandle, setLiveCandle] = useState<Candle | null>(null)
   const [hoverTime, setHoverTime] = useState<number | null>(null)
@@ -461,6 +470,8 @@ export function ChartCell({
           scaleMode={scaleMode}
           autoScale={autoScale}
           onAutoScaleChange={onAutoScaleChange}
+          invertScale={invertScale}
+          lockedTime={lockedTime}
           compare={compare}
           indicators={computed}
           settings={settings}
@@ -485,6 +496,7 @@ export function ChartCell({
           captureClicks={pinMode || replayPicking}
           onChartClick={handleChartClick}
           onCompareInfo={setCompareInfo}
+          onContextMenu={onContextMenu}
         />
 
         {/* 트레이딩뷰식 범례(왼쪽 위). */}

@@ -12,6 +12,8 @@ export interface CellConfig {
   chartType: ChartType
   scaleMode: ScaleMode
   autoScale: boolean
+  /** 가격 눈금 반전(Alt+I) — 위아래를 뒤집어 본다. */
+  invertScale: boolean
   /** Extra symbols overlaid for comparison (심볼 비교). */
   compare: string[]
 }
@@ -30,7 +32,7 @@ export interface LayoutState {
 const STORAGE_KEY = 'trading.layout.v1'
 
 function cell(symbol: string, interval: Interval): CellConfig {
-  return { symbol, interval, chartType: 'candles', scaleMode: 'normal', autoScale: true, compare: [] }
+  return { symbol, interval, chartType: 'candles', scaleMode: 'normal', autoScale: true, invertScale: false, compare: [] }
 }
 
 export const DEFAULT_LAYOUT: LayoutState = {
@@ -73,6 +75,7 @@ function toCell(value: unknown, fallback: CellConfig): CellConfig | null {
     chartType: isChartType(c.chartType) ? c.chartType : 'candles',
     scaleMode: isScaleMode(c.scaleMode) ? c.scaleMode : 'normal',
     autoScale: typeof c.autoScale === 'boolean' ? c.autoScale : true,
+    invertScale: c.invertScale === true,
     compare: Array.isArray(c.compare) ? c.compare.filter((s): s is string => typeof s === 'string') : [],
   }
 }

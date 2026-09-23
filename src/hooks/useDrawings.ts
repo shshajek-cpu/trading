@@ -16,6 +16,8 @@ export interface UseDrawingsResult {
   ) => void
   removeDrawing: (id: string) => void
   removeAll: (symbol: string) => void
+  /** 그리는 순서 바꾸기 — 뒤에 그린 것이 위에 보인다. */
+  reorderDrawing: (id: string, where: 'front' | 'back') => void
   /** 실시간 가격을 흘려보내면 수평선을 통과한 순간 알림을 발동시킨다. */
   checkPrice: (symbol: string, price: number) => void
   undo: () => void
@@ -126,6 +128,18 @@ export function useDrawings(
     [commit],
   )
 
+  const reorderDrawing = useCallback(
+    (id: string, where: 'front' | 'back') => {
+      commit((prev) => {
+        const target = prev.find((d) => d.id === id)
+        if (!target) return prev
+        const rest = prev.filter((d) => d.id !== id)
+        return where === 'front' ? [...rest, target] : [target, ...rest]
+      })
+    },
+    [commit],
+  )
+
   const undo = useCallback(() => {
     if (undoStack.current.length === 0) return
     setDrawings((prev) => {
@@ -197,6 +211,7 @@ export function useDrawings(
       updateDrawing,
       removeDrawing,
       removeAll,
+      reorderDrawing,
       checkPrice,
       undo,
       redo,
@@ -209,6 +224,7 @@ export function useDrawings(
       updateDrawing,
       removeDrawing,
       removeAll,
+      reorderDrawing,
       checkPrice,
       undo,
       redo,

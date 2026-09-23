@@ -18,6 +18,9 @@ import { pickDrawing } from './hitTest'
 import type { Pt } from './geometry'
 import { simplify } from './geometry'
 import { buildPoints, cloneOffset, requiredPoints } from './builders'
+import { copyDrawing, pasteDrawing } from './clipboard'
+import type { ChartMenuRequest } from '../../lib/chartMenu'
+import { INTERVAL_SECONDS } from '../../lib/intervals'
 import { DrawingPrimitive } from './DrawingPrimitive'
 import { SelectedToolbar } from './SelectedToolbar'
 import './DrawingOverlay.css'
@@ -36,10 +39,12 @@ export interface DrawingOverlayProps {
   hidden: boolean
   enabled: boolean
   palette: ChartPalette
-  onCreate: (d: NewDrawing) => void
+  onCreate: (d: NewDrawing) => string
   onUpdate: (id: string, patch: Partial<Omit<Drawing, 'id'>>, opts?: { history?: boolean }) => void
   onRemove: (id: string) => void
   onToolDone: () => void
+  /** 우클릭 — 누른 자리(그림·차트·가격축·시간축)를 알려 준다. 비활성 칸에서도 받는다. */
+  onContextMenu?: (req: ChartMenuRequest) => void
 }
 
 const CURSOR_TOOLS: Record<string, true> = { cross: true, dot: true, arrow: true, eraser: true }
@@ -157,6 +162,7 @@ export function DrawingOverlay(props: DrawingOverlayProps) {
     onUpdate,
     onRemove,
     onToolDone,
+    onContextMenu,
   } = props
 
   const [selectedId, setSelectedId] = useState<string | null>(null)
@@ -621,7 +627,87 @@ export function DrawingOverlay(props: DrawingOverlayProps) {
     }
   }, [chart, enabled, coordsOf, resolveMagnet, setScroll, finalizeCreate, clearCreation, onUpdate, onRemove, onToolDone, openTextEditor])
 
-  // ── 키보드: Esc 취소, Delete 삭제 ──
+  // ── 우클릭: 누른 자리를 가려 메뉴를 요청한다. 비활성 칸도 받아야 해서 enabled 와 무관하게 건다. ──
+  const contextRef = useRef(onContextMenu)
+  contextRef.current = onContextMenu
+  useEffect(() => {
+    const el = chart.chartElement()
+    let pointerType = 'mouse'
+    const onPointer = (e: PointerEvent) => {
+      pointerType = e.pointerType
+    }
+    const onMenu = (e: MouseEvent) => {
+      const request = contextRef.current
+      if (!request) return
+      e.preventDefault()
+      // 폰의 길게 누르기는 크로스헤어용이다 — 메뉴를 띄우지 않는다.
+      if (pointerType === 'touch') return
+      const l = latest.current
+      // 그리던 중이면 TradingView 처럼 취소만 한다.
+      if (creatingRef.current || textEditRef.current) {
+        clearCreation()
+        setTextEdit(null)
+        return
+      }
+      const rect = el.getBoundingClientRect()
+      const p = { x: e.clientX - rect.left, y: e.clientY - rect.top }
+      const pane = l.chart.paneSize()
+      const areaBottom = rect.height - l.chart.timeScale().height()
+      const at = { x: e.clientX, y: e.clientY }
+      if (p.y > areaBottom) {
+        if (p.x <= pane.width) request({ ...at, target: { kind: 'timeScale' } })
+        return
+      }
+      if (p.x > pane.width) {
+        request({ ...at, target: { kind: 'priceScale' } })
+        return
+      }
+      const coords = coordsOf()
+      const inMain = p.y <= pane.height
+      if (inMain && !l.hidden) {
+        const picked = pickDrawing(l.drawings, coords, p, pane.width, pane.height)
+        if (picked) {
+          if (l.enabled) setSelectedId(picked.drawing.id)
+          request({ ...at, target: { kind: 'drawing', drawingId: picked.drawing.id } })
+          return
+        }
+      }
+      request({
+        ...at,
+        target: { kind: 'chart', time: coords.snapTimeToBar(p.x), price: inMain ? coords.yToPrice(p.y) : null },
+      })
+    }
+    el.addEventListener('pointerdown', onPointer, true)
+    el.addEventListener('contextmenu', onMenu)
+    return () => {
+      el.removeEventListener('pointerdown', onPointer, true)
+      el.removeEventListener('contextmenu', onMenu)
+    }
+  }, [chart, coordsOf, clearCreation])
+
+  // ── 키보드 ①: Esc 취소. 열린 메뉴가 먼저 Esc 를 먹도록(문서 캡처에서 전파 중단) 버블 단계에서 받는다. ──
+  useEffect(() => {
+    if (!enabled) return
+    const onEscape = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return
+      if (textEditRef.current) {
+        setTextEdit(null)
+        return
+      }
+      if (creatingRef.current || measureRef.current || preview) {
+        clearCreation()
+        measureRef.current = null
+        setPreview(null)
+        return
+      }
+      if (latest.current.selectedId) setSelectedId(null)
+    }
+    window.addEventListener('keydown', onEscape)
+    return () => window.removeEventListener('keydown', onEscape)
+  }, [enabled, preview, clearCreation])
+
+  // ── 키보드 ②: Delete 삭제, Ctrl+C/V 복사·붙여넣기, 방향키로 선택한 그림 옮기기 ──
+  // 캡처 단계에서 먼저 받아 처리한 키는 preventDefault 한다 — 전역 단축키(방향키 = 차트 스크롤)가 그걸 보고 비켜 간다.
   useEffect(() => {
     if (!enabled) return
     const onKey = (e: KeyboardEvent) => {
@@ -629,34 +715,61 @@ export function DrawingOverlay(props: DrawingOverlayProps) {
       const active = document.activeElement
       const inInput =
         active instanceof HTMLElement &&
-        (active.tagName === 'INPUT' || active.tagName === 'TEXTAREA' || active.isContentEditable)
-      if (e.key === 'Escape') {
-        if (textEditRef.current) {
-          setTextEdit(null)
-          return
-        }
-        if (creatingRef.current || measureRef.current || preview) {
-          clearCreation()
-          measureRef.current = null
-          setPreview(null)
-          return
-        }
-        if (l.selectedId) setSelectedId(null)
+        (active.tagName === 'INPUT' ||
+          active.tagName === 'TEXTAREA' ||
+          active.tagName === 'SELECT' ||
+          active.isContentEditable)
+      // 입력칸·대화상자·메뉴 안의 키는 그쪽 몫이다.
+      if (inInput || (e.target instanceof Element && e.target.closest('.tv-dialog, .tv-popover'))) return
+      const selected = l.selectedId ? l.drawings.find((d) => d.id === l.selectedId && !d.hidden) ?? null : null
+      const ctrl = e.ctrlKey || e.metaKey
+
+      if ((e.key === 'Delete' || e.key === 'Backspace') && selected) {
+        onRemove(selected.id)
+        setSelectedId(null)
+        e.preventDefault()
         return
       }
-      if ((e.key === 'Delete' || e.key === 'Backspace') && !inInput && l.selectedId) {
-        onRemove(l.selectedId)
-        setSelectedId(null)
+      // 한글 입력 상태에서도 되도록 글자(e.key)가 아니라 물리 키(e.code)로 본다.
+      if (ctrl && !e.altKey && !e.shiftKey && e.code === 'KeyC' && selected) {
+        copyDrawing(selected)
+        e.preventDefault()
+        return
+      }
+      if (ctrl && !e.altKey && !e.shiftKey && e.code === 'KeyV') {
+        const next = pasteDrawing(l.symbol, l.interval)
+        if (!next) return
+        setSelectedId(onCreate(next))
+        e.preventDefault()
+        return
+      }
+      // 방향키: ←/→ 한 봉, ↑/↓ 1픽셀만큼. 누르고 있으면 한 번의 되돌리기 단계로 묶는다.
+      const arrow = e.key === 'ArrowLeft' || e.key === 'ArrowRight' || e.key === 'ArrowUp' || e.key === 'ArrowDown'
+      if (arrow && !ctrl && !e.altKey && selected && !l.locked && !selected.locked) {
+        const coords = coordsOf()
+        let dt = 0
+        let dp = 0
+        if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
+          dt = (e.key === 'ArrowLeft' ? -1 : 1) * INTERVAL_SECONDS[l.interval]
+        } else {
+          const y = coords.priceToY(selected.points[0]?.price ?? 0) ?? 0
+          const moved = coords.yToPrice(y + (e.key === 'ArrowUp' ? -1 : 1))
+          const base = coords.yToPrice(y)
+          if (moved === null || base === null) return
+          dp = moved - base
+        }
+        const points = selected.points.map((pt) => ({ time: pt.time + dt, price: pt.price + dp }))
+        onUpdate(selected.id, { points }, e.repeat ? { history: false } : undefined)
         e.preventDefault()
       }
     }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [enabled, preview, clearCreation, onRemove])
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
+  }, [enabled, onRemove, onCreate, onUpdate, coordsOf])
 
-  // 선택된 그림(현재 심볼) 찾기.
+  // 선택된 그림(현재 심볼) 찾기. 숨긴 그림은 선택 도구 막대를 띄우지 않는다.
   const selected = useMemo(
-    () => drawings.find((d) => d.id === selectedId) ?? null,
+    () => drawings.find((d) => d.id === selectedId && !d.hidden) ?? null,
     [drawings, selectedId],
   )
 

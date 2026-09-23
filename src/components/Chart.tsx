@@ -28,8 +28,10 @@ import { CHART_PALETTES, CHART_FONT, INDICATOR_PALETTE } from '../lib/theme'
 import type { ChartSettings } from '../lib/chartSettings'
 import type { ChartType, ScaleMode } from '../lib/chartTypes'
 import { registerChart, type ChartHandle } from '../lib/chartRegistry'
+import type { ChartMenuRequest } from '../lib/chartMenu'
 import { loadPaneSizes, savePaneSizes } from '../lib/layoutConfig'
 import { DrawingOverlay } from '../chart/drawing/DrawingOverlay'
+import { Coords } from '../chart/drawing/coords'
 import {
   baselineBaseValue,
   createMainSeries,
@@ -64,6 +66,10 @@ export interface ChartProps {
   scaleMode: ScaleMode
   autoScale: boolean
   onAutoScaleChange: (v: boolean) => void
+  /** 가격 눈금 반전(Alt+I). */
+  invertScale: boolean
+  /** "시간 기준 세로 커서 고정" — 그 시각에 세로선을 고정해 둔다. */
+  lockedTime: number | null
   compare: string[]
   indicators: ComputedIndicator[]
   settings: ChartSettings
@@ -78,7 +84,7 @@ export interface ChartProps {
   drawingsLocked: boolean
   drawingsHidden: boolean
   overlayEnabled: boolean
-  onCreateDrawing: (d: NewDrawing) => void
+  onCreateDrawing: (d: NewDrawing) => string
   onUpdateDrawing: (id: string, patch: Partial<Omit<Drawing, 'id'>>, opts?: { history?: boolean }) => void
   onRemoveDrawing: (id: string) => void
   onToolDone: () => void
@@ -96,6 +102,8 @@ export interface ChartProps {
   onChartClick?: (time: number, price: number) => void
   /** 비교 심볼의 최근 변동률 + 선 색을 범례에 쓰라고 올려 준다. */
   onCompareInfo?: (info: CompareInfo[]) => void
+  /** 우클릭 메뉴 요청(차트 영역·그림·가격축·시간축). */
+  onContextMenu?: (req: ChartMenuRequest) => void
 }
 
 const asTime = (t: number) => t as UTCTimestamp
@@ -116,6 +124,8 @@ export function Chart({
   scaleMode,
   autoScale,
   onAutoScaleChange,
+  invertScale,
+  lockedTime,
   compare,
   indicators,
   settings,
@@ -141,6 +151,7 @@ export function Chart({
   captureClicks,
   onChartClick,
   onCompareInfo,
+  onContextMenu,
 }: ChartProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<IChartApi | null>(null)
@@ -221,7 +232,10 @@ export function Chart({
     const chart = chartRef.current
     const first = candlesRef.current[0]
     if (!pending || !chart || !first) return
-    chart.timeScale().setVisibleRange({ from: Math.max(pending.from, first.time) as Time, to: pending.to as Time })
+    const from = Math.max(pending.from, first.time)
+    // 날짜로 이동한 시각이 아직 안 불러온 과거면 끝이 시작보다 앞설 수 있다 — 그때는 가장 오래된 구간을 보여 준다.
+    const to = pending.to > from ? pending.to : (candlesRef.current[Math.min(candlesRef.current.length - 1, 100)]?.time ?? from + 1)
+    chart.timeScale().setVisibleRange({ from: from as Time, to: to as Time })
     if (first.time <= pending.from || pending.attempts >= 8) {
       pendingRangeRef.current = null
       return
@@ -344,9 +358,13 @@ export function Chart({
     if (!chart || !mainSeries) return
     const fresh = scaleSeriesRef.current !== mainSeries
     scaleSeriesRef.current = mainSeries
-    chart.priceScale('right').applyOptions({ mode: SCALE_MODE_MAP[effectiveScale], autoScale: fresh || autoScale })
+    chart.priceScale('right').applyOptions({
+      mode: SCALE_MODE_MAP[effectiveScale],
+      autoScale: fresh || autoScale,
+      invertScale,
+    })
     if (fresh && !autoScale) cbRef.current.onAutoScaleChange?.(true)
-  }, [effectiveScale, autoScale, mainSeries])
+  }, [effectiveScale, autoScale, invertScale, mainSeries])
 
   // ── 4b) 가격 포맷: 천단위 구분 + 심볼 정밀도(축·라벨·카운트다운 공통). ─
   useEffect(() => {
@@ -823,10 +841,76 @@ export function Chart({
         if (n > 0) chartRef.current?.timeScale().setVisibleLogicalRange({ from: Math.max(0, n - 150), to: n + 1 })
       },
       scrollToRealtime: () => chartRef.current?.timeScale().scrollToRealTime(),
+      resetTimeScale: () => {
+        const n = candlesRef.current.length
+        if (n > 0) chartRef.current?.timeScale().setVisibleLogicalRange({ from: Math.max(0, n - 150), to: n + 1 })
+      },
+      scrollBars: (direction, far) => {
+        const ts = chartRef.current?.timeScale()
+        const range = ts?.getVisibleLogicalRange()
+        if (!ts || !range) return
+        const step = far ? Math.max(1, Math.round((range.to - range.from) / 4)) : 1
+        ts.setVisibleLogicalRange({ from: range.from + direction * step, to: range.to + direction * step })
+      },
+      zoom: (direction) => {
+        const ts = chartRef.current?.timeScale()
+        const range = ts?.getVisibleLogicalRange()
+        if (!ts || !range) return
+        const width = range.to - range.from
+        const next = Math.max(5, direction > 0 ? width * 0.8 : width / 0.8)
+        ts.setVisibleLogicalRange({ from: range.to - next, to: range.to })
+      },
+      goToTime: (time) => {
+        const range = chartRef.current?.timeScale().getVisibleLogicalRange()
+        const bars = range ? Math.max(20, range.to - range.from) : 150
+        const half = (bars / 2) * INTERVAL_SECONDS[interval]
+        pendingRangeRef.current = { from: time - half, to: time + half, attempts: 0 }
+        applyPendingRange()
+      },
     }
     registerChart(cellIndex, handle)
     return () => registerChart(cellIndex, null)
   }, [cellIndex, symbol, interval, palette, applyPendingRange])
+
+  // ── 16) 시간 기준 세로 커서 고정 — 스크롤·확대·크기 변화에 맞춰 세로선과 시각 라벨을 옮긴다. ─
+  const lockLineRef = useRef<HTMLDivElement>(null)
+  const lockLabelRef = useRef<HTMLDivElement>(null)
+  useEffect(() => {
+    const chart = chartRef.current
+    const series = mainSeries
+    const line = lockLineRef.current
+    const label = lockLabelRef.current
+    if (!chart || !series || !line || !label) return
+    const hide = () => {
+      line.style.display = 'none'
+      label.style.display = 'none'
+    }
+    if (lockedTime === null) {
+      hide()
+      return
+    }
+    const format = makeTimeFormatter(settings.timezone, INTERVAL_SECONDS[interval] < 86400)
+    const ts = chart.timeScale()
+    const place = () => {
+      const x = new Coords(chart, series, candlesRef.current, interval).timeToX(lockedTime)
+      if (x === null || x < 0 || x > ts.width()) return hide()
+      const bottom = chart.chartElement().clientHeight - ts.height()
+      line.style.display = 'block'
+      line.style.left = `${Math.round(x)}px`
+      line.style.height = `${bottom}px`
+      label.style.display = 'block'
+      label.style.left = `${Math.round(x)}px`
+      label.style.top = `${bottom}px`
+      label.textContent = format(lockedTime as Time)
+    }
+    place()
+    ts.subscribeVisibleLogicalRangeChange(place)
+    ts.subscribeSizeChange(place)
+    return () => {
+      ts.unsubscribeVisibleLogicalRangeChange(place)
+      ts.unsubscribeSizeChange(place)
+    }
+  }, [lockedTime, mainSeries, interval, settings.timezone, candles.length])
 
   return (
     <div style={{ position: 'relative', width: '100%', height: '100%' }}>
@@ -850,9 +934,12 @@ export function Chart({
           onUpdate={onUpdateDrawing}
           onRemove={onRemoveDrawing}
           onToolDone={onToolDone}
+          onContextMenu={onContextMenu}
         />
       )}
       <div ref={replayLineRef} className="replay-preview-line" style={{ display: 'none' }} />
+      <div ref={lockLineRef} className="cursor-lock-line" style={{ display: 'none' }} />
+      <div ref={lockLabelRef} className="cursor-lock-label" style={{ display: 'none' }} />
       <div ref={countdownRef} className="candle-countdown" style={{ display: 'none' }} />
     </div>
   )

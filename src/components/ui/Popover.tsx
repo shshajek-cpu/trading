@@ -13,6 +13,8 @@ interface PopoverProps {
   /** Gap between anchor and popover, px. */
   offset?: number
   className?: string
+  /** 아래로 다 안 들어가면 화면 안으로 끌어올린다(우클릭 메뉴처럼 커서에 붙는 메뉴). */
+  shift?: boolean
   children: ReactNode
 }
 
@@ -29,6 +31,7 @@ export function Popover({
   placement = 'bottom-start',
   offset = 4,
   className,
+  shift = false,
   children,
 }: PopoverProps) {
   const ref = useRef<HTMLDivElement>(null)
@@ -62,6 +65,7 @@ export function Popover({
         const above = a.top - offset - h
         const wantTop = placement.startsWith('top')
         top = wantTop ? (above >= MARGIN ? above : below) : below + h <= vh - MARGIN || above < MARGIN ? below : above
+        if (shift && top + h > vh - MARGIN) top = vh - MARGIN - h
       }
       left = Math.min(Math.max(MARGIN, left), Math.max(MARGIN, vw - w - MARGIN))
       top = Math.max(MARGIN, top)
@@ -74,7 +78,7 @@ export function Popover({
       window.removeEventListener('resize', place)
       window.removeEventListener('scroll', place, true)
     }
-  }, [open, anchor, placement, offset])
+  }, [open, anchor, placement, offset, shift])
 
   useEffect(() => {
     if (!open) return

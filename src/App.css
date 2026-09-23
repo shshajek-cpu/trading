@@ -1178,10 +1178,17 @@
 }
 
 /* ══ Shortcuts help ════════════════════════════════════════════════ */
+.tv-shortcuts-group h3 {
+  margin: 14px 20px 0;
+  font-size: var(--tv-fs-sm);
+  font-weight: 600;
+  color: var(--tv-text-dim);
+}
+
 .tv-shortcuts-list {
   list-style: none;
   margin: 0;
-  padding: 12px 20px;
+  padding: 6px 20px 12px;
 }
 
 .tv-shortcuts-list li {
@@ -1201,6 +1208,36 @@
   font-family: var(--tv-font-mono);
   font-size: var(--tv-fs-sm);
   text-align: center;
+}
+
+/* ══ 날짜로 이동 ═══════════════════════════════════════════════════ */
+.goto-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 8px 20px 16px;
+}
+
+.goto-field {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.goto-field > span {
+  width: 40px;
+  color: var(--tv-text-dim);
+}
+
+.goto-field .tv-input {
+  flex: 1;
+  color-scheme: dark light;
+}
+
+.goto-error {
+  margin: 0;
+  color: var(--tv-down);
+  font-size: var(--tv-fs-sm);
 }
 
 /* ══ Toasts ════════════════════════════════════════════════════════ */

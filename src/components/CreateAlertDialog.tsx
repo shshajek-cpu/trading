@@ -10,6 +10,8 @@ interface CreateAlertDialogProps {
   onClose: () => void
   symbol: string
   livePrice: number | null
+  /** 우클릭 "…에 알림 추가"처럼 가격을 정해 열 때. 없으면 현재가로 시작한다. */
+  initialPrice?: number | null
   onCreate: (symbol: string, condition: AlertCondition, price: number, message?: string) => void
 }
 
@@ -45,7 +47,7 @@ function fmt(value: number, decimals: number): string {
   return Number(value.toFixed(decimals)).toString()
 }
 
-export function CreateAlertDialog({ open, onClose, symbol, livePrice, onCreate }: CreateAlertDialogProps) {
+export function CreateAlertDialog({ open, onClose, symbol, livePrice, initialPrice, onCreate }: CreateAlertDialogProps) {
   const infos = useSymbols()
   const dec = priceDecimals(symbol, infos)
   const tick = infos.find((i) => i.symbol === symbol)?.tickSize ?? 0
@@ -57,13 +59,14 @@ export function CreateAlertDialog({ open, onClose, symbol, livePrice, onCreate }
 
   useEffect(() => {
     if (!open) return
-    const initial = livePrice != null ? fmt(livePrice, dec) : ''
+    const start = initialPrice ?? livePrice
+    const initial = start != null ? fmt(start, dec) : ''
     setKind('cross')
     setValue(initial)
     setMessage(initial ? `${symbol} 가격이 ${initial}에 도달` : `${symbol} 가격 알림`)
     setMessageDirty(false)
     setError('')
-    // livePrice 는 열린 순간의 값만 초기값으로 쓴다.
+    // 가격은 열린 순간의 값만 초기값으로 쓴다.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, symbol])
 
