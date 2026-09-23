@@ -42,6 +42,9 @@ export interface TopToolbarProps {
   saved: boolean
   onQuickSearch: () => void
   onSettings: () => void
+  /** 왼쪽 위 심볼 이름·시고저종 줄(상태 줄)을 보이는지. */
+  statusLine: boolean
+  onToggleStatusLine: () => void
   fullscreen: boolean
   onFullscreen: () => void
   onSnapshotDownload: () => void
@@ -81,6 +84,8 @@ export function TopToolbar(props: TopToolbarProps) {
     saved,
     onQuickSearch,
     onSettings,
+    statusLine,
+    onToggleStatusLine,
     fullscreen,
     onFullscreen,
     onSnapshotDownload,
@@ -250,6 +255,17 @@ export function TopToolbar(props: TopToolbarProps) {
 
       <button type="button" className="tv-tb-btn" title="빠른 검색 (Ctrl+K)" aria-label="빠른 검색" onClick={onQuickSearch}>
         <Icon name="search" size={22} />
+      </button>
+
+      <button
+        type="button"
+        className={`tv-tb-btn${statusLine ? ' active' : ''}`}
+        title={statusLine ? '심볼 이름·시고저종 줄 숨기기' : '심볼 이름·시고저종 줄 보이기'}
+        aria-label="심볼 이름·시고저종 줄"
+        aria-pressed={statusLine}
+        onClick={onToggleStatusLine}
+      >
+        <Icon name="statusLine" size={22} />
       </button>
 
       <button type="button" className="tv-tb-btn" title="설정" aria-label="설정" onClick={onSettings}>

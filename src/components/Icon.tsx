@@ -78,6 +78,7 @@ export type IconName =
   | 'chart'
   | 'info'
   | 'share'
+  | 'statusLine'
 
 const S = { fill: 'none', stroke: 'currentColor', strokeWidth: 1.5, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const }
 
@@ -444,6 +445,13 @@ const PATHS: Record<IconName, ReactNode> = {
     <>
       <path d="M14 4.5 v12 M9.5 9 L14 4.5 18.5 9" {...S} />
       <path d="M8 13 H6.5 v10 h15 v-10 H20" {...S} />
+    </>
+  ),
+  // 범례(상태 줄): 동그라미 하나 + 글자 두 줄.
+  statusLine: (
+    <>
+      <circle cx={7.5} cy={10} r={2.5} {...S} />
+      <path d="M12.5 10 H23 M5 17.5 H23" {...S} />
     </>
   ),
 }

@@ -568,46 +568,50 @@ export function ChartCell({
         {/* 트레이딩뷰식 범례(왼쪽 위). */}
         {/* 오실레이터 패널이 많아 메인 패널이 낮아지면 범례가 아래 패널을 덮지 않게 메인 패널 높이에서 자른다. */}
         <div className="tv-legend" style={panes.list[0] ? { maxHeight: Math.max(40, panes.list[0].top - 6), overflow: 'hidden' } : undefined}>
-          <div className="tv-legend-head">
-            <CoinIcon base={base} size={18} />
-            <span className="tv-legend-title">{description}</span>
-            <span className="tv-legend-meta">
-              · {INTERVAL_INFO[interval].short} · Binance
-            </span>
-            <span className={`tv-dot ${status === 'open' ? 'ok' : status === 'connecting' ? 'warn' : 'bad'}`} />
-          </div>
-          {settings.showLegendOhlc && legendCandle && !narrow && (
-            <div className="tv-legend-ohlc" style={{ color: legendUp ? settings.upColor : settings.downColor }}>
-              {([
-                ['시', legendCandle.open],
-                ['고', legendCandle.high],
-                ['저', legendCandle.low],
-                ['종', legendCandle.close],
-              ] as const).map(([label, value]) => (
-                <span key={label}>
-                  <em>{label}</em>
-                  {fmtPrice(value)}
+          {settings.showStatusLine && (
+            <>
+              <div className="tv-legend-head">
+                <CoinIcon base={base} size={18} />
+                <span className="tv-legend-title">{description}</span>
+                <span className="tv-legend-meta">
+                  · {INTERVAL_INFO[interval].short} · Binance
                 </span>
-              ))}
-              <span className="tv-legend-chg">
-                {legendUp ? '+' : ''}
-                {fmtPrice(legendChange)} ({legendUp ? '+' : ''}
-                {legendChangePct.toFixed(2)}%)
-              </span>
-            </div>
-          )}
-          {settings.showLegendOhlc && legendCandle && narrow && (
-            <div className="tv-legend-ohlc compact" style={{ color: legendUp ? settings.upColor : settings.downColor }}>
-              <span>
-                <em>C</em>
-                {fmtPrice(legendCandle.close)}
-              </span>
-              <span className="tv-legend-chg">
-                {legendUp ? '+' : ''}
-                {fmtPrice(legendChange)} ({legendUp ? '+' : ''}
-                {legendChangePct.toFixed(2)}%)
-              </span>
-            </div>
+                <span className={`tv-dot ${status === 'open' ? 'ok' : status === 'connecting' ? 'warn' : 'bad'}`} />
+              </div>
+              {settings.showLegendOhlc && legendCandle && !narrow && (
+                <div className="tv-legend-ohlc" style={{ color: legendUp ? settings.upColor : settings.downColor }}>
+                  {([
+                    ['시', legendCandle.open],
+                    ['고', legendCandle.high],
+                    ['저', legendCandle.low],
+                    ['종', legendCandle.close],
+                  ] as const).map(([label, value]) => (
+                    <span key={label}>
+                      <em>{label}</em>
+                      {fmtPrice(value)}
+                    </span>
+                  ))}
+                  <span className="tv-legend-chg">
+                    {legendUp ? '+' : ''}
+                    {fmtPrice(legendChange)} ({legendUp ? '+' : ''}
+                    {legendChangePct.toFixed(2)}%)
+                  </span>
+                </div>
+              )}
+              {settings.showLegendOhlc && legendCandle && narrow && (
+                <div className="tv-legend-ohlc compact" style={{ color: legendUp ? settings.upColor : settings.downColor }}>
+                  <span>
+                    <em>C</em>
+                    {fmtPrice(legendCandle.close)}
+                  </span>
+                  <span className="tv-legend-chg">
+                    {legendUp ? '+' : ''}
+                    {fmtPrice(legendChange)} ({legendUp ? '+' : ''}
+                    {legendChangePct.toFixed(2)}%)
+                  </span>
+                </div>
+              )}
+            </>
           )}
 
           {settings.showIndicatorLegend && (mainRows.length > 0 || compare.length > 0) && (

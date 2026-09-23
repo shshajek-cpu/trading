@@ -103,11 +103,21 @@ export function SettingsDialog({ open, onClose, settings, onChange }: SettingsDi
           {tab === 'status' && (
             <>
               <label className="tv-field">
+                <span className="tv-field-label">심볼 이름 · 시고저종 줄 표시</span>
+                <input
+                  className="tv-switch"
+                  type="checkbox"
+                  checked={draft.showStatusLine}
+                  onChange={(e) => set('showStatusLine', e.target.checked)}
+                />
+              </label>
+              <label className="tv-field">
                 <span className="tv-field-label">OHLC 값 표시</span>
                 <input
                   className="tv-switch"
                   type="checkbox"
                   checked={draft.showLegendOhlc}
+                  disabled={!draft.showStatusLine}
                   onChange={(e) => set('showLegendOhlc', e.target.checked)}
                 />
               </label>

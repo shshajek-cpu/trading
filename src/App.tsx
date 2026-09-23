@@ -962,6 +962,8 @@ function App() {
     saved,
     onQuickSearch: () => setQuickOpen(true),
     onSettings: () => setSettingsOpen(true),
+    statusLine: settings.showStatusLine,
+    onToggleStatusLine: () => setSettings((prev) => ({ ...prev, showStatusLine: !prev.showStatusLine })),
     fullscreen: fullscreen.active,
     onFullscreen: () => void fullscreen.toggle(),
     onSnapshotDownload: snapshotDownload,
@@ -1136,7 +1138,7 @@ function App() {
 
   // ── mobile app (TradingView 앱 구조: 아래 탭 + 차트 도구 줄 + 아래 시트) ──
   if (isMobile) {
-    const toggleSetting = (key: 'showCountdown' | 'showPriceLine' | 'showLastPriceLabel') => () =>
+    const toggleSetting = (key: 'showCountdown' | 'showPriceLine' | 'showLastPriceLabel' | 'showStatusLine') => () =>
       setSettings((prev) => ({ ...prev, [key]: !prev[key] }))
     const scaleEntries: MenuEntry[] = [
       ...chartMenuEntries({ x: 0, y: 0, target: { kind: 'priceScale' }, cellIndex: active }),
@@ -1144,6 +1146,8 @@ function App() {
       { type: 'item', label: '봉 마감 카운트다운', checked: settings.showCountdown, onSelect: toggleSetting('showCountdown') },
       { type: 'item', label: '현재가 선', checked: settings.showPriceLine, onSelect: toggleSetting('showPriceLine') },
       { type: 'item', label: '현재가 라벨', checked: settings.showLastPriceLabel, onSelect: toggleSetting('showLastPriceLabel') },
+      { type: 'divider' },
+      { type: 'item', label: '심볼 이름 · 시고저종 줄', checked: settings.showStatusLine, onSelect: toggleSetting('showStatusLine') },
     ]
     return (
       <>

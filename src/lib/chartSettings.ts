@@ -8,7 +8,8 @@ export interface ChartSettings {
   /** Candle / bar colors. Wicks and borders follow the body color. */
   upColor: string
   downColor: string
-  /** Status line (legend) */
+  /** Status line (legend): 왼쪽 위 심볼 이름 줄 + 시고저종 줄. 끄면 둘 다 숨긴다(지표 범례는 따로). */
+  showStatusLine: boolean
   showLegendOhlc: boolean
   showIndicatorLegend: boolean
   /** Scales */
@@ -28,6 +29,7 @@ export const DEFAULT_CHART_SETTINGS: ChartSettings = {
   theme: 'dark',
   upColor: '#089981',
   downColor: '#f23645',
+  showStatusLine: true,
   showLegendOhlc: true,
   showIndicatorLegend: true,
   showCountdown: true,
