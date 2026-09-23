@@ -8,6 +8,7 @@ import { notifySettingsChanged } from './syncBus'
 export type IndicatorKind =
   | 'volume'
   | 'volumeSpike'
+  | 'multiMa'
   | 'sma'
   | 'ema'
   | 'wma'
@@ -46,6 +47,8 @@ export interface IndicatorParamDef {
   step?: number
   /** 'flag' 는 0/1 스위치로, 나머지는 숫자 입력으로 그린다. */
   kind?: 'number' | 'flag'
+  /** 설정 창의 "스타일" 탭에 둔다(선 굵기 등). 없으면 "입력" 탭. */
+  tab?: 'style'
 }
 
 export interface IndicatorDef {
@@ -68,6 +71,13 @@ export interface IndicatorDef {
 const IS_MA: Partial<Record<IndicatorKind, true>> = { sma: true, ema: true, wma: true, vwma: true }
 
 const len = (def: number): IndicatorParamDef => ({ key: 'length', label: '기간', default: def, min: 1, max: 1000, step: 1 })
+
+/**
+ * 멀티 이동평균의 선 6개 기본 기간. 흔히 쓰는 50·100·200·400 을 켜 두고, 앞뒤 한 칸(짧은·긴 선)은 비워 둔다.
+ * 색·굵기는 짧은 선부터 보라·노랑·흰색·초록·빨강·하늘, 긴 선일수록 굵게.
+ */
+const MULTI_MA_LENGTHS = [0, 50, 100, 200, 400, 0]
+const MULTI_MA_WIDTHS = [1, 1, 3, 2, 3, 4]
 
 export const INDICATOR_DEFS: Record<IndicatorKind, IndicatorDef> = {
   volume: {
@@ -92,15 +102,44 @@ export const INDICATOR_DEFS: Record<IndicatorKind, IndicatorDef> = {
     overlay: false,
     category: '거래량',
     params: [
-      { key: 'length', label: '평균·편차 구간', default: 100, min: 10, max: 1000, step: 1 },
-      { key: 'extreme', label: '폭발 기준 (σ)', default: 4, min: 0.5, max: 20, step: 0.1 },
-      { key: 'high', label: '강함 기준 (σ)', default: 2.5, min: 0.5, max: 20, step: 0.1 },
-      { key: 'medium', label: '보통 기준 (σ)', default: 1, min: 0.1, max: 20, step: 0.1 },
+      { key: 'count', label: '볼륨 카운트 (평균 구간)', default: 70, min: 2, max: 1000, step: 1 },
+      { key: 'lv1', label: 'Lv1 배율 (x)', default: 3, min: 0.1, max: 100, step: 0.1 },
+      { key: 'lv2', label: 'Lv2 배율 (x, 0 = 사용 안 함)', default: 5, min: 0, max: 100, step: 0.1 },
+      { key: 'lv3', label: 'Lv3 배율 (x, 0 = 사용 안 함)', default: 7, min: 0, max: 100, step: 0.1 },
       { key: 'background', label: '배경 강조', default: 1, min: 0, max: 1, kind: 'flag' },
-      { key: 'backgroundAt', label: '배경 강조 기준 (σ)', default: 2.5, min: 0.1, max: 20, step: 0.1 },
+      { key: 'backgroundAt', label: '배경 강조 기준 배율 (x)', default: 5, min: 0.1, max: 100, step: 0.1 },
     ],
-    colors: ['#ff4fa3', '#fff59d', '#2ee88f', '#ff5c5c'],
-    colorLabels: ['폭발', '강함', '보통 (상승)', '보통 (하락)'],
+    colors: ['#00ff88', '#fff59d', '#ec407a', '#00796b', '#c62828'],
+    colorLabels: ['Lv1 (메로나)', 'Lv2 (옐로우)', 'Lv3 (레드)', '양봉', '음봉'],
+  },
+  multiMa: {
+    kind: 'multiMa',
+    name: '멀티 이동평균',
+    shortName: 'MA',
+    overlay: true,
+    category: '이동평균',
+    params: [
+      { key: 'ema', label: '지수이동평균(EMA)으로 계산', default: 0, min: 0, max: 1, kind: 'flag' },
+      ...MULTI_MA_LENGTHS.map((d, i) => ({
+        key: `len${i + 1}`,
+        label: `선 ${i + 1} 기간 (0 = 사용 안 함)`,
+        default: d,
+        min: 0,
+        max: 2000,
+        step: 1,
+      })),
+      ...MULTI_MA_WIDTHS.map((d, i) => ({
+        key: `width${i + 1}`,
+        label: `선 ${i + 1} 굵기`,
+        default: d,
+        min: 1,
+        max: 4,
+        step: 1,
+        tab: 'style' as const,
+      })),
+    ],
+    colors: ['#c39bd3', '#fdd835', '#ffffff', '#43a047', '#e53935', '#26c6da'],
+    colorLabels: MULTI_MA_LENGTHS.map((_, i) => `선 ${i + 1}`),
   },
   sma: {
     kind: 'sma',
@@ -358,7 +397,12 @@ export function indicatorTitle(i: IndicatorInstance): string {
     case 'volume':
       return 'Vol'
     case 'volumeSpike':
-      return `${def.shortName} ${p.length}`
+      return `${def.shortName} ${p.count}`
+    case 'multiMa': {
+      const lens = multiMaSlots(i).map((s) => s.length)
+      const name = p.ema ? 'EMA' : def.shortName
+      return lens.length > 0 ? `${name} ${lens.join(' ')}` : name
+    }
     case 'sma':
     case 'ema':
     case 'wma':
@@ -390,6 +434,34 @@ export function indicatorTitle(i: IndicatorInstance): string {
   }
 }
 
+/** 멀티 이동평균에서 켜 둔(기간 > 0) 선들의 기간. 선 번호(1~6)와 함께 돌려준다. */
+export function multiMaSlots(i: IndicatorInstance): { slot: number; length: number }[] {
+  const out: { slot: number; length: number }[] = []
+  for (let s = 1; s <= MULTI_MA_LENGTHS.length; s++) {
+    const length = Math.floor(i.params[`len${s}`] ?? 0)
+    if (length > 0) out.push({ slot: s, length })
+  }
+  return out
+}
+
+/** 한 번에 넣는 묶음: 멀티 이동평균(50·100·200·400) + 거래량 급증 + RSI. 아래 칸 순서도 이 순서다. */
+export const INDICATOR_SET: { name: string; kinds: IndicatorKind[] } = {
+  name: '이평선 · 거래량 급증 · RSI 세트',
+  kinds: ['multiMa', 'volumeSpike', 'rsi'],
+}
+
+/**
+ * 세트를 넣는다. 이미 있는 종류는 그대로 두고 빠진 것만 더한다. 거래량 급증이 거래량을 대신하므로
+ * 일반 거래량은 뺀다(같은 막대가 두 번 그려지지 않게).
+ */
+export function withIndicatorSet(existing: IndicatorInstance[]): IndicatorInstance[] {
+  const next = existing.filter((i) => i.kind !== 'volume')
+  for (const kind of INDICATOR_SET.kinds) {
+    if (!next.some((i) => i.kind === kind)) next.push(createIndicator(kind, next))
+  }
+  return next
+}
+
 /* ── 저장/불러오기 (v3) + v2 마이그레이션 ─────────────────────────────── */
 
 const STORAGE_KEY = 'trading.indicators.v3'
@@ -413,6 +485,11 @@ function isInstance(v: unknown): v is IndicatorInstance {
 /** 저장된 인스턴스의 빠진 파라미터를 기본값으로 채우고 색을 보정한다. */
 function normalize(i: IndicatorInstance): IndicatorInstance {
   const def = INDICATOR_DEFS[i.kind]
+  // 거래량 급증은 σ 기준(length·extreme·high·medium)에서 평균 배율 기준(count·lv1~3)으로 바뀌었다.
+  // 옛 값과 색은 뜻이 달라 이어 쓸 수 없다 — 새 기본값으로 바꾼다.
+  if (i.kind === 'volumeSpike' && 'extreme' in i.params) {
+    return { id: i.id, kind: i.kind, params: defaultParams(def), colors: [...def.colors], visible: i.visible }
+  }
   const params: Record<string, number> = {}
   for (const p of def.params) {
     const v = i.params[p.key]

@@ -25,7 +25,7 @@ import {
   stochRsi,
   stochastic,
   vwap,
-  volumeZScores,
+  volumeRatios,
   vwma,
   williamsR,
   wma,
@@ -34,11 +34,12 @@ import {
 import {
   INDICATOR_DEFS,
   indicatorTitle,
+  multiMaSlots,
   type IndicatorInstance,
   type IndicatorKind,
 } from '../lib/indicatorConfig'
 
-export type LegendFormat = 'price' | 'fixed2' | 'volume' | 'sigma'
+export type LegendFormat = 'price' | 'fixed2' | 'volume' | 'ratio'
 
 export interface PlotLine {
   key: string
@@ -107,6 +108,11 @@ function volumeColors(candles: Candle[], instance: IndicatorInstance, palette: C
   })
 }
 
+/** 설정값을 lightweight-charts 선 굵기(1~4)로. */
+function lineWidthOf(v: number | undefined): 1 | 2 | 3 | 4 {
+  const w = Math.round(v ?? 1)
+  return w <= 1 ? 1 : w >= 4 ? 4 : (w as 2 | 3)
+}
 
 export function computeIndicator(
   instance: IndicatorInstance,
@@ -145,36 +151,52 @@ export function computeIndicator(
       ]
       break
     case 'volumeSpike': {
-      // 평소 거래량은 방향색으로 옅게, 급증 단계(σ)에 따라 형광색으로 올린다.
-      const z = volumeZScores(candles, p.length)
-      const zAt = new Map(z.map((pt) => [pt.time, pt.value]))
+      // 직전 count 봉 평균의 몇 배인지로 단계를 매긴다: Lv3 레드 > Lv2 옐로우 > Lv1 메로나, 나머지는 양봉·음봉 색.
+      // Lv2·Lv3 을 0 으로 두면 그 단계는 쓰지 않는다.
+      const ratios = volumeRatios(candles, p.count)
+      const ratioAt = new Map(ratios.map((pt) => [pt.time, pt.value]))
+      const reached = (r: number, level: number) => level > 0 && r >= level
       const colors = candles.map((k) => {
-        const s = zAt.get(k.time)
-        const up = k.close >= k.open
-        if (s !== undefined && s >= p.extreme) return c[0]
-        if (s !== undefined && s >= p.high) return c[1]
-        if (s !== undefined && s >= p.medium) return up ? c[2] : c[3]
-        return up ? `${palette.up}b3` : `${palette.down}b3`
+        const r = ratioAt.get(k.time) ?? 0
+        if (reached(r, p.lv3)) return c[2]
+        if (reached(r, p.lv2)) return c[1]
+        if (reached(r, p.lv1)) return c[0]
+        return k.close >= k.open ? c[3] : c[4]
       })
       base.lines = [
         {
           key: 'vol',
           type: 'histogram',
           points: candles.map((k) => ({ time: k.time, value: k.volume })),
-          color: palette.up,
+          color: c[3],
           colors,
           legendLabel: 'Vol',
           legendFormat: 'volume',
         },
-        { key: 'z', type: 'line', points: z, color: c[0], hidden: true, legendLabel: '강도', legendFormat: 'sigma' },
+        { key: 'ratio', type: 'line', points: ratios, color: c[0], hidden: true, legendLabel: '배율', legendFormat: 'ratio' },
       ]
       if (p.background !== 0) {
         base.highlights = candles.flatMap((k) => {
-          const s = zAt.get(k.time)
-          if (s === undefined || s < p.backgroundAt) return []
+          const r = ratioAt.get(k.time)
+          if (r === undefined || r < p.backgroundAt) return []
           return [{ time: k.time, color: k.close >= k.open ? `${palette.up}33` : `${palette.down}33` }]
         })
       }
+      break
+    }
+    case 'multiMa': {
+      // 켜 둔 선마다 하나씩. 선 번호가 곧 색·굵기 자리다(꺼 둔 선이 있어도 색이 밀리지 않게).
+      const fn = p.ema ? ema : sma
+      base.lines = multiMaSlots(instance).map(({ slot, length }) => ({
+        key: `ma${slot}`,
+        type: 'line' as const,
+        points: fn(candles, length),
+        color: c[slot - 1],
+        lineWidth: lineWidthOf(p[`width${slot}`]),
+        legendLabel: '',
+        legendFormat: 'price' as const,
+        name: `${p.ema ? 'EMA' : 'MA'} ${length}`,
+      }))
       break
     }
     case 'sma':
@@ -333,8 +355,8 @@ export function indicatorLegend(
         ? formatVolume(point.value)
         : fmt === 'price'
           ? formatPrice(point.value)
-          : fmt === 'sigma'
-            ? `${point.value.toFixed(1)}σ`
+          : fmt === 'ratio'
+            ? `${point.value.toFixed(1)}x`
             : point.value.toFixed(2)
     out.push({ label: line.legendLabel || undefined, text, color: line.color })
   }
@@ -344,7 +366,7 @@ export function indicatorLegend(
 /** 알림 창에 보여 줄 선 이름(선 key → 한국어). */
 const PLOT_NAMES: Record<string, string> = {
   vol: '거래량',
-  z: '급증 강도 (σ)',
+  ratio: '급증 배율 (x)',
   ma: '값',
   basis: '기준선',
   upper: '상단',

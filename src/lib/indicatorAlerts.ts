@@ -1,6 +1,6 @@
 import type { Interval } from './binance'
 import { isInterval } from './intervals'
-import { toIndicatorInstance, type IndicatorInstance } from './indicatorConfig'
+import { indicatorTitle, toIndicatorInstance, type IndicatorInstance } from './indicatorConfig'
 import { notifySettingsChanged } from './syncBus'
 
 /** TradingView 알림 조건 어휘: 교차 / 상향 교차 / 하향 교차 / 보다 큼 / 보다 작음. */
@@ -77,7 +77,7 @@ export function formatAlertValue(value: number): string {
   return Number(value.toPrecision(10)).toLocaleString('en-US', { maximumFractionDigits: 8 })
 }
 
-/** 목록·알림 문구용 한 줄 설명. 예: "Vol 급증 100 · 급증 강도 (σ) 보다 큼 2.5". */
+/** 목록·알림 문구용 한 줄 설명. 예: "Vol 급증 70 · 급증 배율 (x) 보다 큼 5". */
 export function describeIndicatorAlert(a: Pick<IndicatorAlert, 'title' | 'lineName' | 'condition' | 'value'>): string {
   return `${a.title} · ${a.lineName} ${CONDITION_LABELS[a.condition]} ${formatAlertValue(a.value)}`
 }
@@ -110,7 +110,7 @@ function toAlert(v: unknown): IndicatorAlert | null {
   ) {
     return null
   }
-  return {
+  const alert: IndicatorAlert = {
     id: a.id,
     symbol: a.symbol,
     interval: a.interval,
@@ -127,6 +127,18 @@ function toAlert(v: unknown): IndicatorAlert | null {
     ...(typeof a.firedAt === 'number' ? { firedAt: a.firedAt } : {}),
     ...(typeof a.message === 'string' ? { message: a.message } : {}),
   }
+  return migrateSigmaSpike(alert)
+}
+
+/**
+ * 거래량 급증이 σ(강도)에서 평균 배율(x)로 바뀌기 전의 알림. 'z' 선은 더는 없어 영영 울리지 않는다.
+ * 옛 기준(보통 1σ · 강함 2.5σ · 폭발 4σ)을 새 단계(Lv1 · Lv2 · Lv3 배율)로 옮긴다.
+ */
+function migrateSigmaSpike(a: IndicatorAlert): IndicatorAlert {
+  if (a.indicator.kind !== 'volumeSpike' || a.lineKey !== 'z') return a
+  const p = a.indicator.params
+  const value = a.value >= 4 ? p.lv3 || p.lv2 || p.lv1 : a.value >= 2.5 ? p.lv2 || p.lv1 : p.lv1
+  return { ...a, title: indicatorTitle(a.indicator), lineKey: 'ratio', lineName: '급증 배율 (x)', value }
 }
 
 export function loadIndicatorAlerts(): IndicatorAlert[] {

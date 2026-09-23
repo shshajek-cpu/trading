@@ -31,6 +31,8 @@ export function IndicatorSettingsDialog({ instance, onChange, onClose }: Indicat
 
   if (!instance) return null
   const def = INDICATOR_DEFS[instance.kind]
+  const inputParams = def.params.filter((p) => p.tab !== 'style')
+  const styleParams = def.params.filter((p) => p.tab === 'style')
 
   const cancel = () => {
     if (session.original) onChange(session.original)
@@ -82,10 +84,10 @@ export function IndicatorSettingsDialog({ instance, onChange, onClose }: Indicat
     >
       <div className="ind-settings">
         {tab === 'inputs' &&
-          (def.params.length === 0 ? (
+          (inputParams.length === 0 ? (
             <p className="ind-settings-empty">바꿀 입력값이 없습니다.</p>
           ) : (
-            def.params.map((param) => (
+            inputParams.map((param) => (
               <ParamField
                 key={`${instance.id}-${param.key}`}
                 param={param}
@@ -111,6 +113,14 @@ export function IndicatorSettingsDialog({ instance, onChange, onClose }: Indicat
                   }}
                 />
               </label>
+            ))}
+            {styleParams.map((param) => (
+              <ParamField
+                key={`${instance.id}-${param.key}`}
+                param={param}
+                value={instance.params[param.key] ?? param.default}
+                onCommit={(v) => onChange({ ...instance, params: { ...instance.params, [param.key]: v } })}
+              />
             ))}
             <label className="tv-field">
               <span className="tv-field-label">차트에 표시</span>

@@ -214,27 +214,21 @@ export function volumeTiers(
 }
 
 /**
- * 거래량 급증 강도(σ): 이번 봉 거래량이 직전 `length` 봉 평균에서 표준편차 몇 개만큼 튀었는지.
+ * 거래량 급증 배율(x): 이번 봉 거래량이 직전 `count` 봉 평균의 몇 배인지.
  *
- * 배율(몇 배)보다 종목·시간대의 평소 출렁임을 반영한다 — 늘 들쭉날쭉한 종목은 웬만큼 튀어도
- * 낮게, 늘 잔잔한 종목은 조금만 튀어도 높게 나온다. 평균·편차는 자기 자신을 뺀 구간으로 낸다
- * (급증한 봉이 섞이면 스스로를 희석한다). 거래량 제곱은 부동소수 오차가 커서 구간마다 다시 센다.
+ * 평균은 자기 자신을 뺀 직전 구간으로 낸다 — 급증한 봉이 평균에 섞이면 스스로를 희석해 배율이 낮게 나온다.
+ * 합은 한 칸씩 밀며 더하고 빼서 봉 수에 비례하는 시간으로 끝낸다.
  */
-export function volumeZScores<T>(candles: VolumeCandle<T>[], length: number): LinePoint<T>[] {
-  const n = Math.floor(length)
-  if (!Number.isFinite(n) || n < 2 || candles.length <= n) return []
+export function volumeRatios<T>(candles: VolumeCandle<T>[], count: number): LinePoint<T>[] {
+  const n = Math.floor(count)
+  if (!Number.isFinite(n) || n < 1 || candles.length <= n) return []
   const out: LinePoint<T>[] = []
+  let sum = 0
+  for (let j = 0; j < n; j++) sum += candles[j].volume
   for (let i = n; i < candles.length; i++) {
-    let sum = 0
-    for (let j = i - n; j < i; j++) sum += candles[j].volume
     const mean = sum / n
-    let sq = 0
-    for (let j = i - n; j < i; j++) {
-      const d = candles[j].volume - mean
-      sq += d * d
-    }
-    const std = Math.sqrt(sq / n)
-    out.push({ time: candles[i].time, value: std > 0 ? (candles[i].volume - mean) / std : 0 })
+    out.push({ time: candles[i].time, value: mean > 0 ? candles[i].volume / mean : 0 })
+    sum += candles[i].volume - candles[i - n].volume
   }
   return out
 }

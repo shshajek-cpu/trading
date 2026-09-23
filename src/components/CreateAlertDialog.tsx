@@ -76,9 +76,9 @@ function alertLines(instance: IndicatorInstance) {
   return computeIndicator(instance, [], CHART_PALETTES.dark).lines.map((line) => ({ key: line.key, name: plotName(line) }))
 }
 
-/** 지표를 고르면 처음 채워 줄 기준값. 급증 강도는 "강함" 기준, 오실레이터는 첫 기준선(RSI 70 등). */
+/** 지표를 고르면 처음 채워 줄 기준값. 급증 배율은 Lv2 배율(끄면 Lv1), 오실레이터는 첫 기준선(RSI 70 등). */
 function defaultIndicatorValue(instance: IndicatorInstance, lineKey: string, livePrice: number | null): number | null {
-  if (instance.kind === 'volumeSpike' && lineKey === 'z') return instance.params.high
+  if (instance.kind === 'volumeSpike' && lineKey === 'ratio') return instance.params.lv2 || instance.params.lv1
   const computed = computeIndicator(instance, [], CHART_PALETTES.dark)
   if (computed.levels[0]) return computed.levels[0].price
   if (computed.overlay) return livePrice
@@ -143,7 +143,7 @@ export function CreateAlertDialog({
     }
     const nextLines = alertLines(nextInstance)
     const spike = nextInstance.kind === 'volumeSpike'
-    const nextLine = nextLines.find((l) => l.key === 'z') ?? nextLines[0]
+    const nextLine = nextLines.find((l) => l.key === 'ratio') ?? nextLines[0]
     const nextCondition: IndicatorCondition = spike ? 'greater' : 'crossing'
     setLineKey(nextLine?.key ?? '')
     setIndicatorCondition(nextCondition)

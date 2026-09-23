@@ -79,6 +79,22 @@
   font-size: var(--tv-fs-xs);
 }
 
+/* 한 번에 넣는 세트 줄 — 목록 맨 위에 테두리로 구분한다. */
+.ind-set-row {
+  margin-bottom: 4px;
+  border: 1px solid var(--tv-border);
+}
+.ind-set-row .ind-star {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: inherit;
+}
+.ind-set-row .ind-name {
+  color: var(--tv-text-strong);
+  font-weight: 600;
+}
+
 .ind-empty {
   padding: 40px 16px;
   text-align: center;
