@@ -16,8 +16,8 @@ interface WatchlistWidgetProps {
   onAdd: (s: string) => void
   onRemove: (s: string) => void
   onReorder: (next: string[]) => void
-  variant: 'panel' | 'fullscreen'
-  onClose?: () => void
+  /** panel = 데스크톱 오른쪽 위젯, page = 폰 앱의 "관심 목록" 탭(큰 제목, 두 줄 행). */
+  variant: 'panel' | 'page'
 }
 
 type SortCol = 'symbol' | 'price' | 'change' | 'changePercent'
@@ -45,7 +45,6 @@ export function WatchlistWidget({
   onRemove,
   onReorder,
   variant,
-  onClose,
 }: WatchlistWidgetProps) {
   const [sortCol, setSortCol] = useState<SortCol>('symbol')
   const [sortDir, setSortDir] = useState<SortDir>('none')
@@ -120,35 +119,33 @@ export function WatchlistWidget({
     for (const s of symbols) onRemove(s)
   }
 
-  const isFull = variant === 'fullscreen'
+  const isPage = variant === 'page'
 
   return (
-    <section className={`wl${isFull ? ' wl-full' : ''}`}>
-      <header className="wl-head">
-        <span className="wl-title">
-          관심 목록 <span className="wl-caret">▾</span>
-        </span>
-        <button type="button" className="tv-icon-btn" aria-label="심볼 추가" onClick={() => setAddOpen(true)}>
-          <Icon name="plus" size={18} />
-        </button>
-        {isFull ? (
-          <button type="button" className="tv-icon-btn" aria-label="닫기" onClick={onClose}>
-            <Icon name="close" size={18} />
-          </button>
+    <section className={`wl${isPage ? ' wl-page' : ''}`}>
+      <header className={isPage ? 'm-page-head' : 'wl-head'}>
+        {isPage ? (
+          <h1 className="m-page-title">관심 목록</h1>
         ) : (
-          <button
-            ref={menuBtn}
-            type="button"
-            className="tv-icon-btn"
-            aria-label="더보기"
-            onClick={() => setMenuOpen((v) => !v)}
-          >
-            <Icon name="more" size={18} />
-          </button>
+          <span className="wl-title">
+            관심 목록 <span className="wl-caret">▾</span>
+          </span>
         )}
+        <button type="button" className="tv-icon-btn" aria-label="심볼 추가" onClick={() => setAddOpen(true)}>
+          <Icon name="plus" size={isPage ? 22 : 18} />
+        </button>
+        <button
+          ref={menuBtn}
+          type="button"
+          className="tv-icon-btn"
+          aria-label="더보기"
+          onClick={() => setMenuOpen((v) => !v)}
+        >
+          <Icon name="more" size={isPage ? 22 : 18} />
+        </button>
       </header>
 
-      {!isFull && (
+      {!isPage && (
         <div className="wl-cols">
           <button type="button" className="wl-col wl-col-sym" onClick={() => cycleSort('symbol')}>
             심볼 <span className="wl-mark">{sortMark('symbol')}</span>
@@ -182,8 +179,8 @@ export function WatchlistWidget({
               onDrop={() => canDrag && onDrop(idx)}
               onClick={() => onPick(s)}
             >
-              <CoinIcon base={infos.find((i) => i.symbol === s)?.baseAsset ?? s.replace(/USDT.*/, '')} size={isFull ? 28 : 18} />
-              {isFull ? (
+              <CoinIcon base={infos.find((i) => i.symbol === s)?.baseAsset ?? s.replace(/USDT.*/, '')} size={isPage ? 32 : 18} />
+              {isPage ? (
                 <>
                   <div className="wl-full-main">
                     <span className="wl-full-sym">{displaySymbol(s, infos)}</span>
@@ -225,19 +222,17 @@ export function WatchlistWidget({
         {symbols.length === 0 && <li className="wl-empty">관심 목록이 비어 있습니다.</li>}
       </ul>
 
-      {!isFull && (
-        <Popover anchor={menuBtn.current} open={menuOpen} onClose={() => setMenuOpen(false)} placement="bottom-end">
-          <MenuItem
-            label="정렬 초기화"
-            onSelect={() => {
-              setSortDir('none')
-              setSortCol('symbol')
-              setMenuOpen(false)
-            }}
-          />
-          <MenuItem label="모두 지우기" onSelect={clearAll} />
-        </Popover>
-      )}
+      <Popover anchor={menuBtn.current} open={menuOpen} onClose={() => setMenuOpen(false)} placement="bottom-end">
+        <MenuItem
+          label="정렬 초기화"
+          onSelect={() => {
+            setSortDir('none')
+            setSortCol('symbol')
+            setMenuOpen(false)
+          }}
+        />
+        <MenuItem label="모두 지우기" onSelect={clearAll} />
+      </Popover>
 
       <SymbolSearchDialog
         open={addOpen}

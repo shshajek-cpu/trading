@@ -80,6 +80,8 @@ export interface ChartCellProps {
   onContextMenu?: (req: ChartMenuRequest) => void
   /** 범례의 🔔 — 그 지표로 알림 만들기. */
   onIndicatorAlert?: (instanceId: string) => void
+  /** 폰: 시간축 오른쪽 모서리의 ⚙ — 가격 축 시트를 연다. */
+  onScaleMenu?: () => void
 }
 
 /** 범례 조작용 소형 아이콘(직접 그린 SVG). */
@@ -143,6 +145,7 @@ export function ChartCell({
   gridStyle,
   onContextMenu,
   onIndicatorAlert,
+  onScaleMenu,
 }: ChartCellProps) {
   const [liveCandle, setLiveCandle] = useState<Candle | null>(null)
   const [hoverTime, setHoverTime] = useState<number | null>(null)
@@ -618,6 +621,18 @@ export function ChartCell({
               </div>
             )
           })}
+
+        {onScaleMenu && (
+          <button
+            type="button"
+            className="cell-scale-btn"
+            style={{ width: panes.axisWidth }}
+            aria-label="가격 축 설정"
+            onClick={onScaleMenu}
+          >
+            <Ctl name="gear" />
+          </button>
+        )}
 
         {loadingOlder && (
           <div className="loading-older">

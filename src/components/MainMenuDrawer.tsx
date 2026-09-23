@@ -9,8 +9,6 @@ interface MainMenuDrawerProps {
   onOpenWidget: (id: WidgetId) => void
   theme: 'dark' | 'light'
   onThemeChange: (v: 'dark' | 'light') => void
-  drawingPanel: boolean
-  onDrawingPanelChange: (v: boolean) => void
   onShortcuts: () => void
   install: { canShow: boolean; ios: boolean; installable: boolean; install: () => void }
 }
@@ -21,8 +19,6 @@ export function MainMenuDrawer({
   onOpenWidget,
   theme,
   onThemeChange,
-  drawingPanel,
-  onDrawingPanelChange,
   onShortcuts,
   install,
 }: MainMenuDrawerProps) {
@@ -71,16 +67,6 @@ export function MainMenuDrawer({
               type="checkbox"
               checked={theme === 'dark'}
               onChange={(e) => onThemeChange(e.target.checked ? 'dark' : 'light')}
-            />
-          </label>
-          <label className="tv-drawer-item switch">
-            <Icon name="typeLine" size={22} />
-            <span>그리기 패널</span>
-            <input
-              className="tv-switch"
-              type="checkbox"
-              checked={drawingPanel}
-              onChange={(e) => onDrawingPanelChange(e.target.checked)}
             />
           </label>
           <button

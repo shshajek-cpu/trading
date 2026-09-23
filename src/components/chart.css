@@ -218,6 +218,48 @@
   opacity: 0.85;
 }
 
+/* ── "최근 봉으로" 버튼(과거로 밀었을 때) ── */
+.scroll-realtime-btn {
+  position: absolute;
+  z-index: 5;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--tv-border-strong);
+  border-radius: var(--tv-radius-sm);
+  background: var(--tv-elevated);
+  color: var(--tv-text);
+  cursor: pointer;
+  box-shadow: var(--tv-shadow);
+}
+
+.scroll-realtime-btn:hover {
+  background: var(--tv-hover);
+}
+
+/* ── 폰: 시간축 오른쪽 모서리의 ⚙ (가격 축 시트) ── */
+.cell-scale-btn {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  z-index: 5;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 28px;
+  border: 0;
+  background: var(--tv-bg);
+  color: var(--tv-text-dim);
+  cursor: pointer;
+}
+
+.cell-scale-btn svg {
+  width: 18px;
+  height: 18px;
+}
+
 /* ── 시간 기준 세로 커서 고정 ── */
 .cursor-lock-line {
   position: absolute;

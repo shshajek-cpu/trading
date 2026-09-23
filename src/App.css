@@ -69,18 +69,6 @@
   overflow: visible;
 }
 
-.tv-toolbar.mobile {
-  overflow-x: auto;
-  overflow-y: hidden;
-  gap: 1px;
-  padding: 0 4px;
-  scrollbar-width: none;
-}
-
-.tv-toolbar.mobile::-webkit-scrollbar {
-  display: none;
-}
-
 .tv-tb-btn {
   display: inline-flex;
   align-items: center;
@@ -272,8 +260,7 @@
   display: none;
 }
 
-.tv-range-btn,
-.tv-range-menu-btn {
+.tv-range-btn {
   height: 26px;
   padding: 0 9px;
   border: 0;
@@ -286,15 +273,7 @@
   white-space: nowrap;
 }
 
-.tv-range-menu-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  color: var(--tv-text);
-}
-
-.tv-range-btn:hover,
-.tv-range-menu-btn:hover {
+.tv-range-btn:hover {
   background: var(--tv-hover);
   color: var(--tv-text);
 }
@@ -1108,73 +1087,6 @@
 
 .tv-drawer-item.switch {
   cursor: default;
-}
-
-/* ══ Mobile layout ═════════════════════════════════════════════════ */
-.tv-app.mobile {
-  display: flex;
-  flex-direction: column;
-  gap: 0;
-  background: var(--tv-bg);
-  padding-top: var(--sat);
-  padding-bottom: var(--sab);
-}
-
-.tv-app.mobile .tv-toolbar-cell {
-  flex: none;
-  border-bottom: 1px solid var(--tv-border);
-}
-
-.tv-mobile-body {
-  flex: 1;
-  min-height: 0;
-  display: flex;
-}
-
-.tv-app.mobile .tv-left-cell {
-  flex: none;
-  width: var(--tv-left-w);
-  border-right: 1px solid var(--tv-border);
-}
-
-.tv-app.mobile .tv-chart-grid {
-  position: relative;
-  flex: 1;
-  min-width: 0;
-}
-
-.tv-app.mobile .tv-bottom-cell {
-  flex: none;
-  border-top: 1px solid var(--tv-border);
-}
-
-.tv-mobile-widget {
-  position: fixed;
-  inset: 0;
-  z-index: 930;
-  display: flex;
-  flex-direction: column;
-  background: var(--tv-bg);
-  padding-top: var(--sat);
-  padding-bottom: var(--sab);
-}
-
-.tv-mobile-widget-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  height: 52px;
-  padding: 0 12px 0 16px;
-  border-bottom: 1px solid var(--tv-border);
-  font-size: 16px;
-  font-weight: 600;
-  color: var(--tv-text-strong);
-}
-
-.tv-mobile-widget-body {
-  flex: 1;
-  min-height: 0;
-  overflow-y: auto;
 }
 
 /* ══ Shortcuts help ════════════════════════════════════════════════ */

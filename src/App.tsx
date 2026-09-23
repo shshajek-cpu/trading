@@ -7,7 +7,7 @@ import { ErrorBoundary } from './components/ErrorBoundary'
 import { TopToolbar } from './components/TopToolbar'
 import { BottomBar } from './components/BottomBar'
 import { WidgetBar } from './components/WidgetBar'
-import { WIDGET_TABS, type WidgetId } from './lib/widgets'
+import type { WidgetId } from './lib/widgets'
 import { MainMenuDrawer } from './components/MainMenuDrawer'
 import { SettingsDialog } from './components/SettingsDialog'
 import { QuickSearchDialog } from './components/QuickSearchDialog'
@@ -23,6 +23,10 @@ import { copyDrawing, hasCopiedDrawing, pasteDrawing } from './chart/drawing/cli
 import { formatPrice } from './chart/format'
 
 import { DrawingToolbar } from './components/DrawingToolbar'
+import { IndicatorTemplatesMenu } from './components/IndicatorTemplatesMenu'
+import { MobileShell, type MobileSheet } from './components/mobile/MobileShell'
+import { MobileMenuPage } from './components/mobile/MobileMenuPage'
+import type { MobileTab } from './components/mobile/MobileBars'
 import { ObjectTree } from './components/ObjectTree'
 import { IndicatorsDialog } from './components/IndicatorsDialog'
 import { SymbolSearchDialog } from './components/SymbolSearchDialog'
@@ -53,7 +57,6 @@ import { useUiPrefs } from './hooks/useUiPrefs'
 import { useFullscreen } from './hooks/useFullscreen'
 import { useShortcuts } from './hooks/useShortcuts'
 import { useShortcutBindings } from './hooks/useShortcutBindings'
-import { useBackClose } from './hooks/useBackClose'
 
 import {
   clampSplit,
@@ -131,8 +134,9 @@ function App() {
   const [menuOpen, setMenuOpen] = useState(false)
   const [shortcutsOpen, setShortcutsOpen] = useState(false)
   const [widgetOpen, setWidgetOpen] = useState<WidgetId | null>('watchlist')
-  const [mobileWidget, setMobileWidget] = useState<WidgetId | null>(null)
-  const [drawingPanel, setDrawingPanel] = useState(true)
+  /** 폰 앱: 아래 탭과 열린 아래 시트. */
+  const [mobileTab, setMobileTab] = useState<MobileTab>('chart')
+  const [mobileSheet, setMobileSheet] = useState<MobileSheet | null>(null)
   const [saved, setSaved] = useState(false)
 
   // ── data hooks ────────────────────────────────────────────────────
@@ -324,19 +328,36 @@ function App() {
   )
 
   // ── snapshot ──────────────────────────────────────────────────────
-  const snapshotDownload = useCallback(() => {
-    const canvas = getChart(active)?.takeSnapshot()
-    if (!canvas) return
-    canvas.toBlob((blob) => {
-      if (!blob) return
-      const url = URL.createObjectURL(blob)
-      const a = document.createElement('a')
-      a.href = url
-      a.download = `${activeSymbol}_${cells[active]?.interval ?? ''}.png`
-      a.click()
-      URL.revokeObjectURL(url)
+  const snapshotName = `${activeSymbol}_${cells[active]?.interval ?? ''}.png`
+  const downloadBlob = (blob: Blob, name: string) => {
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = name
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
+  const snapshotDownload = () => {
+    getChart(active)?.takeSnapshot().toBlob((blob) => {
+      if (blob) downloadBlob(blob, snapshotName)
     })
-  }, [active, activeSymbol, cells])
+  }
+
+  // 폰: 공유 시트(카톡·사진 저장 등)로 보내고, 공유가 안 되는 브라우저는 파일로 받는다.
+  const snapshotShare = () => {
+    getChart(active)?.takeSnapshot().toBlob((blob) => {
+      if (!blob) return
+      const file = new File([blob], snapshotName, { type: 'image/png' })
+      if (navigator.canShare?.({ files: [file] })) {
+        navigator.share({ files: [file], title: snapshotName }).catch(() => {
+          /* 사용자가 취소 */
+        })
+        return
+      }
+      downloadBlob(blob, snapshotName)
+    })
+  }
 
   const snapshotCopy = useCallback(() => {
     const canvas = getChart(active)?.takeSnapshot()
@@ -357,8 +378,8 @@ function App() {
       setSaved(true)
       window.setTimeout(() => setSaved(false), 1500)
     } else {
-      setWidgetOpen('sync')
-      if (isMobile) setMobileWidget('sync')
+      if (isMobile) setMobileSheet('sync')
+      else setWidgetOpen('sync')
     }
   }, [sync, isMobile])
 
@@ -500,8 +521,15 @@ function App() {
 
   const openWidgetFromMenu = useCallback(
     (id: WidgetId) => {
-      if (isMobile) setMobileWidget(id)
-      else setWidgetOpen(id)
+      if (!isMobile) {
+        setWidgetOpen(id)
+        return
+      }
+      // 폰: 관심 목록·알림·탐색은 탭, 나머지는 아래 시트. 멀티 타임프레임은 분할 화면용이라 폰에는 없다.
+      if (id === 'watchlist') setMobileTab('watchlist')
+      else if (id === 'alerts') setMobileTab('alerts')
+      else if (id === 'discover') setMobileTab('explore')
+      else if (id === 'objectTree' || id === 'pins' || id === 'sync') setMobileSheet(id)
     },
     [isMobile],
   )
@@ -735,14 +763,15 @@ function App() {
         onPrice={handlePrice}
         onContextMenu={(req) => setChartMenu({ ...req, cellIndex: index })}
         onIndicatorAlert={openIndicatorAlert}
+        onScaleMenu={isMobile ? () => setMobileSheet('scale') : undefined}
       />
       </ErrorBoundary>
     )
   }
 
   // ── widget content ────────────────────────────────────────────────
-  const renderWidget = (id: WidgetId, fullscreen: boolean): React.ReactNode => {
-    const closeMobile = () => setMobileWidget(null)
+  const renderWidget = (id: WidgetId, variant: 'panel' | 'page'): React.ReactNode => {
+    const page = variant === 'page'
     switch (id) {
       case 'watchlist':
         return (
@@ -754,15 +783,15 @@ function App() {
               current={activeSymbol}
               onPick={(s) => {
                 setCellField(active, { symbol: s })
-                if (fullscreen) closeMobile()
+                // 폰: TradingView 앱처럼 종목을 누르면 그 차트로 간다.
+                if (page) setMobileTab('chart')
               }}
               onAdd={watchlist.add}
               onRemove={watchlist.remove}
               onReorder={watchlist.reorder}
-              variant={fullscreen ? 'fullscreen' : 'panel'}
-              onClose={fullscreen ? closeMobile : undefined}
+              variant={variant}
             />
-            {!fullscreen && <SymbolDetails symbol={activeSymbol} infos={symbols} />}
+            {!page && <SymbolDetails symbol={activeSymbol} infos={symbols} />}
           </>
         )
       case 'alerts':
@@ -785,8 +814,7 @@ function App() {
             push={push}
             hasSyncCode={Boolean(sync.code)}
             onCreateSyncCode={createSyncCode}
-            variant={fullscreen ? 'fullscreen' : 'panel'}
-            onClose={fullscreen ? closeMobile : undefined}
+            variant={variant}
           />
         )
       case 'objectTree':
@@ -808,10 +836,7 @@ function App() {
           <MtfPanel
             symbol={activeSymbol}
             current={cells.slice(0, 4).map((c) => c.interval)}
-            onApply={(ivs) => {
-              applyMtf(ivs)
-              if (fullscreen) closeMobile()
-            }}
+            onApply={applyMtf}
           />
         )
       case 'pins':
@@ -822,7 +847,8 @@ function App() {
             pinSide={pinSide}
             onPinModeChange={(on) => {
               setPinMode(on)
-              if (on && fullscreen) closeMobile()
+              // 폰: 핀 찍기를 켜면 시트를 닫고 차트를 누를 수 있게 한다.
+              if (on && page) setMobileSheet(null)
             }}
             onPinSideChange={setPinSide}
             onRemove={pinStore.remove}
@@ -990,8 +1016,6 @@ function App() {
         onOpenWidget={openWidgetFromMenu}
         theme={settings.theme}
         onThemeChange={(theme) => setSettings((prev) => ({ ...prev, theme }))}
-        drawingPanel={drawingPanel}
-        onDrawingPanelChange={setDrawingPanel}
         onShortcuts={() => setShortcutsOpen(true)}
         install={{ canShow: install.canShow, ios: install.ios, installable: install.installable, install: () => void install.install() }}
       />
@@ -1047,42 +1071,82 @@ function App() {
     </>
   )
 
-  // ── mobile full-screen widget overlay ─────────────────────────────
-  const mobileWidgetOverlay = <MobileWidgetOverlay id={mobileWidget} onClose={() => setMobileWidget(null)} render={renderWidget} />
-
-  // ── mobile layout ─────────────────────────────────────────────────
+  // ── mobile app (TradingView 앱 구조: 아래 탭 + 차트 도구 줄 + 아래 시트) ──
   if (isMobile) {
+    const toggleSetting = (key: 'showCountdown' | 'showPriceLine' | 'showLastPriceLabel') => () =>
+      setSettings((prev) => ({ ...prev, [key]: !prev[key] }))
+    const scaleEntries: MenuEntry[] = [
+      ...chartMenuEntries({ x: 0, y: 0, target: { kind: 'priceScale' }, cellIndex: active }),
+      { type: 'divider' },
+      { type: 'item', label: '봉 마감 카운트다운', checked: settings.showCountdown, onSelect: toggleSetting('showCountdown') },
+      { type: 'item', label: '현재가 선', checked: settings.showPriceLine, onSelect: toggleSetting('showPriceLine') },
+      { type: 'item', label: '현재가 라벨', checked: settings.showLastPriceLabel, onSelect: toggleSetting('showLastPriceLabel') },
+    ]
     return (
-      <div className="tv-app mobile">
-        <div className="tv-toolbar-cell">
-          <TopToolbar variant="mobile" onMenu={() => setMenuOpen(true)} {...toolbarProps} />
-        </div>
-        <div className="tv-mobile-body">
-          {drawingPanel && (
-            <div className="tv-left-cell">
-              <DrawingToolbar variant="mobile" {...drawingToolbarProps} />
-            </div>
-          )}
-          <main ref={gridRef} className="tv-chart-grid grid-1">
-            {renderCell(activeCell, active)}
-          </main>
-        </div>
-        <div className="tv-bottom-cell">
-          <BottomBar
-            variant="mobile"
-            interval={activeCell.interval}
-            onApplyRange={applyDateRange}
-            timezone={settings.timezone}
-            onTimezoneChange={(id) => setSettings((prev) => ({ ...prev, timezone: id }))}
-            scaleMode={activeCell.scaleMode}
-            onScaleModeChange={(mode) => setCellField(active, { scaleMode: mode })}
-            autoScale={activeCell.autoScale}
-            onAutoScaleChange={(v) => setCellField(active, { autoScale: v })}
-          />
-        </div>
-        {mobileWidgetOverlay}
+      <>
+        <MobileShell
+          tab={mobileTab}
+          onTabChange={(next) => {
+            setMobileSheet(null)
+            setMobileTab(next)
+          }}
+          sheet={mobileSheet}
+          onSheetChange={setMobileSheet}
+          alertCount={alertBadge}
+          chart={renderCell(activeCell, active)}
+          pages={{
+            watchlist: renderWidget('watchlist', 'page'),
+            alerts: renderWidget('alerts', 'page'),
+            explore: renderWidget('discover', 'page'),
+            menu: (
+              <MobileMenuPage
+                theme={settings.theme}
+                onThemeChange={(theme) => setSettings((prev) => ({ ...prev, theme }))}
+                rows={[
+                  { key: 'settings', icon: 'settings', label: '차트 설정', onSelect: () => setSettingsOpen(true) },
+                  { key: 'templates', icon: 'template', label: '지표 템플릿', onSelect: () => setMobileSheet('templates') },
+                  { key: 'objectTree', icon: 'objectTree', label: '객체 트리', onSelect: () => setMobileSheet('objectTree') },
+                  { key: 'pins', icon: 'pin', label: '핀', onSelect: () => setMobileSheet('pins') },
+                  { key: 'sync', icon: 'sync', label: '동기화 · 저장', onSelect: () => setMobileSheet('sync') },
+                ]}
+                install={{ canShow: install.canShow, ios: install.ios, install: () => void install.install() }}
+              />
+            ),
+          }}
+          panels={{
+            templates: (
+              <IndicatorTemplatesMenu
+                indicators={indicators}
+                onApply={setIndicators}
+                onClose={() => setMobileSheet(null)}
+              />
+            ),
+            symbolInfo: <SymbolDetails symbol={activeSymbol} infos={symbols} />,
+            objectTree: renderWidget('objectTree', 'page'),
+            pins: renderWidget('pins', 'page'),
+            sync: renderWidget('sync', 'page'),
+          }}
+          symbolLabel={displaySymbol(activeSymbol, symbols)}
+          base={symbols.find((i) => i.symbol === activeSymbol)?.baseAsset ?? activeSymbol.replace(/USDT.*/, '')}
+          interval={activeCell.interval}
+          onIntervalChange={(iv) => setCellField(active, { interval: iv })}
+          onOpenSymbolSearch={() => openSymbolSearch()}
+          onOpenIndicators={() => setIndicatorsOpen(true)}
+          onOpenAlert={() => openAlertAt(null)}
+          onOpenCompare={openCompare}
+          onSnapshot={snapshotShare}
+          chartType={activeCell.chartType}
+          onChartTypeChange={setChartType}
+          replay={replay}
+          onToggleReplay={() => setReplay((v) => !v)}
+          onOpenSettings={() => setSettingsOpen(true)}
+          onGoToDate={() => setGoToOpen(true)}
+          onApplyRange={applyDateRange}
+          scaleEntries={scaleEntries}
+          drawing={{ ...drawingToolbarProps, canUndo, canRedo, onUndo: undo, onRedo: redo }}
+        />
         {dialogs}
-      </div>
+      </>
     )
   }
 
@@ -1096,11 +1160,11 @@ function App() {
       </div>
 
       <div className="tv-toolbar-cell">
-        <TopToolbar variant="desktop" onMenu={() => setMenuOpen(true)} {...toolbarProps} />
+        <TopToolbar {...toolbarProps} />
       </div>
 
       <div className="tv-left-cell">
-        <DrawingToolbar variant="desktop" {...drawingToolbarProps} />
+        <DrawingToolbar {...drawingToolbarProps} />
       </div>
 
       <div className="tv-center-cell">
@@ -1164,44 +1228,11 @@ function App() {
 
       <div className="tv-right-cell">
         <WidgetBar open={widgetOpen} onToggle={toggleWidget} alertCount={alertBadge}>
-          {widgetOpen && <div className="tv-widget-scroll">{renderWidget(widgetOpen, false)}</div>}
+          {widgetOpen && <div className="tv-widget-scroll">{renderWidget(widgetOpen, 'panel')}</div>}
         </WidgetBar>
       </div>
 
       {dialogs}
-    </div>
-  )
-}
-
-/** Full-screen widget host for phones; watchlist/alerts render their own header. */
-function MobileWidgetOverlay({
-  id,
-  onClose,
-  render,
-}: {
-  id: WidgetId | null
-  onClose: () => void
-  render: (id: WidgetId, fullscreen: boolean) => React.ReactNode
-}) {
-  useBackClose(id !== null, onClose)
-  if (id === null) return null
-  const ownsHeader = id === 'watchlist' || id === 'alerts'
-  const label = WIDGET_TABS.find((t) => t.id === id)?.label ?? ''
-  return (
-    <div className="tv-mobile-widget">
-      {ownsHeader ? (
-        render(id, true)
-      ) : (
-        <>
-          <header className="tv-mobile-widget-head">
-            <span>{label}</span>
-            <button type="button" className="tv-icon-btn" aria-label="닫기" onClick={onClose}>
-              <Icon name="close" size={20} />
-            </button>
-          </header>
-          <div className="tv-mobile-widget-body">{render(id, true)}</div>
-        </>
-      )}
     </div>
   )
 }

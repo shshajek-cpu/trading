@@ -24,7 +24,6 @@ export interface DrawingToolbarProps {
   onRemoveIndicators: () => void
   /** 도구별 단축키 라벨(사용자가 바꾼 키 반영). */
   toolShortcuts: Partial<Record<DrawingTool, string>>
-  variant: 'desktop' | 'mobile'
 }
 
 const LAST_USED_KEY = 'trading.drawingToolbar.v1'
@@ -62,7 +61,6 @@ export function DrawingToolbar({
   onRemoveDrawings,
   onRemoveIndicators,
   toolShortcuts,
-  variant,
 }: DrawingToolbarProps) {
   const [lastUsed, setLastUsed] = useState<Record<string, DrawingTool>>(loadLastUsed)
   const [openGroup, setOpenGroup] = useState<string | null>(null)
@@ -118,7 +116,7 @@ export function DrawingToolbar({
   const magnetOn = magnet !== 'off'
 
   return (
-    <div className={`tv-drawbar tv-drawbar--${variant}`} role="toolbar" aria-label="그리기 도구">
+    <div className="tv-drawbar" role="toolbar" aria-label="그리기 도구">
       <div className="tv-drawbar-scroll">
         {TOOL_GROUPS.map((g) => {
           const rep = representative(g)
@@ -134,10 +132,7 @@ export function DrawingToolbar({
                 className={`tv-drawbar-btn${active ? ' active' : ''}`}
                 title={g.label}
                 aria-label={g.label}
-                onClick={() => {
-                  if (variant === 'mobile' && multi) setOpenGroup(g.id)
-                  else pickTool(g.id, rep)
-                }}
+                onClick={() => pickTool(g.id, rep)}
               >
                 <ToolIcon name={rep as IconName} />
                 {multi && (

@@ -14,8 +14,6 @@ import { Popover } from './ui/Popover'
 import { Icon } from './Icon'
 
 export interface TopToolbarProps {
-  variant: 'desktop' | 'mobile'
-  onMenu: () => void
   displaySymbol: string
   onOpenSymbolSearch: () => void
   onOpenCompare: () => void
@@ -55,8 +53,6 @@ export interface TopToolbarProps {
 
 export function TopToolbar(props: TopToolbarProps) {
   const {
-    variant,
-    onMenu,
     displaySymbol,
     onOpenSymbolSearch,
     onOpenCompare,
@@ -94,7 +90,6 @@ export function TopToolbar(props: TopToolbarProps) {
     onTogglePip,
   } = props
 
-  const mobile = variant === 'mobile'
   const [ivOpen, setIvOpen] = useState(false)
   const [typeOpen, setTypeOpen] = useState(false)
   const [tplOpen, setTplOpen] = useState(false)
@@ -111,13 +106,7 @@ export function TopToolbar(props: TopToolbarProps) {
   const div = <span className="tv-tb-divider" />
 
   return (
-    <div className={`tv-toolbar${mobile ? ' mobile' : ''}`}>
-      {mobile && (
-        <button type="button" className="tv-tb-btn tv-tb-hamburger" aria-label="메뉴" onClick={onMenu}>
-          <Icon name="menu" size={22} />
-        </button>
-      )}
-
+    <div className="tv-toolbar">
       <button type="button" className="tv-symbol-pill" title="심볼 검색" onClick={onOpenSymbolSearch}>
         {displaySymbol}
       </button>
@@ -129,26 +118,24 @@ export function TopToolbar(props: TopToolbarProps) {
       {div}
 
       <div className="tv-interval-group">
-        {!mobile &&
-          shownFavorites.map((iv) => (
-            <button
-              key={iv}
-              type="button"
-              className={`tv-interval-btn${iv === interval ? ' active' : ''}`}
-              onClick={() => onIntervalChange(iv)}
-            >
-              {INTERVAL_INFO[iv].short}
-            </button>
-          ))}
+        {shownFavorites.map((iv) => (
+          <button
+            key={iv}
+            type="button"
+            className={`tv-interval-btn${iv === interval ? ' active' : ''}`}
+            onClick={() => onIntervalChange(iv)}
+          >
+            {INTERVAL_INFO[iv].short}
+          </button>
+        ))}
         <button
           ref={ivRef}
           type="button"
-          className={`tv-tb-btn tv-interval-menu-btn${mobile && interval ? ' active' : ''}`}
+          className="tv-tb-btn tv-interval-menu-btn"
           title="시간 간격"
           aria-label="시간 간격"
           onClick={() => setIvOpen((v) => !v)}
         >
-          {mobile && <span className="tv-tb-label">{INTERVAL_INFO[interval].short}</span>}
           <Icon name="chevron" size={16} />
         </button>
       </div>
@@ -186,7 +173,7 @@ export function TopToolbar(props: TopToolbarProps) {
 
       <button type="button" className="tv-tb-btn wide" title="지표" aria-label="지표" onClick={onOpenIndicators}>
         <Icon name="indicator" size={22} />
-        {!mobile && <span className="tv-tb-label">지표</span>}
+        <span className="tv-tb-label">지표</span>
       </button>
 
       <button
@@ -209,7 +196,7 @@ export function TopToolbar(props: TopToolbarProps) {
 
       <button type="button" className="tv-tb-btn wide" title="알림" aria-label="알림 만들기" onClick={onOpenAlert}>
         <Icon name="alarm" size={22} />
-        {!mobile && <span className="tv-tb-label">알림</span>}
+        <span className="tv-tb-label">알림</span>
       </button>
 
       <button
@@ -221,7 +208,7 @@ export function TopToolbar(props: TopToolbarProps) {
         onClick={onToggleReplay}
       >
         <Icon name="replay" size={22} />
-        {!mobile && <span className="tv-tb-label">리플레이</span>}
+        <span className="tv-tb-label">리플레이</span>
       </button>
 
       {div}
@@ -235,39 +222,35 @@ export function TopToolbar(props: TopToolbarProps) {
 
       <span className="tv-tb-gap" />
 
-      {!mobile && (
-        <>
-          <button
-            ref={layoutRef}
-            type="button"
-            className="tv-tb-btn"
-            title="레이아웃"
-            aria-label="레이아웃"
-            onClick={() => setLayoutOpen((v) => !v)}
-          >
-            <Icon name={layout === 1 ? 'layout1' : layout === 2 ? 'layout2' : 'layout4'} size={22} />
-          </button>
-          <LayoutMenu
-            anchor={layoutRef.current}
-            open={layoutOpen}
-            onClose={() => setLayoutOpen(false)}
-            value={layout}
-            onChange={onLayoutChange}
-            onEqualize={onEqualize}
-            syncChartType={syncChartType}
-            onSyncChartTypeChange={onSyncChartTypeChange}
-          />
+      <button
+        ref={layoutRef}
+        type="button"
+        className="tv-tb-btn"
+        title="레이아웃"
+        aria-label="레이아웃"
+        onClick={() => setLayoutOpen((v) => !v)}
+      >
+        <Icon name={layout === 1 ? 'layout1' : layout === 2 ? 'layout2' : 'layout4'} size={22} />
+      </button>
+      <LayoutMenu
+        anchor={layoutRef.current}
+        open={layoutOpen}
+        onClose={() => setLayoutOpen(false)}
+        value={layout}
+        onChange={onLayoutChange}
+        onEqualize={onEqualize}
+        syncChartType={syncChartType}
+        onSyncChartTypeChange={onSyncChartTypeChange}
+      />
 
-          <button type="button" className={`tv-tb-btn wide${saved ? ' saved' : ''}`} title="저장" onClick={onSave}>
-            <Icon name="save" size={22} />
-            <span className="tv-tb-label">{saved ? '저장됨' : '저장'}</span>
-          </button>
+      <button type="button" className={`tv-tb-btn wide${saved ? ' saved' : ''}`} title="저장" onClick={onSave}>
+        <Icon name="save" size={22} />
+        <span className="tv-tb-label">{saved ? '저장됨' : '저장'}</span>
+      </button>
 
-          <button type="button" className="tv-tb-btn" title="빠른 검색 (Ctrl+K)" aria-label="빠른 검색" onClick={onQuickSearch}>
-            <Icon name="search" size={22} />
-          </button>
-        </>
-      )}
+      <button type="button" className="tv-tb-btn" title="빠른 검색 (Ctrl+K)" aria-label="빠른 검색" onClick={onQuickSearch}>
+        <Icon name="search" size={22} />
+      </button>
 
       <button type="button" className="tv-tb-btn" title="설정" aria-label="설정" onClick={onSettings}>
         <Icon name="settings" size={22} />
@@ -301,7 +284,7 @@ export function TopToolbar(props: TopToolbarProps) {
         onCopy={onSnapshotCopy}
       />
 
-      {!mobile && pipSupported && (
+      {pipSupported && (
         <button
           type="button"
           className={`tv-tb-btn${pipOpen ? ' active' : ''}`}

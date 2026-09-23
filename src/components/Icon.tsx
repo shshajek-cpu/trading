@@ -73,6 +73,11 @@ export type IconName =
   | 'keyboard'
   | 'install'
   | 'more'
+  // mobile app shell
+  | 'pencil'
+  | 'chart'
+  | 'info'
+  | 'share'
 
 const S = { fill: 'none', stroke: 'currentColor', strokeWidth: 1.5, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const }
 
@@ -415,6 +420,30 @@ const PATHS: Record<IconName, ReactNode> = {
       <circle cx={7} cy={14} r={1.6} fill="currentColor" stroke="none" />
       <circle cx={14} cy={14} r={1.6} fill="currentColor" stroke="none" />
       <circle cx={21} cy={14} r={1.6} fill="currentColor" stroke="none" />
+    </>
+  ),
+  pencil: (
+    <>
+      <path d="M6 22 l1.2-4.6 L18.4 6.2 a2 2 0 0 1 2.8 0 l0.6 0.6 a2 2 0 0 1 0 2.8 L10.6 20.8 Z" {...S} />
+      <path d="M16.6 8 l3.4 3.4" {...S} />
+    </>
+  ),
+  chart: (
+    <>
+      <rect x={4.5} y={5.5} width={19} height={17} rx={3} {...S} />
+      <path d="M8 17 l4-4.5 3 2.5 5-6" {...S} />
+    </>
+  ),
+  info: (
+    <>
+      <circle cx={14} cy={14} r={9} {...S} />
+      <path d="M14 13 v6 M14 9.5 v0.2" {...S} />
+    </>
+  ),
+  share: (
+    <>
+      <path d="M14 4.5 v12 M9.5 9 L14 4.5 18.5 9" {...S} />
+      <path d="M8 13 H6.5 v10 h15 v-10 H20" {...S} />
     </>
   ),
 }

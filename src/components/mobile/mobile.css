@@ -1,0 +1,527 @@
+/* 폰 앱 화면(TradingView 앱 구조): 탭 막대, 차트 아래 도구 줄, 아래 시트.
+   색·치수는 tokens.css 변수를 쓴다. 손가락 기준이라 터치 영역은 44px 이상. */
+
+/* ── 뼈대 ── */
+.m-app {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  padding-top: var(--sat);
+  background: var(--tv-bg);
+}
+
+.m-main {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+}
+
+.m-chart {
+  position: absolute;
+  inset: 0;
+  display: flex;
+}
+
+.m-chart > * {
+  flex: 1;
+  min-width: 0;
+}
+
+.m-page {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  background: var(--tv-bg);
+}
+
+.m-page-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.m-page .wl,
+.m-page .aw {
+  flex: 1;
+  min-height: 0;
+}
+
+.m-page-head {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+  min-height: 60px;
+  padding: 8px 8px 4px 16px;
+}
+
+.m-page-title {
+  flex: 1;
+  margin: 0;
+  font-size: 28px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
+  color: var(--tv-text-strong);
+}
+
+.m-page-head .tv-icon-btn {
+  width: 44px;
+  height: 44px;
+}
+
+/* ── 아래 탭 막대 ── */
+.m-tabbar {
+  display: flex;
+  flex: none;
+  padding-bottom: var(--sab);
+  border-top: 1px solid var(--tv-border);
+  background: var(--tv-bg);
+}
+
+.m-tab {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  height: 56px;
+  padding: 6px 0 4px;
+  border: 0;
+  background: none;
+  color: var(--tv-text-dim);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.m-tab.active {
+  color: var(--tv-accent-text);
+  font-weight: 600;
+}
+
+.m-tab-icon {
+  position: relative;
+  display: inline-flex;
+}
+
+.m-tab-badge {
+  position: absolute;
+  top: -4px;
+  right: -10px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 8px;
+  background: var(--tv-down);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 16px;
+  text-align: center;
+}
+
+/* ── 차트 아래 도구 줄 ── */
+.m-chartbar {
+  display: flex;
+  align-items: center;
+  flex: none;
+  height: 52px;
+  padding: 0 4px 0 8px;
+  border-top: 1px solid var(--tv-border);
+  background: var(--tv-bg);
+}
+
+.m-chartbar button {
+  border: 0;
+  background: none;
+  color: var(--tv-text);
+  font: inherit;
+  cursor: pointer;
+}
+
+.m-chartbar-symbol {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  height: 44px;
+  padding: 0 8px;
+  font-size: 16px !important;
+  font-weight: 700;
+  color: var(--tv-text-strong) !important;
+}
+
+.m-chartbar-symbol span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.m-chartbar-interval {
+  height: 44px;
+  padding: 0 12px;
+  font-size: 16px !important;
+  font-weight: 600;
+}
+
+.m-chartbar-gap {
+  flex: 1;
+}
+
+.m-chartbar-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 46px;
+  height: 44px;
+  border-radius: 10px;
+}
+
+.m-chartbar-btn.active {
+  color: var(--tv-accent-text) !important;
+  background: var(--tv-row-active) !important;
+}
+
+/* 그리는 중 알림 칩 — 범례를 가리지 않게 시간축 바로 위 가운데. */
+.m-tool-chip {
+  position: absolute;
+  bottom: 40px;
+  left: 50%;
+  z-index: 6;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 36px;
+  padding: 0 4px 0 12px;
+  transform: translateX(-50%);
+  border-radius: 18px;
+  background: var(--tv-accent);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 600;
+  box-shadow: var(--tv-shadow);
+}
+
+.m-tool-chip button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  border: 0;
+  border-radius: 15px;
+  background: rgb(255 255 255 / 20%);
+  color: #fff;
+  cursor: pointer;
+}
+
+/* ── 아래 시트 ── */
+.m-sheet-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 950;
+  display: flex;
+  align-items: flex-end;
+  background: var(--tv-backdrop);
+  animation: m-fade 0.16s ease-out;
+}
+
+.m-sheet {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-height: 88dvh;
+  padding-bottom: var(--sab);
+  border-radius: 16px 16px 0 0;
+  background: var(--tv-elevated);
+  color: var(--tv-text);
+  box-shadow: var(--tv-shadow);
+  animation: m-rise 0.2s ease-out;
+}
+
+@keyframes m-fade {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes m-rise {
+  from {
+    transform: translateY(40%);
+    opacity: 0.4;
+  }
+}
+
+.m-sheet-handle {
+  width: 36px;
+  height: 4px;
+  margin: 8px auto 0;
+  border-radius: 2px;
+  background: var(--tv-border-strong);
+}
+
+.m-sheet-head {
+  display: flex;
+  align-items: center;
+  padding: 10px 12px 6px 18px;
+}
+
+.m-sheet-head h2 {
+  flex: 1;
+  margin: 0;
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--tv-text-strong);
+}
+
+.m-sheet-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: 0;
+  border-radius: 16px;
+  background: var(--tv-hover);
+  color: var(--tv-text);
+  cursor: pointer;
+}
+
+.m-sheet-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 6px 14px 16px;
+}
+
+.m-sheet-section + .m-sheet-section {
+  margin-top: 14px;
+}
+
+.m-sheet-section h3 {
+  margin: 0 4px 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--tv-text-dim);
+}
+
+/* 타일 격자 */
+.m-tiles {
+  display: grid;
+  gap: 10px;
+}
+
+.m-tiles.cols-2 {
+  grid-template-columns: repeat(2, 1fr);
+}
+
+.m-tiles.cols-3 {
+  grid-template-columns: repeat(3, 1fr);
+}
+
+.m-tiles.cols-4 {
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+}
+
+.m-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 10px;
+  min-height: 84px;
+  padding: 14px;
+  border: 1px solid transparent;
+  border-radius: 12px;
+  background: var(--tv-hover);
+  color: var(--tv-text);
+  font: inherit;
+  font-size: 15px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.cols-3 .m-tile,
+.cols-4 .m-tile {
+  align-items: center;
+  gap: 6px;
+  min-height: 72px;
+  padding: 10px 4px;
+  font-size: 12px;
+  text-align: center;
+}
+
+.m-tile:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.m-tile.active {
+  border-color: var(--tv-accent);
+  color: var(--tv-accent-text);
+}
+
+.m-tile-icon {
+  display: inline-flex;
+}
+
+.m-tile-label {
+  line-height: 1.25;
+}
+
+.m-tile-text {
+  font-size: 18px;
+  font-weight: 700;
+}
+
+/* 칩(주기) */
+.m-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.m-chip {
+  min-width: 64px;
+  height: 40px;
+  padding: 0 14px;
+  border: 1px solid var(--tv-border-strong);
+  border-radius: 20px;
+  background: none;
+  color: var(--tv-text);
+  font: inherit;
+  font-size: 15px;
+  cursor: pointer;
+}
+
+.m-chip.active {
+  border-color: var(--tv-accent);
+  background: var(--tv-accent);
+  color: #fff;
+  font-weight: 600;
+}
+
+/* 목록 행 */
+.m-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.m-list-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 48px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: var(--tv-text);
+  font: inherit;
+  font-size: 16px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.m-list-row:disabled {
+  opacity: 0.4;
+}
+
+.m-list-icon {
+  display: inline-flex;
+  justify-content: center;
+  width: 24px;
+  color: var(--tv-text-dim);
+}
+
+.m-list-row[aria-checked='true'] .m-list-icon {
+  color: var(--tv-accent-text);
+}
+
+.m-list-label {
+  flex: 1;
+}
+
+.m-list-divider {
+  height: 1px;
+  margin: 6px 0;
+  background: var(--tv-border);
+}
+
+/* 설정 행(스위치·세그먼트) */
+.m-setting {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 48px;
+  padding: 0 4px;
+  font-size: 15px;
+}
+
+.m-segmented {
+  display: inline-flex;
+  padding: 2px;
+  border-radius: 10px;
+  background: var(--tv-hover);
+}
+
+.m-segmented button {
+  height: 34px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: var(--tv-text-dim);
+  font: inherit;
+  font-size: 14px;
+  cursor: pointer;
+}
+
+.m-segmented button.active {
+  background: var(--tv-elevated);
+  color: var(--tv-text-strong);
+  font-weight: 600;
+  box-shadow: 0 1px 2px rgb(0 0 0 / 30%);
+}
+
+/* ── 메뉴 탭 ── */
+.m-menu-group {
+  margin: 8px 12px 16px;
+  border-radius: 12px;
+  background: var(--tv-elevated);
+  overflow: hidden;
+}
+
+.m-menu-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  width: 100%;
+  min-height: 54px;
+  padding: 0 14px;
+  border: 0;
+  background: none;
+  color: var(--tv-text);
+  font: inherit;
+  font-size: 16px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.m-menu-row + .m-menu-row {
+  border-top: 1px solid var(--tv-border);
+}
+
+.m-menu-row > span {
+  flex: 1;
+}
+
+.m-menu-chev {
+  color: var(--tv-text-faint);
+}

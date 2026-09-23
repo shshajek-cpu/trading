@@ -971,6 +971,24 @@ export function Chart({
     }
   }, [lockedTime, mainSeries, interval, settings.timezone, candles.length])
 
+  // ── 17) 과거로 밀어 두면 TradingView 처럼 "최근 봉으로" 버튼(») 을 띄운다. ──────
+  const [realtimeBtn, setRealtimeBtn] = useState<{ right: number; bottom: number } | null>(null)
+  useEffect(() => {
+    const chart = chartRef.current
+    if (!chart) return
+    const ts = chart.timeScale()
+    const check = () => {
+      const away = ts.scrollPosition() < -3
+      setRealtimeBtn((prev) => {
+        if (!away) return null
+        if (prev) return prev
+        return { right: chart.priceScale('right').width() + 10, bottom: ts.height() + 10 }
+      })
+    }
+    ts.subscribeVisibleLogicalRangeChange(check)
+    return () => ts.unsubscribeVisibleLogicalRangeChange(check)
+  }, [])
+
   return (
     <div style={{ position: 'relative', width: '100%', height: '100%' }}>
       <div ref={containerRef} style={{ width: '100%', height: '100%' }} />
@@ -1000,6 +1018,20 @@ export function Chart({
       <div ref={lockLineRef} className="cursor-lock-line" style={{ display: 'none' }} />
       <div ref={lockLabelRef} className="cursor-lock-label" style={{ display: 'none' }} />
       <div ref={countdownRef} className="candle-countdown" style={{ display: 'none' }} />
+      {realtimeBtn && (
+        <button
+          type="button"
+          className="scroll-realtime-btn"
+          style={realtimeBtn}
+          title="최근 봉으로"
+          aria-label="최근 봉으로"
+          onClick={() => chartRef.current?.timeScale().scrollToRealTime()}
+        >
+          <svg viewBox="0 0 16 16" width={14} height={14} aria-hidden="true">
+            <path d="M3 3l5 5-5 5M8 3l5 5-5 5" fill="none" stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </button>
+      )}
     </div>
   )
 }

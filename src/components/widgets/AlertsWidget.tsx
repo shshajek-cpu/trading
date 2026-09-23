@@ -36,8 +36,8 @@ interface AlertsWidgetProps {
   push: PushProps
   hasSyncCode: boolean
   onCreateSyncCode: () => string
-  variant: 'panel' | 'fullscreen'
-  onClose?: () => void
+  /** panel = 데스크톱 오른쪽 위젯, page = 폰 앱의 "알림" 탭. */
+  variant: 'panel' | 'page'
 }
 
 function fmtAlertPrice(n: number, decimals: number): string {
@@ -63,23 +63,17 @@ export function AlertsWidget({
   hasSyncCode,
   onCreateSyncCode,
   variant,
-  onClose,
 }: AlertsWidgetProps) {
   const [createOpen, setCreateOpen] = useState(false)
-  const isFull = variant === 'fullscreen'
+  const isPage = variant === 'page'
 
   return (
-    <section className={`aw${isFull ? ' aw-full' : ''}`}>
-      <header className="wl-head">
-        <span className="wl-title">알림</span>
+    <section className={`aw${isPage ? ' aw-page' : ''}`}>
+      <header className={isPage ? 'm-page-head' : 'wl-head'}>
+        {isPage ? <h1 className="m-page-title">알림</h1> : <span className="wl-title">알림</span>}
         <button type="button" className="tv-icon-btn" aria-label="알림 만들기" onClick={() => setCreateOpen(true)}>
-          <Icon name="plus" size={18} />
+          <Icon name="plus" size={isPage ? 22 : 18} />
         </button>
-        {isFull && (
-          <button type="button" className="tv-icon-btn" aria-label="닫기" onClick={onClose}>
-            <Icon name="close" size={18} />
-          </button>
-        )}
       </header>
 
       <div className="aw-body">

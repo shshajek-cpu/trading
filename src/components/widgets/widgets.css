@@ -35,7 +35,7 @@
   container-type: inline-size;
 }
 
-.wl-full {
+.wl-page {
   height: 100%;
 }
 
@@ -183,9 +183,11 @@
   list-style: none;
 }
 
-/* 전체화면(모바일) 관심 목록 두 줄 행 */
-.wl-full .wl-row {
-  height: 56px;
+/* 폰 앱 "관심 목록" 탭: 두 줄 행 */
+.wl-page .wl-row {
+  height: 60px;
+  padding: 0 16px;
+  gap: 12px;
 }
 
 .wl-full-main {
@@ -371,7 +373,7 @@
   font: var(--tv-fs-sm) / 1.3 var(--tv-font);
 }
 
-.aw-full {
+.aw-page {
   height: 100%;
 }
 
