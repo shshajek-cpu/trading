@@ -27,11 +27,12 @@ export function distToLine(p: Pt, a: Pt, b: Pt): number {
   return Math.abs((p.x - a.x) * dy - (p.y - a.y) * dx) / len
 }
 
-export function pointInRect(p: Pt, a: Pt, b: Pt): boolean {
-  const x1 = Math.min(a.x, b.x)
-  const x2 = Math.max(a.x, b.x)
-  const y1 = Math.min(a.y, b.y)
-  const y2 = Math.max(a.y, b.y)
+/** 두 점이 만드는 사각형 안(가장자리에서 `pad` px 바깥까지)인지. */
+export function pointInRect(p: Pt, a: Pt, b: Pt, pad = 0): boolean {
+  const x1 = Math.min(a.x, b.x) - pad
+  const x2 = Math.max(a.x, b.x) + pad
+  const y1 = Math.min(a.y, b.y) - pad
+  const y2 = Math.max(a.y, b.y) + pad
   return p.x >= x1 && p.x <= x2 && p.y >= y1 && p.y <= y2
 }
 

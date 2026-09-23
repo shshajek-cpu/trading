@@ -5,6 +5,27 @@ import type { Pt } from './geometry'
 
 export const FIB_LEVELS = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1] as const
 
+/** 피보나치 레벨의 가격. TradingView 처럼 첫 점(시작)이 1, 둘째 점(끝)이 0 — 0.618 은 끝에서 되돌린 61.8% 자리다. */
+export function fibPrice(d: Drawing, level: number): number {
+  const start = d.points[0].price
+  const end = d.points[1].price
+  return end + level * (start - end)
+}
+
+let measureCtx: CanvasRenderingContext2D | null = null
+
+/** 텍스트 그림이 차지하는 상자(앵커가 왼쪽 위). 그리기와 잡기 판정이 같은 크기를 쓴다. */
+export function textBox(d: Drawing, a: Pt): { x: number; y: number; w: number; h: number } {
+  const size = d.style.fontSize ?? 14
+  measureCtx ??= document.createElement('canvas').getContext('2d')
+  let w = size * 4
+  if (measureCtx) {
+    measureCtx.font = `${size}px -apple-system, "Malgun Gothic", sans-serif`
+    w = measureCtx.measureText(d.style.text || '텍스트').width
+  }
+  return { x: a.x, y: a.y, w, h: size * 1.3 }
+}
+
 const HANDLE = 8
 const ACCENT = '#2962ff'
 
@@ -181,10 +202,8 @@ export function renderDrawing(rc: RenderScope, d: Drawing, selected: boolean): v
       if (d.kind === 'extended') [p0, p1] = clipInfinite(a, b, width, height)
       else if (d.kind === 'ray') p1 = extendRay(a, b, width, height)
       line(ctx, p0, p1)
-      if (d.kind === 'trendAngle') drawAngle(rc, a, b)
-      if (d.kind === 'infoLine' || d.kind === 'trendAngle' || selected) {
-        drawLineInfo(rc, d, a, b)
-      }
+      if (d.kind === 'trendAngle') drawAngle(rc, d, a, b)
+      if (d.kind === 'infoLine') drawLineInfo(rc, d, a, b)
       break
     }
     case 'arrowLine': {
@@ -328,6 +347,7 @@ export function renderDrawing(rc: RenderScope, d: Drawing, selected: boolean): v
   if (selected) drawHandles(ctx, pts)
 }
 
+/** 정보 라인의 값 상자 — 선을 가리지 않게 끝점 바깥쪽(시작점 반대편) 옆에 둔다. */
 function drawLineInfo(rc: RenderScope, d: Drawing, a: Pt, b: Pt): void {
   const { ctx, coords } = rc
   const p0 = d.points[0]
@@ -336,26 +356,34 @@ function drawLineInfo(rc: RenderScope, d: Drawing, a: Pt, b: Pt): void {
   const bars = coords.barCount(p0.time, p1.time)
   const angle = (Math.atan2(-(b.y - a.y), b.x - a.x) * 180) / Math.PI
   const text = `${dPrice >= 0 ? '+' : ''}${coords.format(dPrice)} (${pct(p0.price, p1.price)})\n${bars} 봉 · ${angle.toFixed(1)}°`
-  label(ctx, text, (a.x + b.x) / 2, (a.y + b.y) / 2 - 20, withAlpha(d.style.color, 0.9))
+  const right = b.x >= a.x
+  label(ctx, text, b.x + (right ? 10 : -10), b.y, withAlpha(d.style.color, 0.9), '#fff', right ? 'left' : 'right')
 }
 
-function drawAngle(rc: RenderScope, a: Pt, b: Pt): void {
+/** 추세 각도: 시작점의 수평 기준선과 호, 그 옆에 각도 값. */
+function drawAngle(rc: RenderScope, d: Drawing, a: Pt, b: Pt): void {
   const { ctx } = rc
   const r = 28
   const ang = Math.atan2(b.y - a.y, b.x - a.x)
   ctx.save()
   ctx.setLineDash([2, 2])
-  ctx.strokeStyle = ACCENT
+  ctx.strokeStyle = d.style.color
   ctx.lineWidth = 1
   ctx.beginPath()
-  ctx.moveTo(a.x + r, a.y)
-  ctx.lineTo(a.x, a.y)
+  ctx.moveTo(a.x, a.y)
+  ctx.lineTo(a.x + r + 10, a.y)
   ctx.stroke()
   ctx.beginPath()
-  const start = ang < 0 ? ang : 0
-  const end = ang < 0 ? 0 : ang
-  ctx.arc(a.x, a.y, r, start, end)
+  ctx.arc(a.x, a.y, r, Math.min(ang, 0), Math.max(ang, 0))
   ctx.stroke()
+  const deg = (-ang * 180) / Math.PI
+  ctx.setLineDash([])
+  ctx.font = '12px -apple-system, "Malgun Gothic", sans-serif'
+  ctx.textAlign = 'left'
+  ctx.textBaseline = 'middle'
+  ctx.fillStyle = d.style.color
+  // 값은 기준선 건너편에 — 완만한 선과 겹치지 않는다.
+  ctx.fillText(`${deg.toFixed(1)}°`, a.x + r + 14, a.y + (deg >= 0 ? 9 : -9))
   ctx.restore()
 }
 
@@ -396,13 +424,18 @@ function drawFib(rc: RenderScope, d: Drawing, pts: (Pt | null)[]): void {
   const [a, b] = pts
   if (!a || !b) return
   const s = d.style
-  const p0 = d.points[0].price
-  const p1 = d.points[1].price
   const x1 = Math.min(a.x, b.x)
   const x2 = Math.max(a.x, b.x)
+  // 추세선(시작→끝)을 점선으로 — 어느 쪽에서 그렸는지(0 이 어디인지) 보이게.
+  ctx.save()
+  ctx.setLineDash([4, 4])
+  ctx.strokeStyle = withAlpha(s.color, 0.6)
+  ctx.lineWidth = 1
+  line(ctx, a, b)
+  ctx.restore()
   let prevY: number | null = null
   FIB_LEVELS.forEach((lvl) => {
-    const price = p0 + lvl * (p1 - p0)
+    const price = fibPrice(d, lvl)
     const y = coords.priceToY(price)
     if (y === null) return
     if (prevY !== null) {
@@ -459,15 +492,26 @@ function drawMark(ctx: CanvasRenderingContext2D, d: Drawing, a: Pt): void {
   ctx.restore()
 }
 
+/** 값 상자를 가장자리 y 의 바깥(위 또는 아래)에 붙인다 — 상자가 도형을 덮지 않게. */
+function labelOutside(
+  ctx: CanvasRenderingContext2D,
+  text: string,
+  x: number,
+  edgeY: number,
+  below: boolean,
+  bg: string,
+): void {
+  const half = (text.split('\n').length * 14 + 8) / 2
+  label(ctx, text, x, edgeY + (below ? half + 4 : -half - 4), bg, '#fff', 'center')
+}
+
 function drawPosition(rc: RenderScope, d: Drawing, pts: (Pt | null)[]): void {
-  const { ctx } = rc
+  const { ctx, coords } = rc
   const [entry, target, stop] = pts
   if (!entry || !target || !stop) return
   const long = d.kind === 'longPosition'
-  const rightX = target.x
-  const leftX = entry.x
-  const x = Math.min(leftX, rightX)
-  const w = Math.abs(rightX - leftX)
+  const x = Math.min(entry.x, target.x)
+  const w = Math.abs(target.x - entry.x)
   const green = '#089981'
   const red = '#f23645'
   // 이익 영역: entry → target, 손실 영역: entry → stop
@@ -495,11 +539,13 @@ function drawPosition(rc: RenderScope, d: Drawing, pts: (Pt | null)[]): void {
   const risk = Math.abs(eP - sP)
   const reward = Math.abs(tP - eP)
   const rr = risk === 0 ? 0 : reward / risk
-  label(ctx, `목표 ${pct(eP, tP)}`, x + w / 2, target.y, withAlpha(green, 0.9), '#fff', 'center')
-  label(ctx, `손절 ${pct(eP, sP)}`, x + w / 2, stop.y, withAlpha(red, 0.9), '#fff', 'center')
-  label(ctx, `R:R ${rr.toFixed(2)}`, x + w / 2, entry.y - 14, withAlpha('#787b86', 0.95), '#fff', 'center')
+  const cx = x + w / 2
+  labelOutside(ctx, `목표 ${coords.format(tP)} (${pct(eP, tP)})`, cx, target.y, target.y > entry.y, withAlpha(green, 0.9))
+  labelOutside(ctx, `손절 ${coords.format(sP)} (${pct(eP, sP)})`, cx, stop.y, stop.y > entry.y, withAlpha(red, 0.9))
+  label(ctx, `손익비 ${rr.toFixed(2)}`, cx, entry.y, withAlpha('#787b86', 0.95), '#fff', 'center')
 }
 
+/** 가격 범위: 두 점 사이 상자, 가운데 세로 화살표(시작→끝), 끝점 바깥에 값. */
 function drawPriceRange(rc: RenderScope, d: Drawing, pts: (Pt | null)[]): void {
   const { ctx, coords } = rc
   const [a, b] = pts
@@ -507,51 +553,43 @@ function drawPriceRange(rc: RenderScope, d: Drawing, pts: (Pt | null)[]): void {
   const s = d.style
   const x1 = Math.min(a.x, b.x)
   const x2 = Math.max(a.x, b.x)
+  const cx = (x1 + x2) / 2
   ctx.fillStyle = fillOf(s)
   ctx.fillRect(x1, Math.min(a.y, b.y), x2 - x1, Math.abs(a.y - b.y))
   stroke(ctx, s)
   line(ctx, { x: x1, y: a.y }, { x: x2, y: a.y })
   line(ctx, { x: x1, y: b.y }, { x: x2, y: b.y })
+  line(ctx, { x: cx, y: a.y }, { x: cx, y: b.y })
+  if (Math.abs(b.y - a.y) > 12) arrowHead(ctx, { x: cx, y: a.y }, { x: cx, y: b.y }, s.color)
   const p0 = d.points[0].price
   const p1 = d.points[1].price
   const dPrice = p1 - p0
-  label(
-    ctx,
-    `${dPrice >= 0 ? '+' : ''}${coords.format(dPrice)}\n${pct(p0, p1)}`,
-    (x1 + x2) / 2,
-    (a.y + b.y) / 2,
-    withAlpha(s.color, 0.9),
-    '#fff',
-    'center',
-  )
+  labelOutside(ctx, `${dPrice >= 0 ? '+' : ''}${coords.format(dPrice)} (${pct(p0, p1)})`, cx, b.y, b.y > a.y, withAlpha(s.color, 0.9))
 }
 
+/** 날짜 범위: 두 점 사이 상자, 가운데 가로 화살표(시작→끝), 상자 아래에 봉 수·기간. */
 function drawDateRange(rc: RenderScope, d: Drawing, pts: (Pt | null)[]): void {
-  const { ctx, height, coords } = rc
+  const { ctx, coords } = rc
   const [a, b] = pts
   if (!a || !b) return
   const s = d.style
-  const y1 = 0
-  const y2 = height
+  const y1 = Math.min(a.y, b.y)
+  const y2 = Math.max(a.y, b.y)
+  const cy = (y1 + y2) / 2
   ctx.fillStyle = fillOf(s)
   ctx.fillRect(Math.min(a.x, b.x), y1, Math.abs(a.x - b.x), y2 - y1)
   stroke(ctx, s)
   line(ctx, { x: a.x, y: y1 }, { x: a.x, y: y2 })
   line(ctx, { x: b.x, y: y1 }, { x: b.x, y: y2 })
+  line(ctx, { x: a.x, y: cy }, { x: b.x, y: cy })
+  if (Math.abs(b.x - a.x) > 12) arrowHead(ctx, { x: a.x, y: cy }, { x: b.x, y: cy }, s.color)
   const t0 = d.points[0].time
   const t1 = d.points[1].time
   const bars = coords.barCount(t0, t1)
-  label(
-    ctx,
-    `${bars} 봉\n${formatSpan(t1 - t0)}`,
-    (a.x + b.x) / 2,
-    height / 2,
-    withAlpha(s.color, 0.9),
-    '#fff',
-    'center',
-  )
+  labelOutside(ctx, `${bars} 봉 · ${formatSpan(t1 - t0)}`, (a.x + b.x) / 2, y2, true, withAlpha(s.color, 0.9))
 }
 
+/** 날짜와 가격 범위: 상자와 두 화살표, 끝점 쪽 바깥에 가격 변화·봉 수·기간. 측정 도구도 이 모양을 쓴다. */
 function drawDatePriceRange(rc: RenderScope, d: Drawing, pts: (Pt | null)[]): void {
   const { ctx, coords } = rc
   const [a, b] = pts
@@ -561,24 +599,29 @@ function drawDatePriceRange(rc: RenderScope, d: Drawing, pts: (Pt | null)[]): vo
   const y = Math.min(a.y, b.y)
   const w = Math.abs(a.x - b.x)
   const h = Math.abs(a.y - b.y)
+  const cx = x + w / 2
+  const cy = y + h / 2
   ctx.fillStyle = fillOf(s)
   ctx.fillRect(x, y, w, h)
   stroke(ctx, s)
   ctx.strokeRect(x, y, w, h)
+  line(ctx, { x: cx, y: a.y }, { x: cx, y: b.y })
+  line(ctx, { x: a.x, y: cy }, { x: b.x, y: cy })
+  if (h > 12) arrowHead(ctx, { x: cx, y: a.y }, { x: cx, y: b.y }, s.color)
+  if (w > 12) arrowHead(ctx, { x: a.x, y: cy }, { x: b.x, y: cy }, s.color)
   const p0 = d.points[0].price
   const p1 = d.points[1].price
   const t0 = d.points[0].time
   const t1 = d.points[1].time
   const bars = coords.barCount(t0, t1)
   const dPrice = p1 - p0
-  label(
+  labelOutside(
     ctx,
     `${dPrice >= 0 ? '+' : ''}${coords.format(dPrice)} (${pct(p0, p1)})\n${bars} 봉 · ${formatSpan(t1 - t0)}`,
-    x + w / 2,
-    y - 14,
+    cx,
+    b.y,
+    b.y > a.y,
     withAlpha(s.color, 0.9),
-    '#fff',
-    'center',
   )
 }
 

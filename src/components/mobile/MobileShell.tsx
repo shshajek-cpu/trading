@@ -246,7 +246,14 @@ export function MobileShell(props: MobileShellProps) {
                   label: item.label,
                   icon: <ToolIcon name={item.tool as ToolIconName} size={26} />,
                   active: drawing.tool === item.tool,
-                  onSelect: then(() => drawing.onToolChange(item.tool)),
+                  // 켜 둔 도구를 다시 누르면 끈다(데스크톱 왼쪽 툴바와 같다). 기본 커서는 끌 것이 없다.
+                  onSelect: then(() =>
+                    drawing.onToolChange(
+                      drawing.tool === item.tool && item.tool !== 'cross' && item.tool !== 'dot' && item.tool !== 'arrow'
+                        ? 'cross'
+                        : item.tool,
+                    ),
+                  ),
                 }))}
               />
             </SheetSection>
@@ -260,7 +267,7 @@ export function MobileShell(props: MobileShellProps) {
               label: toolLabel(t),
               icon: <ToolIcon name={t} size={26} />,
               active: drawing.tool === t,
-              onSelect: then(() => drawing.onToolChange(t)),
+              onSelect: then(() => drawing.onToolChange(drawing.tool === t ? 'cross' : t)),
             }))}
           />
         </SheetSection>

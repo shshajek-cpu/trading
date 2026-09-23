@@ -42,6 +42,9 @@ function loadLastUsed(): Record<string, DrawingTool> {
   return {}
 }
 
+/** 끌 것이 없는 기본 커서들 — 그 밖의 도구(그리기·지우개)는 한 번 더 누르면 꺼진다. */
+const POINTERS: readonly DrawingTool[] = ['cross', 'dot', 'arrow']
+
 const MAGNET_LABEL: Record<MagnetMode, string> = {
   off: '끄기',
   weak: '약한 자석',
@@ -139,7 +142,8 @@ export function DrawingToolbar({
                   'right',
                 )}
                 aria-label={g.label}
-                onClick={() => pickTool(g.id, rep)}
+                // 켜 둔 도구를 한 번 더 누르면 끄고 십자선으로 돌아간다.
+                onClick={() => (active && !POINTERS.includes(tool) ? onToolChange('cross') : pickTool(g.id, rep))}
               >
                 <ToolIcon name={rep as IconName} />
                 {multi && (
@@ -189,7 +193,7 @@ export function DrawingToolbar({
           className={`tv-drawbar-btn${tool === 'measure' ? ' active' : ''}`}
           {...tip('측정', '끌어서 두 지점 사이의 가격 변화·% ·봉 수·기간을 잽니다. 십자선에서 Shift+끌기로도 됩니다.', undefined, 'right')}
           aria-label="측정"
-          onClick={() => onToolChange('measure')}
+          onClick={() => onToolChange(tool === 'measure' ? 'cross' : 'measure')}
         >
           <ToolIcon name="measure" />
         </button>
@@ -198,7 +202,7 @@ export function DrawingToolbar({
           className={`tv-drawbar-btn${tool === 'zoom' ? ' active' : ''}`}
           {...tip('확대', '끌어서 고른 시간 구간만 크게 봅니다.', undefined, 'right')}
           aria-label="확대"
-          onClick={() => onToolChange('zoom')}
+          onClick={() => onToolChange(tool === 'zoom' ? 'cross' : 'zoom')}
         >
           <ToolIcon name="zoom" />
         </button>

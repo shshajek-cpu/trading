@@ -290,12 +290,12 @@ export function DrawingOverlay(props: DrawingOverlayProps) {
   const finalizeCreate = useCallback(
     (kind: DrawingKind, clicked: DrawingPoint[]) => {
       const l = latest.current
-      const pts = buildPoints(kind, clicked, l.interval)
-      handlers.current.onCreate({ symbol: l.symbol, kind, points: pts, style: defaultStyle(kind) })
+      const pts = buildPoints(kind, clicked, coordsOf())
+      if (pts) handlers.current.onCreate({ symbol: l.symbol, kind, points: pts, style: defaultStyle(kind) })
       clearCreation()
       if (!l.stay) handlers.current.onToolDone()
     },
-    [clearCreation],
+    [clearCreation, coordsOf],
   )
 
   const openTextEditor = useCallback(
@@ -424,7 +424,7 @@ export function DrawingOverlay(props: DrawingOverlayProps) {
       }
 
       // 커서 도구. 손가락은 마우스보다 부정확해서 터치는 잡는 폭을 넓힌다. 전체 숨김이면 잡을 것이 없다.
-      const picked = l.hidden ? null : pickDrawing(l.drawings, coords, p, pane.width, pane.height, e.pointerType === 'touch')
+      const picked = l.hidden ? null : pickDrawing(l.drawings, coords, p, e.pointerType === 'touch')
       if (t === 'eraser') {
         if (picked) {
           handlers.current.onRemove(picked.drawing.id)
@@ -499,7 +499,13 @@ export function DrawingOverlay(props: DrawingOverlayProps) {
         case 'create': {
           const c = creatingRef.current
           if (!c) break
-          updateCreatePreview(makePoint(coords, l.candles, p, resolveMagnet(ctrl)))
+          const cur = makePoint(coords, l.candles, p, resolveMagnet(ctrl))
+          // 첫 점에서 누른 채 끌면 누른 자리~커서가 두 점이다. 미리보기도 그 둘로 그려야 끄는 동안 선이 보인다.
+          if (press.moved && c.committed.length === 0 && requiredPoints(c.kind) >= 2) {
+            setPreview(previewDrawing(l.symbol, c.kind, [press.startPoint, cur], defaultStyle(c.kind)))
+          } else {
+            updateCreatePreview(cur)
+          }
           break
         }
         case 'brush': {
@@ -569,20 +575,15 @@ export function DrawingOverlay(props: DrawingOverlayProps) {
         case 'create': {
           const c = creatingRef.current
           if (!c) break
-          const kind = c.kind
-          const req = requiredPoints(kind)
           if (press.moved) {
+            // 끌었으면 놓은 자리가 점이 된다(미리보기가 따라간 자리). 첫 점에서 끌었다면 누른 자리까지 두 점.
             const end = makePoint(coords, l.candles, p, resolveMagnet(ctrl))
-            if (req === 2) finalizeCreate(kind, [press.startPoint, end])
-            else if (req === 1) finalizeCreate(kind, [press.startPoint])
-            else {
-              c.committed.push(press.startPoint)
-              if (c.committed.length >= req) finalizeCreate(kind, c.committed)
-            }
+            if (c.committed.length === 0 && requiredPoints(c.kind) >= 2) c.committed.push(press.startPoint)
+            c.committed.push(end)
           } else {
             c.committed.push(press.startPoint)
-            if (c.committed.length >= req) finalizeCreate(kind, c.committed)
           }
+          if (c.committed.length >= requiredPoints(c.kind)) finalizeCreate(c.kind, c.committed)
           break
         }
         case 'brush': {
@@ -630,8 +631,8 @@ export function DrawingOverlay(props: DrawingOverlayProps) {
         }
       }
 
-      // 텍스트: 클릭(이동 없음)이면 인라인 편집기.
-      if (press.mode === 'create' && l.tool === 'text' && !press.moved) {
+      // 텍스트: 놓은 자리에 인라인 편집기를 연다.
+      if (press.mode === 'create' && l.tool === 'text') {
         const dp = makePoint(coords, l.candles, p, resolveMagnet(ctrl))
         openTextEditor('create', dp, p.x, p.y, '')
         creatingRef.current = null
@@ -644,8 +645,7 @@ export function DrawingOverlay(props: DrawingOverlayProps) {
       const rect = el.getBoundingClientRect()
       const p = { x: e.clientX - rect.left, y: e.clientY - rect.top }
       const coords = coordsOf()
-      const pane = chart.paneSize()
-      const picked = l.hidden ? null : pickDrawing(l.drawings, coords, p, pane.width, pane.height)
+      const picked = l.hidden ? null : pickDrawing(l.drawings, coords, p)
       if (picked && picked.drawing.kind === 'text' && !l.locked && !picked.drawing.locked) {
         const d = picked.drawing
         const x = coords.timeToX(d.points[0].time)
@@ -729,7 +729,7 @@ export function DrawingOverlay(props: DrawingOverlayProps) {
         // 저장된 그림 하나가 깨져 있어도 메뉴는 떠야 한다 — 그때는 차트 메뉴로 넘어간다.
         let picked: ReturnType<typeof pickDrawing> = null
         try {
-          picked = pickDrawing(l.drawings, coords, p, pane.width, pane.height)
+          picked = pickDrawing(l.drawings, coords, p)
         } catch {
           picked = null
         }

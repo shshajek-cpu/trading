@@ -21,7 +21,7 @@ import { ShortcutsDialog } from './components/ShortcutsDialog'
 import { ContextMenu, type MenuEntry } from './components/ContextMenu'
 import { GoToDateDialog } from './components/GoToDateDialog'
 import { ToolIcon } from './chart/drawing/toolIcons'
-import { buildPoints, cloneOffset } from './chart/drawing/builders'
+import { cloneOffset } from './chart/drawing/builders'
 import { copyDrawing, hasCopiedDrawing, pasteDrawing } from './chart/drawing/clipboard'
 import { formatPrice } from './chart/format'
 
@@ -700,7 +700,7 @@ function App() {
                     addDrawing({
                       symbol: cell.symbol,
                       kind: 'horizontal',
-                      points: buildPoints('horizontal', [{ time: time ?? Math.floor(Date.now() / 1000), price }], cell.interval),
+                      points: [{ time: time ?? Math.floor(Date.now() / 1000), price }],
                       style: defaultStyle('horizontal'),
                     }),
                   { icon: <ToolIcon name="horizontal" size={18} /> },

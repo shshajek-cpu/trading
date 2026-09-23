@@ -107,6 +107,11 @@ export class Coords {
     return this.chart.timeScale().width()
   }
 
+  /** 메인(가격) 칸의 크기(px). */
+  paneSize(): { width: number; height: number } {
+    return this.chart.paneSize()
+  }
+
   /** 시각을 lightweight-charts Time 값으로. 축 라벨 배치용. */
   static asTime(time: number): Time {
     return time as Time
