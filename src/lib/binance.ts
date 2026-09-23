@@ -193,6 +193,62 @@ export function normalizeStreamKline(k: KlineStreamEvent['k']): Candle {
   }
 }
 
+/**
+ * USDⓈ-M 선물 웹소켓은 2026-04-23부터 용도별 경로로 나뉘었다. kline·aggTrade·miniTicker 는
+ * `/market` 경로에서만 온다 — 예전 `wss://fstream.binance.com/ws/...` 는 연결만 되고 데이터가 오지 않는다.
+ */
+const MARKET_WS = 'wss://fstream.binance.com/market/stream?streams='
+
+/** 차트용 결합 스트림: 봉(약 250ms)과 체결(거래마다)을 함께 받아 TradingView·바이낸스처럼 즉시 움직인다. */
 export function klineStreamUrl(symbol: string, interval: Interval): string {
-  return `wss://fstream.binance.com/ws/${toStreamSymbol(symbol)}@kline_${interval}`
+  const s = toStreamSymbol(symbol)
+  return `${MARKET_WS}${s}@kline_${interval}/${s}@aggTrade`
+}
+
+/** 결합 스트림 메시지 포장. */
+export interface CombinedStreamMessage<T> {
+  stream: string
+  data: T
+}
+
+/** 체결(aggTrade) 이벤트. p=가격, q=수량, T=체결 시각(ms). */
+export interface AggTradeEvent {
+  e: 'aggTrade'
+  E: number
+  s: string
+  p: string
+  q: string
+  T: number
+}
+
+/** 24시간 미니 티커(약 1~2초). c=현재가, o=24시간 전 시가. */
+export interface MiniTickerEvent {
+  e: '24hrMiniTicker'
+  E: number
+  s: string
+  c: string
+  o: string
+  h: string
+  l: string
+  v: string
+  q: string
+}
+
+export function miniTickerStreamUrl(symbols: string[]): string {
+  return MARKET_WS + symbols.map((s) => `${toStreamSymbol(s)}@miniTicker`).join('/')
+}
+
+export function normalizeMiniTicker(t: MiniTickerEvent): Ticker24h {
+  const last = Number(t.c)
+  const open = Number(t.o)
+  return {
+    symbol: t.s,
+    lastPrice: last,
+    priceChange: last - open,
+    priceChangePercent: open > 0 ? ((last - open) / open) * 100 : 0,
+    highPrice: Number(t.h),
+    lowPrice: Number(t.l),
+    volume: Number(t.v),
+    quoteVolume: Number(t.q),
+  }
 }

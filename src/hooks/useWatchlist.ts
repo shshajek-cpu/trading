@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { notifySettingsChanged } from '../lib/syncBus'
 import { fetchAll24hTickers } from '../lib/binance'
+import { useMiniTickers } from './useMiniTickers'
 
 const STORAGE_KEY = 'trading.watchlist.v1'
 
-const REFRESH_MS = 5000
+/** 실시간 값은 웹소켓 미니 티커가 1~2초마다 준다. REST 는 첫 값과 끊겼을 때를 위한 예비다. */
+const REFRESH_MS = 30000
 
 const DEFAULT_LIST = ['BTCUSDT', 'ETHUSDT', 'SOLUSDT', 'XRPUSDT', 'DOGEUSDT']
 
@@ -45,7 +47,7 @@ export function useWatchlist() {
   const symbolsRef = useRef(symbols)
   symbolsRef.current = symbols
 
-  // 선물 전체 스트림은 일부 망에서 막힌다. REST 를 짧게 돌려 채운다.
+  // 첫 화면과 웹소켓이 막힌 망을 위한 REST 예비 조회.
   useEffect(() => {
     const controller = new AbortController()
 
@@ -64,7 +66,7 @@ export function useWatchlist() {
               change: t.priceChange,
             }
           }
-          setRows(next)
+          setRows((prev) => ({ ...prev, ...next }))
         })
         .catch(() => {
           /* 폴링이라 다음 주기에 회복된다 */
@@ -78,6 +80,14 @@ export function useWatchlist() {
       clearInterval(timer)
     }
   }, [])
+
+  // 바이낸스 화면처럼 1~2초마다 갱신되는 실시간 시세.
+  useMiniTickers(symbols, (t) => {
+    setRows((prev) => ({
+      ...prev,
+      [t.symbol]: { symbol: t.symbol, price: t.lastPrice, changePercent: t.priceChangePercent, change: t.priceChange },
+    }))
+  })
 
   const add = useCallback((symbol: string) => {
     setSymbols((prev) => {

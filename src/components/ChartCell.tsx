@@ -8,7 +8,7 @@ import { useTicker24h } from '../hooks/useTicker24h'
 import type { Candle, Interval } from '../lib/binance'
 import type { ChartSettings } from '../lib/chartSettings'
 import type { ChartType, ScaleMode } from '../lib/chartTypes'
-import { INTERVAL_INFO } from '../lib/intervals'
+import { INTERVAL_INFO, INTERVAL_SECONDS } from '../lib/intervals'
 import type { IndicatorInstance } from '../lib/indicatorConfig'
 import { indicatorTitle } from '../lib/indicatorConfig'
 import type { PriceAlert } from '../hooks/usePriceAlerts'
@@ -154,18 +154,75 @@ export function ChartCell({
   const lastTickRef = useRef(0)
   const onPriceRef = useRef(onPrice)
   onPriceRef.current = onPrice
+  const lastRestCandleRef = useRef<Candle | null>(null)
+  lastRestCandleRef.current = candles[candles.length - 1] ?? null
+
+  // 봉(약 250ms)·체결(거래마다) 이벤트는 초당 수십 번 온다. 매번 다시 그리지 않고
+  // 가장 최신 값만 모아 한 프레임에 한 번 반영한다. 알림 검사는 250ms에 한 번이면 충분하다.
+  const pendingRef = useRef<Candle | null>(null)
+  const liveRef = useRef<Candle | null>(null)
+  const frameRef = useRef(0)
+  const priceSentAtRef = useRef(0)
+  const flushLive = useCallback(() => {
+    frameRef.current = 0
+    const next = pendingRef.current
+    if (!next) return
+    pendingRef.current = null
+    liveRef.current = next
+    setLiveCandle(next)
+    const now = Date.now()
+    if (now - priceSentAtRef.current >= 250) {
+      priceSentAtRef.current = now
+      onPriceRef.current(symbol, next.close)
+    }
+  }, [symbol])
+  const scheduleFlush = useCallback(() => {
+    if (!frameRef.current) frameRef.current = requestAnimationFrame(flushLive)
+  }, [flushLive])
 
   const handleCandle = useCallback(
     (candle: Candle) => {
       lastTickRef.current = Date.now()
-      setLiveCandle(candle)
-      onPriceRef.current(symbol, candle.close)
+      pendingRef.current = candle
+      scheduleFlush()
     },
-    [symbol],
+    [scheduleFlush],
+  )
+
+  // 체결로 현재 봉의 종가·고가·저가·거래량을 바로 움직인다. 봉 이벤트가 오면 그 값으로 바로잡힌다.
+  const handleTrade = useCallback(
+    (price: number, qty: number, timeMs: number) => {
+      lastTickRef.current = Date.now()
+      const base = pendingRef.current ?? liveRef.current ?? lastRestCandleRef.current
+      if (!base) return
+      const t = Math.floor(timeMs / 1000)
+      if (t < base.time || t >= base.time + INTERVAL_SECONDS[interval]) return
+      pendingRef.current = {
+        ...base,
+        close: price,
+        high: Math.max(base.high, price),
+        low: Math.min(base.low, price),
+        volume: base.volume + qty,
+      }
+      scheduleFlush()
+    },
+    [interval, scheduleFlush],
+  )
+
+  // 종목·주기가 바뀌거나 칸이 사라지면 쌓아 둔 실시간 값을 버린다.
+  useEffect(
+    () => () => {
+      cancelAnimationFrame(frameRef.current)
+      frameRef.current = 0
+      pendingRef.current = null
+      liveRef.current = null
+    },
+    [symbol, interval],
   )
 
   const status = useBinanceWebSocket(symbol, interval, {
     onCandle: handleCandle,
+    onTrade: handleTrade,
     onReconnect: () => void reload(),
   })
 

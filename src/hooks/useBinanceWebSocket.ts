@@ -2,7 +2,9 @@ import { useEffect, useRef, useState } from 'react'
 import {
   klineStreamUrl,
   normalizeStreamKline,
+  type AggTradeEvent,
   type Candle,
+  type CombinedStreamMessage,
   type Interval,
   type KlineStreamEvent,
 } from '../lib/binance'
@@ -12,6 +14,8 @@ export type WsStatus = 'idle' | 'connecting' | 'open' | 'closed'
 export interface UseBinanceWebSocketOptions {
   /** 캔들 갱신(미확정 포함). closed=true 면 해당 봉이 확정된 것. */
   onCandle: (candle: Candle, closed: boolean) => void
+  /** 체결마다 호출 — 봉 이벤트 사이에도 현재가·거래량을 즉시 움직이는 용도. time 은 ms. */
+  onTrade?: (price: number, qty: number, time: number) => void
   /** 재연결 성공 시 호출 — 끊긴 동안의 갭을 klines 재조회로 메우는 용도. */
   onReconnect?: () => void
   enabled?: boolean
@@ -82,14 +86,19 @@ export function useBinanceWebSocket(
       ws.onmessage = (event: MessageEvent<string>) => {
         if (disposed) return
         armIdleWatchdog(ws)
-        let payload: KlineStreamEvent
+        let message: CombinedStreamMessage<KlineStreamEvent | AggTradeEvent>
         try {
-          payload = JSON.parse(event.data) as KlineStreamEvent
+          message = JSON.parse(event.data) as CombinedStreamMessage<KlineStreamEvent | AggTradeEvent>
         } catch {
           return
         }
-        if (payload.e !== 'kline' || !payload.k) return
-        optionsRef.current.onCandle(normalizeStreamKline(payload.k), payload.k.x)
+        const payload = message.data
+        if (!payload) return
+        if (payload.e === 'kline' && payload.k) {
+          optionsRef.current.onCandle(normalizeStreamKline(payload.k), payload.k.x)
+        } else if (payload.e === 'aggTrade') {
+          optionsRef.current.onTrade?.(Number(payload.p), Number(payload.q), payload.T)
+        }
       }
 
       ws.onerror = () => {
