@@ -13,6 +13,8 @@ export interface ChartSettings {
   /** Scales */
   showCountdown: boolean
   showLastPriceLabel: boolean
+  /** 현재가에 가로로 긋는 얇은 점선(TradingView "가격선"). */
+  showPriceLine: boolean
   /** Canvas */
   grid: 'both' | 'vertical' | 'horizontal' | 'none'
   crosshair: 'normal' | 'magnet'
@@ -29,6 +31,7 @@ export const DEFAULT_CHART_SETTINGS: ChartSettings = {
   showIndicatorLegend: true,
   showCountdown: true,
   showLastPriceLabel: true,
+  showPriceLine: true,
   grid: 'both',
   crosshair: 'normal',
   showWatermark: false,

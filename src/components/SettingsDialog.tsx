@@ -143,6 +143,15 @@ export function SettingsDialog({ open, onClose, settings, onChange }: SettingsDi
                   onChange={(e) => set('showLastPriceLabel', e.target.checked)}
                 />
               </label>
+              <label className="tv-field">
+                <span className="tv-field-label">현재가 선</span>
+                <input
+                  className="tv-switch"
+                  type="checkbox"
+                  checked={draft.showPriceLine}
+                  onChange={(e) => set('showPriceLine', e.target.checked)}
+                />
+              </label>
             </>
           )}
 

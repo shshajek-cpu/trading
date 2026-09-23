@@ -639,6 +639,42 @@ export function Chart({
     }
   }, [alerts, mainSeries, palette])
 
+  // ── 8b) 현재가 선 — TradingView 처럼 마지막 가격에 얇은 점선을 가로로 긋고 틱마다 따라가게 한다. ─
+  // 시리즈 기본 가격선 대신 직접 그린다: 하이킨 아시에서도 실제 종가에 맞춰야 하고,
+  // 축 라벨은 카운트다운 배지가 따로 그리므로 선만 필요하다.
+  const priceLineRef = useRef<IPriceLine | null>(null)
+  useEffect(() => {
+    const series = mainSeries
+    if (!series || !settings.showPriceLine) return
+    const line = series.createPriceLine({
+      price: 0,
+      color: 'transparent',
+      lineWidth: 1,
+      lineStyle: LineStyle.Dotted,
+      lineVisible: false,
+      axisLabelVisible: false,
+    })
+    priceLineRef.current = line
+    return () => {
+      priceLineRef.current = null
+      try {
+        series.removePriceLine(line)
+      } catch {
+        /* 차트 종류를 바꿔 시리즈가 먼저 사라졌으면 선도 함께 사라졌다 */
+      }
+    }
+  }, [mainSeries, settings.showPriceLine])
+  useEffect(() => {
+    const line = priceLineRef.current
+    const last = candles[candles.length - 1]
+    if (!line || !last) return
+    line.applyOptions({
+      price: last.close,
+      color: last.close >= last.open ? settings.upColor : settings.downColor,
+      lineVisible: true,
+    })
+  }, [candles, mainSeries, settings.showPriceLine, settings.upColor, settings.downColor])
+
   // ── 9) 핀 마커. ──────────────────────────────────────────────────────
   useEffect(() => {
     const series = mainSeries
