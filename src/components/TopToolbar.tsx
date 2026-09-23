@@ -38,6 +38,8 @@ export interface TopToolbarProps {
   layout: LayoutMode
   onLayoutChange: (mode: LayoutMode) => void
   onEqualize: () => void
+  syncChartType: boolean
+  onSyncChartTypeChange: (on: boolean) => void
   onSave: () => void
   saved: boolean
   onQuickSearch: () => void
@@ -77,6 +79,8 @@ export function TopToolbar(props: TopToolbarProps) {
     layout,
     onLayoutChange,
     onEqualize,
+    syncChartType,
+    onSyncChartTypeChange,
     onSave,
     saved,
     onQuickSearch,
@@ -250,6 +254,8 @@ export function TopToolbar(props: TopToolbarProps) {
             value={layout}
             onChange={onLayoutChange}
             onEqualize={onEqualize}
+            syncChartType={syncChartType}
+            onSyncChartTypeChange={onSyncChartTypeChange}
           />
 
           <button type="button" className={`tv-tb-btn wide${saved ? ' saved' : ''}`} title="저장" onClick={onSave}>

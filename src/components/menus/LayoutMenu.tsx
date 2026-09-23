@@ -1,5 +1,5 @@
 import type { LayoutMode } from '../../lib/layoutConfig'
-import { MenuDivider, MenuItem, Popover } from '../ui/Popover'
+import { MenuDivider, MenuItem, MenuSection, Popover } from '../ui/Popover'
 import { Icon, type IconName } from '../Icon'
 
 interface LayoutMenuProps {
@@ -9,6 +9,8 @@ interface LayoutMenuProps {
   value: LayoutMode
   onChange: (mode: LayoutMode) => void
   onEqualize: () => void
+  syncChartType: boolean
+  onSyncChartTypeChange: (on: boolean) => void
 }
 
 const OPTIONS: { mode: LayoutMode; label: string; icon: IconName }[] = [
@@ -17,7 +19,16 @@ const OPTIONS: { mode: LayoutMode; label: string; icon: IconName }[] = [
   { mode: 4, label: '4분할', icon: 'layout4' },
 ]
 
-export function LayoutMenu({ anchor, open, onClose, value, onChange, onEqualize }: LayoutMenuProps) {
+export function LayoutMenu({
+  anchor,
+  open,
+  onClose,
+  value,
+  onChange,
+  onEqualize,
+  syncChartType,
+  onSyncChartTypeChange,
+}: LayoutMenuProps) {
   return (
     <Popover anchor={anchor} open={open} onClose={onClose} placement="bottom-end">
       {OPTIONS.map((o) => (
@@ -42,6 +53,16 @@ export function LayoutMenu({ anchor, open, onClose, value, onChange, onEqualize 
           onClose()
         }}
       />
+      <MenuDivider />
+      <MenuSection title="모든 칸에 같이 적용">
+        {/* 켜고 끄는 항목이라 메뉴를 닫지 않는다. */}
+        <MenuItem
+          icon={syncChartType ? <Icon name="check" size={18} /> : <span />}
+          label="차트 종류"
+          checked={syncChartType}
+          onSelect={() => onSyncChartTypeChange(!syncChartType)}
+        />
+      </MenuSection>
     </Popover>
   )
 }

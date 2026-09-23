@@ -216,6 +216,26 @@ function App() {
     }))
   }, [])
 
+  // 동기화가 켜져 있으면 숨은 칸까지 모두 바꿔, 분할을 늘려도 같은 종류로 보이게 한다.
+  const setChartType = useCallback((t: ChartType) => {
+    setLayoutState((prev) => ({
+      ...prev,
+      cells: prev.cells.map((c, i) => (prev.syncChartType || i === prev.active ? { ...c, chartType: t } : c)),
+    }))
+  }, [])
+
+  // 켜는 순간 활성 칸의 종류로 맞춘다 — 켰는데 칸마다 다르면 동기화가 된 건지 알 수 없다.
+  const setSyncChartType = useCallback((on: boolean) => {
+    setLayoutState((prev) => {
+      const t = prev.cells[prev.active]?.chartType
+      return {
+        ...prev,
+        syncChartType: on,
+        cells: on && t ? prev.cells.map((c) => ({ ...c, chartType: t })) : prev.cells,
+      }
+    })
+  }, [])
+
   const setActive = useCallback((index: number) => {
     setLayoutState((prev) => (prev.active === index ? prev : { ...prev, active: index }))
   }, [])
@@ -545,7 +565,7 @@ function App() {
     onIntervalChange: (iv: Interval) => setCellField(active, { interval: iv }),
     onToggleFavorite: toggleFavorite,
     chartType: activeCell.chartType,
-    onChartTypeChange: (t: ChartType) => setCellField(active, { chartType: t }),
+    onChartTypeChange: setChartType,
     onOpenIndicators: () => setIndicatorsOpen(true),
     indicators,
     onIndicatorsChange: setIndicators,
@@ -559,6 +579,8 @@ function App() {
     layout,
     onLayoutChange: setLayout,
     onEqualize: resetSplit,
+    syncChartType: layoutState.syncChartType,
+    onSyncChartTypeChange: setSyncChartType,
     onSave: handleSave,
     saved,
     onQuickSearch: () => setQuickOpen(true),
@@ -636,7 +658,7 @@ function App() {
         open={quickOpen}
         onClose={() => setQuickOpen(false)}
         onTool={setTool}
-        onChartType={(t) => setCellField(active, { chartType: t })}
+        onChartType={setChartType}
         onInterval={(iv) => setCellField(active, { interval: iv })}
         onOpenIndicators={() => setIndicatorsOpen(true)}
         onSettings={() => setSettingsOpen(true)}

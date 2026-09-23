@@ -144,7 +144,7 @@ interface MenuItemProps {
 export function MenuItem({ icon, label, shortcut, trailing, active, checked, disabled, onSelect }: MenuItemProps) {
   return (
     <div
-      role="menuitem"
+      role={checked === undefined ? 'menuitem' : 'menuitemcheckbox'}
       tabIndex={disabled ? -1 : 0}
       aria-disabled={disabled || undefined}
       aria-checked={checked}

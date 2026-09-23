@@ -23,6 +23,8 @@ export interface LayoutState {
   /** 칸 나누는 비율 0~1. 2분할은 col 만, 4분할은 col·row 둘 다 쓴다. */
   splitCol: number
   splitRow: number
+  /** 차트 종류를 바꾸면 모든 칸에 같이 적용한다. */
+  syncChartType: boolean
 }
 
 const STORAGE_KEY = 'trading.layout.v1'
@@ -42,6 +44,7 @@ export const DEFAULT_LAYOUT: LayoutState = {
   ],
   splitCol: 0.5,
   splitRow: 0.5,
+  syncChartType: true,
 }
 
 /** 다중 시간대 프리셋. 한 종목을 여러 주기로 동시에 본다. */
@@ -94,6 +97,7 @@ export function loadLayout(): LayoutState {
       cells,
       splitCol: split(parsed.splitCol),
       splitRow: split(parsed.splitRow),
+      syncChartType: typeof parsed.syncChartType === 'boolean' ? parsed.syncChartType : true,
     }
   } catch {
     return DEFAULT_LAYOUT
