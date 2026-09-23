@@ -456,6 +456,10 @@
 }
 
 .panel .cta {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
   height: 36px;
   border: 1px solid var(--tv-accent);
   border-radius: var(--tv-radius-sm);
@@ -475,6 +479,10 @@
 }
 
 .panel .ghost-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
   height: 32px;
   border: 1px solid var(--tv-border-strong);
   border-radius: var(--tv-radius-sm);
@@ -1234,4 +1242,30 @@
 
 .toast-x {
   color: var(--tv-text-dim);
+}
+
+/* ── Error fallback (ErrorBoundary) ── */
+.error-fallback {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 0;
+  height: 100%;
+  padding: 24px;
+  background: var(--tv-bg);
+  color: var(--tv-text);
+  text-align: center;
+}
+
+.error-fallback p {
+  margin: 0;
+}
+
+.error-fallback .error-detail {
+  max-width: 480px;
+  color: var(--tv-text-dim);
+  font-size: var(--tv-fs-xs);
+  word-break: break-word;
 }

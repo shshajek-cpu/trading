@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   TOOL_GROUPS,
   type DrawingTool,
@@ -84,8 +84,9 @@ export function DrawingToolbar({
     return g.sections[0].items[0].tool
   }
 
-  const pickTool = (groupId: string, t: DrawingTool) => {
+  const rememberTool = (groupId: string, t: DrawingTool) => {
     setLastUsed((prev) => {
+      if (prev[groupId] === t) return prev
       const next = { ...prev, [groupId]: t }
       try {
         localStorage.setItem(LAST_USED_KEY, JSON.stringify(next))
@@ -94,9 +95,22 @@ export function DrawingToolbar({
       }
       return next
     })
+  }
+
+  const pickTool = (groupId: string, t: DrawingTool) => {
+    rememberTool(groupId, t)
     onToolChange(t)
     setOpenGroup(null)
   }
+
+  // 단축키·Esc·그리기 완료로 도구가 바뀌어도 그 묶음의 대표 아이콘을 맞춘다.
+  // (예: 지우개를 쓰다 Esc 로 십자선에 돌아오면 커서 버튼도 십자선이어야 한다.)
+  useEffect(() => {
+    const group = TOOL_GROUPS.find((g) => groupTools[g.id].includes(tool))
+    if (group) rememberTool(group.id, tool)
+    // rememberTool 은 상태 갱신 함수만 쓴다.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [tool, groupTools])
 
   const magnetOn = magnet !== 'off'
 

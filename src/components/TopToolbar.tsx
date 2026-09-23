@@ -180,7 +180,7 @@ export function TopToolbar(props: TopToolbarProps) {
 
       {div}
 
-      <button type="button" className="tv-tb-btn wide" title="지표" onClick={onOpenIndicators}>
+      <button type="button" className="tv-tb-btn wide" title="지표" aria-label="지표" onClick={onOpenIndicators}>
         <Icon name="indicator" size={22} />
         {!mobile && <span className="tv-tb-label">지표</span>}
       </button>
@@ -203,7 +203,7 @@ export function TopToolbar(props: TopToolbarProps) {
         />
       </Popover>
 
-      <button type="button" className="tv-tb-btn wide" title="알림" onClick={onOpenAlert}>
+      <button type="button" className="tv-tb-btn wide" title="알림" aria-label="알림 만들기" onClick={onOpenAlert}>
         <Icon name="alarm" size={22} />
         {!mobile && <span className="tv-tb-label">알림</span>}
       </button>
@@ -212,6 +212,7 @@ export function TopToolbar(props: TopToolbarProps) {
         type="button"
         className={`tv-tb-btn wide${replay ? ' active' : ''}`}
         title="리플레이"
+        aria-label="리플레이"
         aria-pressed={replay}
         onClick={onToggleReplay}
       >

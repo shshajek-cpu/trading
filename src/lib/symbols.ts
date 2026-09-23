@@ -183,9 +183,12 @@ const QUOTE_NAMES: Record<string, string> = {
 
 export type SymbolCategory = 'perp' | 'quarterly' | 'stock'
 
-/** 분기물(인도 계약)인가. contractType 이 PERPETUAL 이 아니거나 심볼에 _ 가 있으면 분기물. */
+/**
+ * 분기물(인도 계약)인가. Binance 는 무기한에도 먼 인도일(2100-12-25)을 넣고,
+ * 주식·원자재 무기한은 contractType 이 TRADIFI_PERPETUAL 이다 — 둘 다 무기한으로 본다.
+ */
 export function isQuarterly(info: SymbolInfo): boolean {
-  return (info.contractType !== '' && info.contractType !== 'PERPETUAL') || info.symbol.includes('_')
+  return /QUARTER|MONTH/.test(info.contractType) || info.symbol.includes('_')
 }
 
 /** 주식·원자재(비 COIN 기초자산)인가. */

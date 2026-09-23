@@ -6,11 +6,12 @@ import { useEffect, useRef } from 'react'
  * 앱에서는 무언가 열려 있을 때 뒤로가기를 누르면 그것만 닫히는 게 당연하다.
  * 열릴 때 가짜 방문 기록을 하나 쌓고, 뒤로가기가 그 기록을 소비하게 둔다.
  *
- * 여러 개가 겹쳐 열릴 수 있다(메뉴 서랍 → 관심 목록 전체 화면). 그래서
+ * 여러 개가 겹치거나 이어서 열린다(메뉴 서랍 → 관심 목록 전체 화면). 그래서
  * - 뒤로가기는 맨 위에 열린 것 하나만 닫는다(스택).
- * - X 버튼 등으로 닫혀 우리가 직접 `history.back()` 을 부를 때 생기는 popstate 는
- *   다른 오버레이를 닫지 않도록 건너뛴다. 서랍이 닫히면서 부른 back() 이
- *   같은 순간 새로 열린 관심 목록을 닫아 버리던 문제를 막는다.
+ * - 하나가 닫히면서 같은 순간 다른 것이 열리면, 닫힌 쪽 기록을 되돌리지 않고 새로 열린 쪽이
+ *   그대로 물려받는다. `history.back()` 은 비동기라, 되돌린 뒤 새로 쌓으면 순서가 꼬여
+ *   다음 뒤로가기가 앱을 빠져나가 버린다.
+ * - 코드로 닫혀 우리가 직접 되돌릴 때 생기는 popstate 는 다른 오버레이를 닫지 않게 건너뛴다.
  */
 interface Entry {
   popped: boolean
@@ -18,6 +19,9 @@ interface Entry {
 }
 
 const stack: Entry[] = []
+/** 닫혔지만 아직 되돌리지 않은 기록 수. 같은 커밋에서 열리는 쪽이 먼저 가져간다. */
+let releasable = 0
+let flushScheduled = false
 let ignoredPops = 0
 let listening = false
 
@@ -32,6 +36,21 @@ function onPopState(): void {
   top.close()
 }
 
+function scheduleRelease(): void {
+  if (flushScheduled) return
+  flushScheduled = true
+  // React 는 한 커밋 안에서 정리(닫힘)를 모두 끝낸 뒤 새 이펙트(열림)를 돌린다.
+  // 그 다음에 남은 것만 실제로 되돌린다.
+  queueMicrotask(() => {
+    flushScheduled = false
+    while (releasable > 0) {
+      releasable--
+      ignoredPops++
+      window.history.back()
+    }
+  })
+}
+
 export function useBackClose(open: boolean, onClose: () => void): void {
   const onCloseRef = useRef(onClose)
   onCloseRef.current = onClose
@@ -44,17 +63,21 @@ export function useBackClose(open: boolean, onClose: () => void): void {
     }
 
     const entry: Entry = { popped: false, close: () => onCloseRef.current() }
-    window.history.pushState({ overlay: true }, '')
+    if (releasable > 0) {
+      // 방금 닫힌 오버레이의 기록을 그대로 물려받는다.
+      releasable--
+      window.history.replaceState({ overlay: true }, '')
+    } else {
+      window.history.pushState({ overlay: true }, '')
+    }
     stack.push(entry)
 
     return () => {
       const index = stack.indexOf(entry)
       if (index >= 0) stack.splice(index, 1)
-      // 뒤로가기가 아니라 코드로 닫혔다면 쌓아둔 기록을 우리가 걷어낸다.
-      // 그때 생기는 popstate 는 사용자의 뒤로가기가 아니므로 무시한다.
       if (!entry.popped) {
-        ignoredPops++
-        window.history.back()
+        releasable++
+        scheduleRelease()
       }
     }
   }, [open])

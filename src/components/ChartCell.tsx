@@ -431,7 +431,8 @@ export function ChartCell({
         />
 
         {/* 트레이딩뷰식 범례(왼쪽 위). */}
-        <div className="tv-legend">
+        {/* 오실레이터 패널이 많아 메인 패널이 낮아지면 범례가 아래 패널을 덮지 않게 메인 패널 높이에서 자른다. */}
+        <div className="tv-legend" style={panes.list[0] ? { maxHeight: Math.max(40, panes.list[0].top - 6), overflow: 'hidden' } : undefined}>
           <div className="tv-legend-head">
             <CoinIcon base={base} size={18} />
             <span className="tv-legend-title">{description}</span>

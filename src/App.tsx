@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom'
 import './App.css'
 
 import { ChartCell } from './components/ChartCell'
+import { ErrorBoundary } from './components/ErrorBoundary'
 import { TopToolbar } from './components/TopToolbar'
 import { BottomBar } from './components/BottomBar'
 import { WidgetBar } from './components/WidgetBar'
@@ -381,8 +382,13 @@ function App() {
     const isActive = index === active
     const cellPins = pinStore.pins.filter((p) => p.symbol === cell.symbol && p.interval === cell.interval)
     return (
-      <ChartCell
+      <ErrorBoundary
         key={index}
+        label="차트"
+        style={gridStyle}
+        resetKey={`${cell.symbol}|${cell.interval}|${cell.chartType}|${cell.scaleMode}`}
+      >
+      <ChartCell
         cellIndex={index}
         gridStyle={gridStyle}
         symbol={cell.symbol}
@@ -423,6 +429,7 @@ function App() {
         onActivate={() => setActive(index)}
         onPrice={handlePrice}
       />
+      </ErrorBoundary>
     )
   }
 

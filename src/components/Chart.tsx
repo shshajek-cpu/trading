@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   CrosshairMode,
   HistogramSeries,
@@ -13,6 +13,7 @@ import {
   type ISeriesApi,
   type ISeriesMarkersPluginApi,
   type ITextWatermarkPluginApi,
+  type LogicalRange,
   type MouseEventParams,
   type Time,
   type UTCTimestamp,
@@ -186,7 +187,10 @@ export function Chart({
     const compareSeries = compareSeriesRef.current
     const alertLines = alertLinesRef.current
     return () => {
-      chart.remove()
+      // 같은 언마운트 안에서 다른 이펙트 정리(시리즈 제거, 그리기 프리미티브 분리)가 이 차트를
+      // 아직 건드린다. 먼저 remove() 하면 그 호출들이 폐기된 차트에 다시 그리기를 예약해
+      // "Object is disposed" 예외가 난다. 모든 정리가 끝난 뒤에 폐기한다.
+      queueMicrotask(() => chart.remove())
       chartRef.current = null
       setMainSeries(null)
       indicatorSeries.clear()
@@ -204,16 +208,39 @@ export function Chart({
 
   // ── 2) 메인 시리즈: 차트 종류/색이 바뀌면 통째로 갈아끼운다. ──────────
   const createKey = `${chartType}|${settings.theme}|${settings.upColor}|${settings.downColor}`
+  // 어떤 차트 종류로 만든 시리즈인지 기억한다. 종류를 바꾼 직후 한 번은 옛 시리즈가 남아 있는데,
+  // 그때 새 종류의 데이터 모양(예: 히스토그램에 OHLC)을 넣으면 lightweight-charts 가 예외를 던진다.
+  const seriesTypeRef = useRef(new WeakMap<MainSeries, ChartType>())
+  // 시리즈를 갈아끼우면 시간축 보이는 구간이 데이터 밖으로 밀려 빈 차트가 된다.
+  // 옛 시리즈를 지우기 직전 구간을 적어 두고, 새 시리즈에 데이터를 넣은 뒤 되돌린다(TradingView와 같은 동작).
+  const swapRangeRef = useRef<LogicalRange | null>(null)
+  // 기간 버튼(1일·3개월…)이 요청한 시간 구간. 과거 봉이 모자라면 더 불러오며 맞춘다.
+  const pendingRangeRef = useRef<{ from: number; to: number; attempts: number } | null>(null)
+  const applyPendingRange = useCallback(() => {
+    const pending = pendingRangeRef.current
+    const chart = chartRef.current
+    const first = candlesRef.current[0]
+    if (!pending || !chart || !first) return
+    chart.timeScale().setVisibleRange({ from: Math.max(pending.from, first.time) as Time, to: pending.to as Time })
+    if (first.time <= pending.from || pending.attempts >= 8) {
+      pendingRangeRef.current = null
+      return
+    }
+    pending.attempts++
+    cbRef.current.onReachStart?.()
+  }, [])
   useEffect(() => {
     const chart = chartRef.current
     if (!chart) return
     const series = createMainSeries(chart, chartType, colors)
+    seriesTypeRef.current.set(series, chartType)
     // 이 시리즈에 붙던 알림선·핀 마커는 옛 시리즈와 함께 사라졌으니 참조를 비운다.
     alertLinesRef.current.clear()
     markersRef.current = null
     setMainSeries(series)
     return () => {
       try {
+        swapRangeRef.current = chart.timeScale().getVisibleLogicalRange()
         chart.removeSeries(series)
       } catch {
         /* 차트가 먼저 사라졌으면 무시 */
@@ -226,6 +253,7 @@ export function Chart({
   useEffect(() => {
     const series = mainSeries
     if (!series || candles.length === 0) return
+    if (seriesTypeRef.current.get(series) !== chartType) return
     const prev = prevDataRef.current
     const seriesChanged = lastSeriesRef.current !== series
     lastSeriesRef.current = series
@@ -237,23 +265,50 @@ export function Chart({
       }
     }
 
+    // 실시간 틱(마지막 봉 갱신/새 봉)인지 — 이때는 사용자가 보던 구간을 건드리지 않는다.
+    let tick = false
     if (seriesChanged) {
       full()
+      const saved = swapRangeRef.current
+      swapRangeRef.current = null
+      // lightweight-charts 는 시리즈를 갈아끼운 직후 새 시리즈의 봉을 시간축에 반영하지 못해
+      // 보이는 구간이 null(빈 차트)로 남는 경우가 있다. 다음 틱이 와야 풀린다.
+      // 두 프레임 뒤 같은 데이터를 한 번 더 넣어 시간축을 다시 계산시키고, 이전 구간을 되돌린다.
+      const chart = chartRef.current
+      if (chart) {
+        const data = mainSeriesData(chartType, candles, colors)
+        const count = candles.length
+        requestAnimationFrame(() =>
+          requestAnimationFrame(() => {
+            if (chartRef.current !== chart || lastSeriesRef.current !== series) return
+            const ts = chart.timeScale()
+            if (!ts.getVisibleLogicalRange()) series.setData(data as never)
+            if (saved) ts.setVisibleLogicalRange(saved)
+            const now = ts.getVisibleLogicalRange()
+            if (!now || now.to < 0 || now.from > count) {
+              ts.setVisibleLogicalRange({ from: Math.max(0, count - 150), to: count + 1 })
+            }
+          }),
+        )
+      }
     } else if (chartType === 'heikinAshi') {
       // HA 는 직전 봉에 의존하므로 통째로 다시 그린다(이 종류만 예외).
       full()
+      tick = candles.length === prev.length || candles.length === prev.length + 1
     } else if (
       prev.length > 0 &&
       candles.length === prev.length &&
       candles[candles.length - 1].time === prev[prev.length - 1].time
     ) {
       series.update(mainSeriesPoint(chartType, candles[candles.length - 1], colors) as never)
+      tick = true
     } else if (
       prev.length > 0 &&
       candles.length === prev.length + 1 &&
       candles[candles.length - 2].time === prev[prev.length - 1].time
     ) {
       series.update(mainSeriesPoint(chartType, candles[candles.length - 1], colors) as never)
+      tick = true
     } else {
       // 과거가 앞에 붙었으면 보이는 구간을 밀어 화면이 튀지 않게 한다.
       const prependedCount = candles.findIndex((c) => c.time === firstTimeRef.current)
@@ -271,10 +326,12 @@ export function Chart({
     firstTimeRef.current = candles[0]?.time ?? null
     prevDataRef.current = candles
     if (!fittedRef.current) {
-      chartRef.current?.timeScale().fitContent()
+      // TradingView처럼 기본 봉 간격으로 최근 봉을 오른쪽 여백과 함께 보여 준다(1000봉을 한 화면에 욱여넣지 않는다).
+      chartRef.current?.timeScale().scrollToRealTime()
       fittedRef.current = true
     }
-  }, [candles, mainSeries, chartType, colors])
+    if (!tick) applyPendingRange()
+  }, [candles, mainSeries, chartType, colors, applyPendingRange])
 
   // ── 4) 스케일 모드 + 자동 스케일. ────────────────────────────────────
   useEffect(() => {
@@ -748,7 +805,8 @@ export function Chart({
         return out
       },
       setVisibleRange: (from, to) => {
-        chartRef.current?.timeScale().setVisibleRange({ from: from as Time, to: to as Time })
+        pendingRangeRef.current = { from, to, attempts: 0 }
+        applyPendingRange()
       },
       resetView: () => {
         chartRef.current?.priceScale('right').applyOptions({ autoScale: true })
@@ -760,7 +818,7 @@ export function Chart({
     }
     registerChart(cellIndex, handle)
     return () => registerChart(cellIndex, null)
-  }, [cellIndex, symbol, interval, palette])
+  }, [cellIndex, symbol, interval, palette, applyPendingRange])
 
   return (
     <div style={{ position: 'relative', width: '100%', height: '100%' }}>
@@ -803,7 +861,8 @@ function createChartWithDefaults(container: HTMLElement): IChartApi {
       // tradingview.com 링크를 요구한다. 내장 로고가 둘 다 충족한다(TradingView 화면과도 같은 자리).
       attributionLogo: true,
     },
-    timeScale: { timeVisible: true, secondsVisible: false },
+    // 좁은 폰 화면에서도 기간 버튼(1개월=30분봉 1440개 등)이 전 구간을 담을 수 있게 봉 간격 하한을 낮춘다.
+    timeScale: { timeVisible: true, secondsVisible: false, minBarSpacing: 0.1 },
     crosshair: { mode: CrosshairMode.Normal },
     handleScroll: { mouseWheel: true, pressedMouseMove: true, horzTouchDrag: true, vertTouchDrag: true },
     kineticScroll: { mouse: false, touch: true },

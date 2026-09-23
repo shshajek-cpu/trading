@@ -201,7 +201,8 @@ export function SymbolSearchDialog({
       <div className="ss-list" ref={listRef} onKeyDown={onKeyDown}>
         {results.map((info, idx) => {
           const cat = symbolCategory(info)
-          const tag = cat === 'quarterly' ? 'futures crypto' : cat === 'stock' ? 'swap' : 'swap crypto'
+          const underlying = info.underlyingType === 'EQUITY' ? 'stock' : info.underlyingType === 'COMMODITY' ? 'commodity' : info.underlyingType === 'INDEX' ? 'index' : 'crypto'
+          const tag = `${cat === 'quarterly' ? 'futures' : 'swap'} ${underlying}`
           return (
             <button
               key={info.symbol}
