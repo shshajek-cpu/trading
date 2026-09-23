@@ -7,6 +7,7 @@ import {
 } from '../../lib/drawings'
 import { Popover, MenuSection, MenuItem } from '../../components/ui/Popover'
 import { ToolIcon } from './toolIcons'
+import { tip } from '../../lib/tooltip'
 
 export interface SelectedToolbarProps {
   drawing: Drawing
@@ -94,6 +95,7 @@ export function SelectedToolbar({
         type="button"
         className="tv-draw-selgrip"
         aria-label="이동"
+        {...tip('이동', '이 도구 막대를 끌어서 옮깁니다.')}
         onPointerDown={onGripDown}
       >
         <ToolIcon name="grip" size={18} />
@@ -103,7 +105,7 @@ export function SelectedToolbar({
         ref={colorRef}
         type="button"
         className="tv-draw-selbtn"
-        title="선 색"
+        {...tip('선 색')}
         aria-label="선 색"
         onClick={() => setMenu(menu === 'color' ? null : 'color')}
       >
@@ -119,7 +121,7 @@ export function SelectedToolbar({
             ref={fillRef}
             type="button"
             className="tv-draw-selbtn"
-            title="채움 색"
+            {...tip('채움 색', '도형 안쪽을 칠할 색')}
             aria-label="채움 색"
             onClick={() => setMenu(menu === 'fill' ? null : 'fill')}
           >
@@ -139,7 +141,7 @@ export function SelectedToolbar({
         ref={widthRef}
         type="button"
         className="tv-draw-selbtn"
-        title="선 굵기"
+        {...tip('선 굵기')}
         aria-label="선 굵기"
         onClick={() => setMenu(menu === 'width' ? null : 'width')}
       >
@@ -162,7 +164,7 @@ export function SelectedToolbar({
         ref={styleRef}
         type="button"
         className="tv-draw-selbtn"
-        title="선 종류"
+        {...tip('선 종류', '실선·파선·점선')}
         aria-label="선 종류"
         onClick={() => setMenu(menu === 'style' ? null : 'style')}
       >
@@ -185,7 +187,7 @@ export function SelectedToolbar({
         <button
           type="button"
           className="tv-draw-selbtn"
-          title="텍스트 편집"
+          {...tip('텍스트 편집')}
           aria-label="텍스트 편집"
           onClick={() => onEditText(drawing)}
         >
@@ -197,7 +199,7 @@ export function SelectedToolbar({
         <button
           type="button"
           className={`tv-draw-selbtn${drawing.alert ? ' on' : ''}`}
-          title="알림"
+          {...tip(drawing.alert ? '알림 끄기' : '알림 켜기', '가격이 이 수평선을 지나가면 알려 줍니다.')}
           aria-label="알림"
           aria-pressed={drawing.alert}
           onClick={() => onUpdate(drawing.id, drawing.alert ? { alert: false } : { alert: true, fired: false })}
@@ -209,7 +211,7 @@ export function SelectedToolbar({
       <button
         type="button"
         className={`tv-draw-selbtn${lockedNow ? ' on' : ''}`}
-        title="잠금"
+        {...tip(lockedNow ? '잠금 풀기' : '잠금', '이 그림이 실수로 움직이거나 지워지지 않게 고정합니다.')}
         aria-label="잠금"
         aria-pressed={drawing.locked}
         onClick={() => onUpdate(drawing.id, { locked: !drawing.locked })}
@@ -220,7 +222,7 @@ export function SelectedToolbar({
       <button
         type="button"
         className="tv-draw-selbtn"
-        title="복제"
+        {...tip('복제', '같은 그림을 하나 더 만들어 조금 옆에 놓습니다.')}
         aria-label="복제"
         onClick={() => onClone(drawing)}
       >
@@ -230,7 +232,7 @@ export function SelectedToolbar({
       <button
         type="button"
         className="tv-draw-selbtn"
-        title="삭제"
+        {...tip('삭제', '이 그림을 지웁니다.', 'Delete')}
         aria-label="삭제"
         onClick={() => onRemove(drawing.id)}
       >

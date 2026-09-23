@@ -102,6 +102,7 @@ CSS 그리드 한 판(`.tv-app`), 칸 사이는 `--tv-gap` 거터.
 - 켜고 끄기는 `.tv-switch`.
 - 손가락 표적은 모바일에서 최소 44px. 입력 글자는 16px 이상(iOS 확대 방지).
 - 기기별로 달라야 하는 값(즐겨찾기 간격·그리기 토글·단축키)은 `useUiPrefs`·`trading.shortcuts.v1`(동기화 제외)에, 공유값은 동기화 키에 둔다.
+- 아이콘 버튼에는 `title` 대신 `{...tip(이름, 설명, 단축키, 방향)}`(`lib/tooltip`)을 단다. `TooltipLayer` 가 마우스를 올렸을 때 이름·단축키·설명을 띄운다. 단축키는 `shortcutKeys.label(id)` 로 사용자가 바꾼 키를 쓴다. 왼쪽 툴바는 `'right'`, 오른쪽 위젯 탭은 `'left'`.
 
 ---
 

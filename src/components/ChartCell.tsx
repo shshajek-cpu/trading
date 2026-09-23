@@ -20,6 +20,7 @@ import { computeIndicator, displayParts, indicatorLegend, type ComputedIndicator
 import { formatPrice, barCloseTime } from '../chart/format'
 import { getChart } from '../lib/chartRegistry'
 import type { ChartMenuRequest } from '../lib/chartMenu'
+import { tip } from '../lib/tooltip'
 import './chart.css'
 import './indicators.css'
 
@@ -486,28 +487,33 @@ export function ChartCell({
           <span className="tv-ind-ctl">
             <button
               type="button"
-              title={inst.visible ? '숨기기' : '표시'}
+              {...tip(inst.visible ? '숨기기' : '표시', '지표를 지우지 않고 차트에서 잠시 감춥니다.')}
               aria-label={inst.visible ? '숨기기' : '표시'}
               onClick={() => toggleVisible(inst.id)}
             >
               <Ctl name={inst.visible ? 'eye' : 'eyeOff'} />
             </button>
             {onEditIndicator && (
-              <button type="button" title="설정" aria-label="설정" onClick={() => onEditIndicator(inst.id)}>
+              <button
+                type="button"
+                {...tip('설정', '기간·기준값·색 같은 이 지표의 설정을 바꿉니다. 이름을 두 번 눌러도 열립니다.')}
+                aria-label="설정"
+                onClick={() => onEditIndicator(inst.id)}
+              >
                 <Ctl name="gear" />
               </button>
             )}
             {onIndicatorAlert && (
               <button
                 type="button"
-                title="이 지표에 알림 추가"
+                {...tip('알림 추가', '이 지표 값이 정한 조건에 닿으면 알려 줍니다.')}
                 aria-label="이 지표에 알림 추가"
                 onClick={() => onIndicatorAlert(inst.id)}
               >
                 <Ctl name="bell" />
               </button>
             )}
-            <button type="button" title="삭제" aria-label="삭제" onClick={() => removeIndicator(inst.id)}>
+            <button type="button" {...tip('삭제', '이 지표를 차트에서 뺍니다.')} aria-label="삭제" onClick={() => removeIndicator(inst.id)}>
               <Ctl name="close" />
             </button>
           </span>
@@ -619,7 +625,7 @@ export function ChartCell({
               <button
                 type="button"
                 className="tv-legend-collapse"
-                title={collapsed ? '지표 펼치기' : '지표 접기'}
+                {...tip(collapsed ? '지표 펼치기' : '지표 접기', '가격 칸의 지표 이름 줄을 접거나 폅니다.')}
                 aria-expanded={!collapsed}
                 onClick={() => setCollapsed((v) => !v)}
               >
@@ -645,7 +651,8 @@ export function ChartCell({
                         )}
                         <button
                           type="button"
-                          title="비교 제거"
+                          {...tip('비교 제거', '겹쳐 보던 이 종목을 뺍니다.')}
+                          aria-label="비교 제거"
                           onClick={() => onCompareChange(compare.filter((s) => s !== sym))}
                         >
                           <Ctl name="close" />
@@ -716,20 +723,20 @@ export function ChartCell({
           <div className="replay-controller">
             <button
               type="button"
-              title={replayPlaying ? '일시정지' : '재생'}
+              {...tip(replayPlaying ? '일시정지' : '재생', '고른 시점부터 봉을 정한 속도로 하나씩 보여 줍니다.')}
               onClick={() => setReplayPlaying((v) => !v)}
             >
               {replayPlaying ? '⏸' : '▶'}
             </button>
             <button
               type="button"
-              title="한 봉 앞으로"
+              {...tip('한 봉 앞으로', '다음 봉 하나만 보여 줍니다.')}
               onClick={() => setReplayPos((p) => Math.min(replayBaseRef.current.length - 1, p + 1))}
             >
               ⏭
             </button>
             <div className="replay-speed">
-              <button type="button" onClick={() => setSpeedOpen((v) => !v)}>
+              <button type="button" {...tip('재생 속도', '봉이 하나씩 나오는 간격')} onClick={() => setSpeedOpen((v) => !v)}>
                 {REPLAY_SPEEDS.find((s) => s.ms === replaySpeed)?.label ?? '1초'}
               </button>
               {speedOpen && (
@@ -750,10 +757,10 @@ export function ChartCell({
                 </div>
               )}
             </div>
-            <button type="button" className="replay-live" title="실시간으로" onClick={onReplayExit}>
+            <button type="button" className="replay-live" {...tip('실시간으로', '리플레이를 끝내고 지금 시세로 돌아갑니다.')} onClick={onReplayExit}>
               실시간으로
             </button>
-            <button type="button" title="리플레이 종료" onClick={onReplayExit}>
+            <button type="button" {...tip('리플레이 종료')} aria-label="리플레이 종료" onClick={onReplayExit}>
               <Ctl name="close" />
             </button>
           </div>

@@ -349,3 +349,40 @@
   background: none;
   cursor: pointer;
 }
+
+/* ── Tooltip (TooltipLayer) — 이름 · 단축키, 아래 줄에 설명 ── */
+.tv-tooltip {
+  position: fixed;
+  z-index: 2000;
+  max-width: 280px;
+  padding: 6px 10px;
+  background: var(--tv-tooltip-bg);
+  color: #ffffff;
+  border-radius: var(--tv-radius-sm);
+  box-shadow: var(--tv-shadow);
+  font: var(--tv-fs-sm) / 1.4 var(--tv-font);
+  pointer-events: none;
+}
+.tv-tooltip-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  white-space: nowrap;
+}
+.tv-tooltip-name {
+  font-weight: 600;
+}
+.tv-tooltip-key {
+  padding: 0 5px;
+  border: 1px solid rgb(255 255 255 / 0.25);
+  border-radius: 3px;
+  color: rgb(255 255 255 / 0.75);
+  font: inherit;
+  font-size: var(--tv-fs-xs);
+}
+.tv-tooltip-desc {
+  margin: 2px 0 0;
+  color: rgb(255 255 255 / 0.78);
+  font-size: var(--tv-fs-xs);
+  white-space: normal;
+}

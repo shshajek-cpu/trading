@@ -11,6 +11,8 @@ import type { WidgetId } from './lib/widgets'
 import { MainMenuDrawer } from './components/MainMenuDrawer'
 import { SettingsDialog } from './components/SettingsDialog'
 import { IndicatorSettingsDialog } from './components/IndicatorSettingsDialog'
+import { TooltipLayer } from './components/ui/TooltipLayer'
+import { tip } from './lib/tooltip'
 import { QuickSearchDialog } from './components/QuickSearchDialog'
 import { QuickIntervalBox } from './components/QuickIntervalBox'
 import { Toasts, type Toast } from './components/Toasts'
@@ -977,6 +979,7 @@ function App() {
     pipSupported: pip.supported,
     pipOpen: pip.open,
     onTogglePip: () => void pip.toggle(),
+    shortcut: shortcutKeys.label,
   }
 
   const drawingToolbarProps = {
@@ -1094,6 +1097,7 @@ function App() {
       <ShortcutsDialog open={shortcutsOpen} onClose={() => setShortcutsOpen(false)} keys={shortcutKeys} />
 
       <Toasts toasts={toasts} onDismiss={dismissToast} />
+      <TooltipLayer />
 
       {pip.container &&
         createPortal(
@@ -1228,7 +1232,13 @@ function App() {
   return (
     <div className={`tv-app${widgetOpen ? ' widget-open' : ''}`}>
       <div className="tv-hamburger-cell">
-        <button type="button" className="tv-tb-btn" aria-label="메뉴" onClick={() => setMenuOpen(true)}>
+        <button
+          type="button"
+          className="tv-tb-btn"
+          aria-label="메뉴"
+          {...tip('메뉴', '위젯 목록, 다크 테마, 키보드 단축키, 앱 설치')}
+          onClick={() => setMenuOpen(true)}
+        >
           <Icon name="menu" size={22} />
         </button>
       </div>
@@ -1297,6 +1307,7 @@ function App() {
           onScaleModeChange={(mode) => setCellField(active, { scaleMode: mode })}
           autoScale={activeCell.autoScale}
           onAutoScaleChange={(v) => setCellField(active, { autoScale: v })}
+          shortcut={shortcutKeys.label}
         />
       </div>
 

@@ -8,6 +8,7 @@ import {
 import { Popover, MenuSection, MenuItem } from './ui/Popover'
 import { ToolIcon, type IconName } from '../chart/drawing/toolIcons'
 import './DrawingToolbar.css'
+import { tip } from '../lib/tooltip'
 
 export interface DrawingToolbarProps {
   tool: DrawingTool
@@ -122,6 +123,7 @@ export function DrawingToolbar({
           const rep = representative(g)
           const active = groupTools[g.id].includes(tool)
           const multi = groupTools[g.id].length > 1
+          const repItem = g.sections.flatMap((s) => s.items).find((i) => i.tool === rep)
           return (
             <div key={g.id} className="tv-drawbar-group">
               <button
@@ -130,7 +132,12 @@ export function DrawingToolbar({
                 }}
                 type="button"
                 className={`tv-drawbar-btn${active ? ' active' : ''}`}
-                title={g.label}
+                {...tip(
+                  repItem?.label ?? g.label,
+                  multi ? `${repItem?.desc ?? ''} 오른쪽 아래 ▸ 를 누르면 같은 묶음의 다른 도구를 고릅니다.` : repItem?.desc,
+                  toolShortcuts[rep],
+                  'right',
+                )}
                 aria-label={g.label}
                 onClick={() => pickTool(g.id, rep)}
               >
@@ -180,7 +187,7 @@ export function DrawingToolbar({
         <button
           type="button"
           className={`tv-drawbar-btn${tool === 'measure' ? ' active' : ''}`}
-          title="측정"
+          {...tip('측정', '끌어서 두 지점 사이의 가격 변화·% ·봉 수·기간을 잽니다. 십자선에서 Shift+끌기로도 됩니다.', undefined, 'right')}
           aria-label="측정"
           onClick={() => onToolChange('measure')}
         >
@@ -189,7 +196,7 @@ export function DrawingToolbar({
         <button
           type="button"
           className={`tv-drawbar-btn${tool === 'zoom' ? ' active' : ''}`}
-          title="확대"
+          {...tip('확대', '끌어서 고른 시간 구간만 크게 봅니다.', undefined, 'right')}
           aria-label="확대"
           onClick={() => onToolChange('zoom')}
         >
@@ -203,7 +210,12 @@ export function DrawingToolbar({
             ref={magnetRef}
             type="button"
             className={`tv-drawbar-btn${magnetOn ? ' active' : ''}`}
-            title={`자석: ${MAGNET_LABEL[magnet]}`}
+            {...tip(
+              `자석: ${MAGNET_LABEL[magnet]}`,
+              '그림 점을 가까운 봉의 시가·고가·저가·종가에 붙입니다. 약한 자석은 가까울 때만 붙습니다.',
+              undefined,
+              'right',
+            )}
             aria-label="자석"
             onClick={() => setMagnetOpen(true)}
           >
@@ -238,7 +250,7 @@ export function DrawingToolbar({
         <button
           type="button"
           className={`tv-drawbar-btn${stayInDrawingMode ? ' active' : ''}`}
-          title="그리기 모드 유지"
+          {...tip('그리기 모드 유지', '켜면 그림 하나를 다 그린 뒤에도 같은 도구가 남아 계속 그릴 수 있습니다.', undefined, 'right')}
           aria-label="그리기 모드 유지"
           aria-pressed={stayInDrawingMode}
           onClick={() => onStayChange(!stayInDrawingMode)}
@@ -248,7 +260,7 @@ export function DrawingToolbar({
         <button
           type="button"
           className={`tv-drawbar-btn${locked ? ' active' : ''}`}
-          title="모든 그림 잠금"
+          {...tip('모든 그림 잠금', '그린 선이 실수로 움직이거나 지워지지 않게 모두 고정합니다.', undefined, 'right')}
           aria-label="모든 그림 잠금"
           aria-pressed={locked}
           onClick={() => onLockedChange(!locked)}
@@ -258,7 +270,7 @@ export function DrawingToolbar({
         <button
           type="button"
           className={`tv-drawbar-btn${hidden ? ' active' : ''}`}
-          title="모든 그림 숨기기"
+          {...tip('모든 그림 숨기기', '그린 선을 지우지 않고 모두 안 보이게 합니다.', undefined, 'right')}
           aria-label="모든 그림 숨기기"
           aria-pressed={hidden}
           onClick={() => onHiddenChange(!hidden)}
@@ -271,7 +283,7 @@ export function DrawingToolbar({
             ref={removeRef}
             type="button"
             className="tv-drawbar-btn"
-            title="삭제"
+            {...tip('삭제', '이 종목의 그림이나 지표를 한꺼번에 지웁니다.', undefined, 'right')}
             aria-label="삭제"
             onClick={() => setRemoveOpen(true)}
           >

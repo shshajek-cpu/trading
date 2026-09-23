@@ -5,6 +5,9 @@ import { DATE_RANGES, rangeBounds, type DateRange } from '../lib/dateRanges'
 import { intlZone } from '../lib/timezone'
 import { TimezoneMenu } from './menus/TimezoneMenu'
 import { Icon } from './Icon'
+import { INTERVAL_INFO } from '../lib/intervals'
+import { tip } from '../lib/tooltip'
+import type { ShortcutId } from '../lib/shortcuts'
 
 interface BottomBarProps {
   interval: Interval
@@ -15,6 +18,8 @@ interface BottomBarProps {
   onScaleModeChange: (mode: ScaleMode) => void
   autoScale: boolean
   onAutoScaleChange: (v: boolean) => void
+  /** 툴팁에 보일 단축키(사용자가 바꾼 키 반영). */
+  shortcut: (id: ShortcutId) => string | undefined
 }
 
 function offsetLabel(tz: string): string {
@@ -41,6 +46,7 @@ export function BottomBar({
   onScaleModeChange,
   autoScale,
   onAutoScaleChange,
+  shortcut,
 }: BottomBarProps) {
   const [now, setNow] = useState(() => new Date())
   const [tzOpen, setTzOpen] = useState(false)
@@ -76,6 +82,10 @@ export function BottomBar({
             key={r.id}
             type="button"
             className={`tv-range-btn${isActiveRange(r) ? ' active' : ''}`}
+            {...tip(
+              r.label,
+              `${r.span === 'ytd' ? '올해 1월 1일부터' : r.span === 'all' ? '처음부터 전체를' : `최근 ${r.label}을`} ${INTERVAL_INFO[r.interval].label} 봉으로 봅니다.`,
+            )}
             onClick={() => applyRange(r)}
           >
             {r.label}
@@ -84,7 +94,13 @@ export function BottomBar({
       </div>
 
       <div className="tv-bottom-right">
-        <button ref={clockRef} type="button" className="tv-clock" onClick={() => setTzOpen((v) => !v)}>
+        <button
+          ref={clockRef}
+          type="button"
+          className="tv-clock"
+          {...tip('시간대', '차트 시각을 어느 지역 시간으로 볼지 고릅니다.')}
+          onClick={() => setTzOpen((v) => !v)}
+        >
           <Icon name="clock" size={16} />
           <span className="tv-clock-time">{time}</span>
           <span className="tv-clock-zone">({offsetLabel(timezone)})</span>
@@ -101,7 +117,7 @@ export function BottomBar({
         <button
           type="button"
           className={`tv-scale-btn${scaleMode === 'percent' ? ' active' : ''}`}
-          title="퍼센트 스케일"
+          {...tip('퍼센트 눈금', '가격 축을 화면 첫 봉 대비 % 로 보여 줍니다.', shortcut('togglePercent'))}
           aria-pressed={scaleMode === 'percent'}
           onClick={() => onScaleModeChange(scaleMode === 'percent' ? 'normal' : 'percent')}
         >
@@ -110,7 +126,7 @@ export function BottomBar({
         <button
           type="button"
           className={`tv-scale-btn${scaleMode === 'log' ? ' active' : ''}`}
-          title="로그 스케일"
+          {...tip('로그 눈금', '가격 축을 로그로 — 오르내림을 금액이 아니라 비율로 비교합니다.', shortcut('toggleLog'))}
           aria-pressed={scaleMode === 'log'}
           onClick={() => onScaleModeChange(scaleMode === 'log' ? 'normal' : 'log')}
         >
@@ -119,7 +135,7 @@ export function BottomBar({
         <button
           type="button"
           className={`tv-scale-btn${autoScale ? ' active' : ''}`}
-          title="자동 스케일"
+          {...tip('자동 눈금', '보이는 봉에 맞춰 가격 축 범위를 자동으로 맞춥니다. 끄면 축을 끌어 직접 조절합니다.')}
           aria-pressed={autoScale}
           onClick={() => onAutoScaleChange(!autoScale)}
         >

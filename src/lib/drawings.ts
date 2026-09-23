@@ -85,6 +85,8 @@ export const DRAWING_LABELS: Record<DrawingKind, string> = {
 export interface ToolItem {
   tool: DrawingKind | CursorTool
   label: string
+  /** 툴팁에 보일 한 줄 설명. */
+  desc: string
 }
 
 /** 플라이아웃 안의 한 구획(예: 선, 채널). */
@@ -108,10 +110,10 @@ export const TOOL_GROUPS: ToolGroup[] = [
     sections: [
       {
         items: [
-          { tool: 'cross', label: '십자선' },
-          { tool: 'dot', label: '점' },
-          { tool: 'arrow', label: '화살표' },
-          { tool: 'eraser', label: '지우개' },
+          { tool: 'cross', label: '십자선', desc: '기본 커서. 끌어서 차트를 옮기고, 십자선으로 가격·시각을 읽습니다.' },
+          { tool: 'dot', label: '점', desc: '십자선 대신 작은 점 커서를 씁니다.' },
+          { tool: 'arrow', label: '화살표', desc: '십자선 없이 보통 화살표 커서를 씁니다.' },
+          { tool: 'eraser', label: '지우개', desc: '누른 그림을 지웁니다.' },
         ],
       },
     ],
@@ -123,20 +125,20 @@ export const TOOL_GROUPS: ToolGroup[] = [
       {
         title: '선',
         items: [
-          { tool: 'trend', label: '추세선' },
-          { tool: 'ray', label: '레이' },
-          { tool: 'infoLine', label: '정보 라인' },
-          { tool: 'extended', label: '연장 라인' },
-          { tool: 'trendAngle', label: '추세 각도' },
-          { tool: 'horizontal', label: '수평선' },
-          { tool: 'horizontalRay', label: '수평 레이' },
-          { tool: 'vertical', label: '수직선' },
-          { tool: 'crossLine', label: '교차선' },
+          { tool: 'trend', label: '추세선', desc: '두 점을 찍어 선을 긋습니다.' },
+          { tool: 'ray', label: '레이', desc: '첫 점에서 두 번째 점 쪽으로 끝없이 뻗는 선입니다.' },
+          { tool: 'infoLine', label: '정보 라인', desc: '추세선에 가격 변화·봉 수·각도를 함께 표시합니다.' },
+          { tool: 'extended', label: '연장 라인', desc: '두 점을 지나 양쪽으로 끝없이 뻗는 선입니다.' },
+          { tool: 'trendAngle', label: '추세 각도', desc: '추세선에 기울기 각도를 표시합니다.' },
+          { tool: 'horizontal', label: '수평선', desc: '한 가격에 가로선을 긋습니다. 가격이 지나가면 알림을 걸 수 있습니다.' },
+          { tool: 'horizontalRay', label: '수평 레이', desc: '찍은 점에서 오른쪽으로만 뻗는 가로선입니다.' },
+          { tool: 'vertical', label: '수직선', desc: '한 시각에 세로선을 긋습니다.' },
+          { tool: 'crossLine', label: '교차선', desc: '한 점을 지나는 가로선과 세로선을 함께 긋습니다.' },
         ],
       },
       {
         title: '채널',
-        items: [{ tool: 'parallelChannel', label: '평행 채널' }],
+        items: [{ tool: 'parallelChannel', label: '평행 채널', desc: '추세선과 나란한 선을 하나 더 그어 채널을 만듭니다.' }],
       },
     ],
   },
@@ -145,7 +147,13 @@ export const TOOL_GROUPS: ToolGroup[] = [
     label: '피보나치',
     sections: [
       {
-        items: [{ tool: 'fibRetracement', label: '피보나치 되돌림' }],
+        items: [
+          {
+            tool: 'fibRetracement',
+            label: '피보나치 되돌림',
+            desc: '두 점 사이에 0.236·0.382·0.5·0.618·0.786 되돌림 가격선을 긋습니다.',
+          },
+        ],
       },
     ],
   },
@@ -155,10 +163,10 @@ export const TOOL_GROUPS: ToolGroup[] = [
     sections: [
       {
         items: [
-          { tool: 'rectangle', label: '사각형' },
-          { tool: 'ellipse', label: '타원' },
-          { tool: 'triangle', label: '삼각형' },
-          { tool: 'brush', label: '브러시' },
+          { tool: 'rectangle', label: '사각형', desc: '가격·시간 구간을 사각형으로 표시합니다.' },
+          { tool: 'ellipse', label: '타원', desc: '구간을 타원으로 표시합니다.' },
+          { tool: 'triangle', label: '삼각형', desc: '세 점을 찍어 삼각형을 그립니다.' },
+          { tool: 'brush', label: '브러시', desc: '누른 채 끌어 자유롭게 그립니다.' },
         ],
       },
     ],
@@ -169,10 +177,10 @@ export const TOOL_GROUPS: ToolGroup[] = [
     sections: [
       {
         items: [
-          { tool: 'text', label: '텍스트' },
-          { tool: 'arrowLine', label: '화살표' },
-          { tool: 'arrowMarkUp', label: '위 화살표 표시' },
-          { tool: 'arrowMarkDown', label: '아래 화살표 표시' },
+          { tool: 'text', label: '텍스트', desc: '차트에 글자를 적습니다.' },
+          { tool: 'arrowLine', label: '화살표', desc: '두 점을 잇는 화살표를 그립니다.' },
+          { tool: 'arrowMarkUp', label: '위 화살표 표시', desc: '봉 아래에 위쪽 화살표 표시를 붙입니다.' },
+          { tool: 'arrowMarkDown', label: '아래 화살표 표시', desc: '봉 위에 아래쪽 화살표 표시를 붙입니다.' },
         ],
       },
     ],
@@ -183,11 +191,11 @@ export const TOOL_GROUPS: ToolGroup[] = [
     sections: [
       {
         items: [
-          { tool: 'longPosition', label: '롱 포지션' },
-          { tool: 'shortPosition', label: '숏 포지션' },
-          { tool: 'priceRange', label: '가격 범위' },
-          { tool: 'dateRange', label: '날짜 범위' },
-          { tool: 'datePriceRange', label: '날짜와 가격 범위' },
+          { tool: 'longPosition', label: '롱 포지션', desc: '매수 진입가·목표가·손절가를 정해 손익과 손익비를 봅니다.' },
+          { tool: 'shortPosition', label: '숏 포지션', desc: '매도 진입가·목표가·손절가를 정해 손익과 손익비를 봅니다.' },
+          { tool: 'priceRange', label: '가격 범위', desc: '두 가격 사이의 차이와 % 를 잽니다.' },
+          { tool: 'dateRange', label: '날짜 범위', desc: '두 시각 사이의 기간과 봉 수를 잽니다.' },
+          { tool: 'datePriceRange', label: '날짜와 가격 범위', desc: '가격 차이·% 와 기간·봉 수를 함께 잽니다.' },
         ],
       },
     ],

@@ -44,6 +44,7 @@ import { makeTickFormatter, makeTimeFormatter, formatCountdown, formatPrice, pri
 import { BandFillPrimitive } from '../chart/bandFill'
 import { ColumnHighlightPrimitive } from '../chart/columnHighlight'
 import type { ComputedIndicator } from '../chart/compute'
+import { tip } from '../lib/tooltip'
 
 /** 오실레이터 패널의 상단 y 좌표 — ChartCell 이 그 자리에 범례 줄을 놓는다. */
 export interface PaneInfo {
@@ -1074,7 +1075,7 @@ export function Chart({
           type="button"
           className="scroll-realtime-btn"
           style={realtimeBtn}
-          title="최근 봉으로"
+          {...tip('최근 봉으로', '과거로 옮겨 본 차트를 가장 최근 봉으로 되돌립니다.', undefined, 'left')}
           aria-label="최근 봉으로"
           onClick={() => chartRef.current?.timeScale().scrollToRealTime()}
         >

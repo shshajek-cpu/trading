@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react'
 import { WIDGET_TABS, type WidgetId } from '../lib/widgets'
 import { Icon } from './Icon'
+import { tip } from '../lib/tooltip'
 
 interface WidgetBarProps {
   open: WidgetId | null
@@ -19,7 +20,7 @@ export function WidgetBar({ open, onToggle, alertCount, children }: WidgetBarPro
             key={t.id}
             type="button"
             className={`tv-widget-tab${open === t.id ? ' active' : ''}`}
-            title={t.label}
+            {...tip(t.label, t.desc, undefined, 'left')}
             aria-label={t.label}
             aria-pressed={open === t.id}
             onClick={() => onToggle(t.id)}

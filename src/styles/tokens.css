@@ -73,6 +73,9 @@
   --tv-fs-sm: 13px;
   --tv-fs-xs: 11px;
 
+  /* Tooltip — dark in both themes (TradingView). */
+  --tv-tooltip-bg: #2a2e39;
+
   /* Geometry — desktop */
   --tv-toolbar-h: 38px; /* top toolbar */
   --tv-left-w: 52px; /* drawing toolbar */
