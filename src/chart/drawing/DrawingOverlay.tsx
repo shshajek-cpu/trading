@@ -665,7 +665,13 @@ export function DrawingOverlay(props: DrawingOverlayProps) {
       const coords = coordsOf()
       const inMain = p.y <= pane.height
       if (inMain && !l.hidden) {
-        const picked = pickDrawing(l.drawings, coords, p, pane.width, pane.height)
+        // 저장된 그림 하나가 깨져 있어도 메뉴는 떠야 한다 — 그때는 차트 메뉴로 넘어간다.
+        let picked: ReturnType<typeof pickDrawing> = null
+        try {
+          picked = pickDrawing(l.drawings, coords, p, pane.width, pane.height)
+        } catch {
+          picked = null
+        }
         if (picked) {
           if (l.enabled) setSelectedId(picked.drawing.id)
           request({ ...at, target: { kind: 'drawing', drawingId: picked.drawing.id } })
