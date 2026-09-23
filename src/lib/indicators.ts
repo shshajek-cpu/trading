@@ -213,6 +213,32 @@ export function volumeTiers(
   return out
 }
 
+/**
+ * 거래량 급증 강도(σ): 이번 봉 거래량이 직전 `length` 봉 평균에서 표준편차 몇 개만큼 튀었는지.
+ *
+ * 배율(몇 배)보다 종목·시간대의 평소 출렁임을 반영한다 — 늘 들쭉날쭉한 종목은 웬만큼 튀어도
+ * 낮게, 늘 잔잔한 종목은 조금만 튀어도 높게 나온다. 평균·편차는 자기 자신을 뺀 구간으로 낸다
+ * (급증한 봉이 섞이면 스스로를 희석한다). 거래량 제곱은 부동소수 오차가 커서 구간마다 다시 센다.
+ */
+export function volumeZScores<T>(candles: VolumeCandle<T>[], length: number): LinePoint<T>[] {
+  const n = Math.floor(length)
+  if (!Number.isFinite(n) || n < 2 || candles.length <= n) return []
+  const out: LinePoint<T>[] = []
+  for (let i = n; i < candles.length; i++) {
+    let sum = 0
+    for (let j = i - n; j < i; j++) sum += candles[j].volume
+    const mean = sum / n
+    let sq = 0
+    for (let j = i - n; j < i; j++) {
+      const d = candles[j].volume - mean
+      sq += d * d
+    }
+    const std = Math.sqrt(sq / n)
+    out.push({ time: candles[i].time, value: std > 0 ? (candles[i].volume - mean) / std : 0 })
+  }
+  return out
+}
+
 /* ────────────────────────────────────────────────────────────────────────
    추가 지표들. 모두 순수 함수 — 같은 입력이면 같은 출력, 부수효과 없음.
    시간 타입 T 는 호출측이 정한다(앱은 초 단위 number 를 쓴다).

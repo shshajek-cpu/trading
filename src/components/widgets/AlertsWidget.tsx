@@ -1,6 +1,15 @@
 import { useState } from 'react'
 import type { AlertCondition, PriceAlert } from '../../hooks/usePriceAlerts'
 import type { Drawing } from '../../lib/drawings'
+import type { Interval } from '../../lib/binance'
+import type { IndicatorInstance } from '../../lib/indicatorConfig'
+import { INTERVAL_INFO } from '../../lib/intervals'
+import {
+  describeIndicatorAlert,
+  TRIGGER_LABELS,
+  type IndicatorAlert,
+  type NewIndicatorAlert,
+} from '../../lib/indicatorAlerts'
 import { Icon } from '../Icon'
 import { PushBox, type PushProps } from '../PushBox'
 import { CreateAlertDialog } from '../CreateAlertDialog'
@@ -17,6 +26,12 @@ interface AlertsWidgetProps {
   onAdd: (symbol: string, condition: AlertCondition, price: number, message?: string) => void
   onRemove: (id: string) => void
   onDisableLineAlert: (id: string) => void
+  indicatorAlerts: IndicatorAlert[]
+  onRemoveIndicatorAlert: (id: string) => void
+  /** 지표 알림을 만들 때 쓰는 지금 차트의 주기·지표. */
+  interval: Interval
+  indicators: IndicatorInstance[]
+  onAddIndicatorAlert: (alert: NewIndicatorAlert) => void
   permission: NotificationPermission | 'unsupported'
   push: PushProps
   hasSyncCode: boolean
@@ -38,6 +53,11 @@ export function AlertsWidget({
   onAdd,
   onRemove,
   onDisableLineAlert,
+  indicatorAlerts,
+  onRemoveIndicatorAlert,
+  interval,
+  indicators,
+  onAddIndicatorAlert,
   permission,
   push,
   hasSyncCode,
@@ -98,8 +118,39 @@ export function AlertsWidget({
               </li>
             )
           })}
-          {alerts.length === 0 && <li className="aw-empty">등록된 알림이 없습니다.</li>}
+          {alerts.length === 0 && indicatorAlerts.length === 0 && <li className="aw-empty">등록된 알림이 없습니다.</li>}
         </ul>
+
+        {indicatorAlerts.length > 0 && (
+          <div className="aw-section">
+            <p className="aw-section-title">지표 알림 · 앱이 열려 있을 때</p>
+            <ul className="aw-rows">
+              {indicatorAlerts.map((a) => (
+                <li key={a.id} className={`aw-row${a.active ? '' : ' fired'}`}>
+                  <span className="aw-dir">
+                    <ToolIcon name="indicator" size={18} />
+                  </span>
+                  <div className="aw-main">
+                    <span className="aw-sym">
+                      {displaySymbol(a.symbol, symbols)} · {INTERVAL_INFO[a.interval].short}
+                    </span>
+                    <span className="aw-cond">{describeIndicatorAlert(a)}</span>
+                    <span className="aw-msg">{TRIGGER_LABELS[a.trigger]}</span>
+                  </div>
+                  <span className={`aw-status${a.active ? '' : ' fired'}`}>{a.active ? '활성' : '발동됨'}</span>
+                  <button
+                    type="button"
+                    className="tv-icon-btn aw-remove"
+                    aria-label="지표 알림 지우기"
+                    onClick={() => onRemoveIndicatorAlert(a.id)}
+                  >
+                    <Icon name="close" size={15} />
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
 
         {lineAlerts.length > 0 && (
           <div className="aw-section">
@@ -141,6 +192,9 @@ export function AlertsWidget({
         symbol={symbol}
         livePrice={livePrice}
         onCreate={onAdd}
+        interval={interval}
+        indicators={indicators}
+        onCreateIndicatorAlert={onAddIndicatorAlert}
       />
     </section>
   )

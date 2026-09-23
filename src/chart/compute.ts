@@ -25,6 +25,7 @@ import {
   stochRsi,
   stochastic,
   vwap,
+  volumeZScores,
   vwma,
   williamsR,
   wma,
@@ -37,7 +38,7 @@ import {
   type IndicatorKind,
 } from '../lib/indicatorConfig'
 
-export type LegendFormat = 'price' | 'fixed2' | 'volume'
+export type LegendFormat = 'price' | 'fixed2' | 'volume' | 'sigma'
 
 export interface PlotLine {
   key: string
@@ -55,6 +56,10 @@ export interface PlotLine {
   /** 이 값이 있으면 범례에 그 라벨로 표시한다. */
   legendLabel?: string
   legendFormat?: LegendFormat
+  /** 차트에 그리지 않고 범례·알림에만 쓰는 값(예: 거래량 급증 강도). */
+  hidden?: boolean
+  /** 알림 창에서 고르는 이름. 없으면 PLOT_NAMES 로 정한다. */
+  name?: string
 }
 
 export interface LevelLine {
@@ -73,6 +78,8 @@ export interface ComputedIndicator {
   levels: LevelLine[]
   /** 두 값 사이를 옅게 채우는 밴드(예: RSI 70/30). */
   band?: { top: number; bottom: number; color: string }
+  /** 패널 배경을 봉 단위로 옅게 칠하는 구간(예: 거래량 급증 봉). */
+  highlights?: { time: number; color: string }[]
 }
 
 
@@ -132,6 +139,39 @@ export function computeIndicator(
         },
       ]
       break
+    case 'volumeSpike': {
+      // 평소 거래량은 방향색으로 옅게, 급증 단계(σ)에 따라 형광색으로 올린다.
+      const z = volumeZScores(candles, p.length)
+      const zAt = new Map(z.map((pt) => [pt.time, pt.value]))
+      const colors = candles.map((k) => {
+        const s = zAt.get(k.time)
+        const up = k.close >= k.open
+        if (s !== undefined && s >= p.extreme) return c[0]
+        if (s !== undefined && s >= p.high) return c[1]
+        if (s !== undefined && s >= p.medium) return up ? c[2] : c[3]
+        return up ? `${palette.up}b3` : `${palette.down}b3`
+      })
+      base.lines = [
+        {
+          key: 'vol',
+          type: 'histogram',
+          points: candles.map((k) => ({ time: k.time, value: k.volume })),
+          color: palette.up,
+          colors,
+          legendLabel: 'Vol',
+          legendFormat: 'volume',
+        },
+        { key: 'z', type: 'line', points: z, color: c[0], hidden: true, legendLabel: '강도', legendFormat: 'sigma' },
+      ]
+      if (p.background !== 0) {
+        base.highlights = candles.flatMap((k) => {
+          const s = zAt.get(k.time)
+          if (s === undefined || s < p.backgroundAt) return []
+          return [{ time: k.time, color: k.close >= k.open ? `${palette.up}33` : `${palette.down}33` }]
+        })
+      }
+      break
+    }
     case 'sma':
     case 'ema':
     case 'wma':
@@ -283,8 +323,50 @@ export function indicatorLegend(
     if (!point) point = line.points[line.points.length - 1]
     if (!point) continue
     const fmt = line.legendFormat ?? 'fixed2'
-    const text = fmt === 'volume' ? formatVolume(point.value) : fmt === 'price' ? formatPrice(point.value) : point.value.toFixed(2)
+    const text =
+      fmt === 'volume'
+        ? formatVolume(point.value)
+        : fmt === 'price'
+          ? formatPrice(point.value)
+          : fmt === 'sigma'
+            ? `${point.value.toFixed(1)}σ`
+            : point.value.toFixed(2)
     out.push({ label: line.legendLabel || undefined, text, color: line.color })
   }
   return out
+}
+
+/** 알림 창에 보여 줄 선 이름(선 key → 한국어). */
+const PLOT_NAMES: Record<string, string> = {
+  vol: '거래량',
+  z: '급증 강도 (σ)',
+  ma: '값',
+  basis: '기준선',
+  upper: '상단',
+  lower: '하단',
+  vwap: 'VWAP',
+  tenkan: '전환선',
+  kijun: '기준선',
+  spanA: '선행 스팬 A',
+  spanB: '선행 스팬 B',
+  chikou: '후행 스팬',
+  sar: 'SAR',
+  rsi: 'RSI',
+  hist: '히스토그램',
+  macd: 'MACD',
+  signal: '시그널',
+  k: '%K',
+  d: '%D',
+  atr: 'ATR',
+  cci: 'CCI',
+  obv: 'OBV',
+  wr: '%R',
+  mfi: 'MFI',
+  adx: 'ADX',
+  plus: '+DI',
+  minus: '-DI',
+}
+
+export function plotName(line: PlotLine): string {
+  return line.name ?? PLOT_NAMES[line.key] ?? line.key
 }

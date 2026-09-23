@@ -7,6 +7,7 @@ import { notifySettingsChanged } from './syncBus'
  */
 export type IndicatorKind =
   | 'volume'
+  | 'volumeSpike'
   | 'sma'
   | 'ema'
   | 'wma'
@@ -83,6 +84,23 @@ export const INDICATOR_DEFS: Record<IndicatorKind, IndicatorDef> = {
       { key: 'high', label: '급증 3단계 배율', default: 5, min: 1, max: 30, step: 0.1 },
     ],
     colors: [],
+  },
+  volumeSpike: {
+    kind: 'volumeSpike',
+    name: '거래량 급증',
+    shortName: 'Vol 급증',
+    overlay: false,
+    category: '거래량',
+    params: [
+      { key: 'length', label: '평균·편차 구간', default: 100, min: 10, max: 1000, step: 1 },
+      { key: 'extreme', label: '폭발 기준 (σ)', default: 4, min: 0.5, max: 20, step: 0.1 },
+      { key: 'high', label: '강함 기준 (σ)', default: 2.5, min: 0.5, max: 20, step: 0.1 },
+      { key: 'medium', label: '보통 기준 (σ)', default: 1, min: 0.1, max: 20, step: 0.1 },
+      { key: 'background', label: '배경 강조', default: 1, min: 0, max: 1, kind: 'flag' },
+      { key: 'backgroundAt', label: '배경 강조 기준 (σ)', default: 2.5, min: 0.1, max: 20, step: 0.1 },
+    ],
+    colors: ['#ff4fa3', '#fff59d', '#2ee88f', '#ff5c5c'],
+    colorLabels: ['폭발', '강함', '보통 (상승)', '보통 (하락)'],
   },
   sma: {
     kind: 'sma',
@@ -339,6 +357,8 @@ export function indicatorTitle(i: IndicatorInstance): string {
   switch (i.kind) {
     case 'volume':
       return 'Vol'
+    case 'volumeSpike':
+      return `${def.shortName} ${p.length}`
     case 'sma':
     case 'ema':
     case 'wma':
@@ -400,6 +420,11 @@ function normalize(i: IndicatorInstance): IndicatorInstance {
   }
   const colors = def.colors.map((c, idx) => (typeof i.colors[idx] === 'string' ? i.colors[idx] : c))
   return { id: i.id, kind: i.kind, params, colors, visible: i.visible }
+}
+
+/** 밖에서 받은 값(알림에 저장해 둔 지표 사본 등)을 검증·보정한다. 쓸 수 없으면 null. */
+export function toIndicatorInstance(v: unknown): IndicatorInstance | null {
+  return isInstance(v) ? normalize(v) : null
 }
 
 interface LegacyMa {

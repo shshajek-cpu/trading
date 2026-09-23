@@ -8,6 +8,7 @@ const SYNCED_KEYS = [
   'trading.indicatorTemplates.v1',
   'trading.drawings.v2',
   'trading.priceAlerts.v1',
+  'trading.indicatorAlerts.v1',
   'trading.panes.v1',
   'trading.chartSettings.v1',
   'trading.watchlist.v1',

@@ -595,6 +595,13 @@
   font-size: var(--tv-fs-sm);
 }
 
+.ca-note {
+  margin: 0;
+  color: var(--tv-text-dim);
+  font-size: var(--tv-fs-sm);
+  line-height: 1.5;
+}
+
 /* ── 코인 아이콘 ── */
 .coin-icon {
   flex: none;

@@ -37,6 +37,8 @@ import { DiscoverPanel } from './components/DiscoverPanel'
 import { MtfPanel } from './components/MtfPanel'
 
 import { usePriceAlerts, type PriceAlert, type AlertCondition } from './hooks/usePriceAlerts'
+import { useIndicatorAlerts } from './hooks/useIndicatorAlerts'
+import { describeIndicatorAlert, formatAlertValue, type IndicatorAlert } from './lib/indicatorAlerts'
 import { useNotifications } from './hooks/useNotifications'
 import { useSymbols } from './hooks/useSymbols'
 import { usePipWindow } from './hooks/usePipWindow'
@@ -119,6 +121,8 @@ function App() {
   const [goToOpen, setGoToOpen] = useState(false)
   /** 우클릭 "…에 알림 추가"가 정한 가격. 단축키·툴바로 열면 null(현재가). */
   const [alertPrice, setAlertPrice] = useState<number | null>(null)
+  /** 범례 🔔 로 열면 그 지표를 미리 고른다. */
+  const [alertIndicatorId, setAlertIndicatorId] = useState<string | null>(null)
   const [chartMenu, setChartMenu] = useState<(ChartMenuRequest & { cellIndex: number }) | null>(null)
   /** 칸별 "시간 기준 세로 커서 고정" 시각. */
   const [cursorLocks, setCursorLocks] = useState<Record<number, number | null>>({})
@@ -173,6 +177,19 @@ function App() {
     [notify, pushToast],
   )
   const { alerts, addAlert, removeAlert, checkPrice } = usePriceAlerts(handleTrigger)
+
+  // indicator alerts (브라우저에서 지표 값을 계산해 판정한다)
+  const handleIndicatorFire = useCallback(
+    (alert: IndicatorAlert, value: number) => {
+      const message =
+        alert.message ||
+        `${alert.symbol} ${alert.interval} ${describeIndicatorAlert(alert)} (현재 ${formatAlertValue(value)})`
+      notify('지표 알림', message)
+      pushToast(message)
+    },
+    [notify, pushToast],
+  )
+  const indicatorAlerts = useIndicatorAlerts(handleIndicatorFire)
 
   // line-cross alerts
   const handleCross = useCallback(
@@ -391,6 +408,13 @@ function App() {
 
   const openAlertAt = (price: number | null) => {
     setAlertPrice(price)
+    setAlertIndicatorId(null)
+    setAlertOpen(true)
+  }
+
+  const openIndicatorAlert = (instanceId: string) => {
+    setAlertPrice(null)
+    setAlertIndicatorId(instanceId)
     setAlertOpen(true)
   }
 
@@ -645,7 +669,10 @@ function App() {
     }
   }
 
-  const alertBadge = alerts.filter((a) => a.active).length + drawings.filter((d) => d.alert).length
+  const alertBadge =
+    alerts.filter((a) => a.active).length +
+    drawings.filter((d) => d.alert).length +
+    indicatorAlerts.alerts.filter((a) => a.active).length
 
   // Indicators mapped for the object tree.
   const indicatorRows = useMemo(
@@ -707,6 +734,7 @@ function App() {
         onActivate={() => setActive(index)}
         onPrice={handlePrice}
         onContextMenu={(req) => setChartMenu({ ...req, cellIndex: index })}
+        onIndicatorAlert={openIndicatorAlert}
       />
       </ErrorBoundary>
     )
@@ -748,6 +776,11 @@ function App() {
             onAdd={(symbol, condition, price, message) => addAlert(symbol, condition, price, message)}
             onRemove={removeAlert}
             onDisableLineAlert={(lineId) => updateDrawing(lineId, { alert: false })}
+            indicatorAlerts={indicatorAlerts.alerts}
+            onRemoveIndicatorAlert={indicatorAlerts.removeAlert}
+            interval={activeCell.interval}
+            indicators={indicators}
+            onAddIndicatorAlert={indicatorAlerts.addAlert}
             permission={permission}
             push={push}
             hasSyncCode={Boolean(sync.code)}
@@ -909,10 +942,15 @@ function App() {
         onClose={() => {
           setAlertOpen(false)
           setAlertPrice(null)
+          setAlertIndicatorId(null)
         }}
         symbol={activeSymbol}
         livePrice={livePrice}
         initialPrice={alertPrice}
+        interval={activeCell.interval}
+        indicators={indicators}
+        initialIndicatorId={alertIndicatorId}
+        onCreateIndicatorAlert={indicatorAlerts.addAlert}
         onCreate={(symbol: string, condition: AlertCondition, price: number, message?: string) =>
           addAlert(symbol, condition, price, message)
         }

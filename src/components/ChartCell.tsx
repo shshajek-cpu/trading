@@ -78,10 +78,12 @@ export interface ChartCellProps {
   gridStyle?: React.CSSProperties
   /** 우클릭 메뉴 요청. PiP 창처럼 메뉴가 없는 곳은 넘기지 않는다. */
   onContextMenu?: (req: ChartMenuRequest) => void
+  /** 범례의 🔔 — 그 지표로 알림 만들기. */
+  onIndicatorAlert?: (instanceId: string) => void
 }
 
 /** 범례 조작용 소형 아이콘(직접 그린 SVG). */
-function Ctl({ name }: { name: 'eye' | 'eyeOff' | 'gear' | 'trash' | 'caret' | 'close' }) {
+function Ctl({ name }: { name: 'eye' | 'eyeOff' | 'gear' | 'trash' | 'caret' | 'close' | 'bell' }) {
   const p: Record<typeof name, string> = {
     eye: 'M8 3.5C4.5 3.5 2 8 2 8s2.5 4.5 6 4.5S14 8 14 8 11.5 3.5 8 3.5Zm0 7A2.5 2.5 0 1 1 8 5.5a2.5 2.5 0 0 1 0 5Z',
     eyeOff: 'M2 2l12 12M6 6.2A2.5 2.5 0 0 0 9.8 9.8M8 3.5c3.5 0 6 4.5 6 4.5a12 12 0 0 1-1.8 2.3M4 4.6A12 12 0 0 0 2 8s2.5 4.5 6 4.5',
@@ -89,8 +91,9 @@ function Ctl({ name }: { name: 'eye' | 'eyeOff' | 'gear' | 'trash' | 'caret' | '
     trash: 'M5 3V2h6v1h3v1.5H2V3h3Zm-1 3h8l-.6 8H4.6L4 6Z',
     caret: 'M4 6l4 4 4-4',
     close: 'M3 3l10 10M13 3 3 13',
+    bell: 'M8 2.5a3.5 3.5 0 0 0-3.5 3.5v2.6L3 11h10l-1.5-2.4V6A3.5 3.5 0 0 0 8 2.5ZM6.6 12.8a1.5 1.5 0 0 0 2.8 0',
   }
-  const stroke = name === 'caret' || name === 'close' || name === 'eyeOff'
+  const stroke = name === 'caret' || name === 'close' || name === 'eyeOff' || name === 'bell'
   return (
     <svg viewBox="0 0 16 16" width={14} height={14} aria-hidden="true">
       <path d={p[name]} fill={stroke ? 'none' : 'currentColor'} stroke={stroke ? 'currentColor' : 'none'} strokeWidth={1.4} strokeLinecap="round" strokeLinejoin="round" />
@@ -139,6 +142,7 @@ export function ChartCell({
   onPrice,
   gridStyle,
   onContextMenu,
+  onIndicatorAlert,
 }: ChartCellProps) {
   const [liveCandle, setLiveCandle] = useState<Candle | null>(null)
   const [hoverTime, setHoverTime] = useState<number | null>(null)
@@ -322,15 +326,24 @@ export function ChartCell({
 
   const palette = CHART_PALETTES[settings.theme]
 
-  // 지표 계산 — 캔들 수가 바뀔 때만(요건: ≤1/s 스로틀). 값은 참조가 아니라 개수로 감시.
-  const candleCount = chartCandles.length
+  // 지표 계산: 봉 수·첫 봉이 바뀌면(새 봉·과거 불러오기·리플레이) 바로, 진행 중인 봉은 1초에 한 번
+  // 다시 계산한다(요건: ≤1/s). 거래량 급증처럼 봉이 끝나기 전에 보여야 하는 지표가 실시간으로 따라간다.
+  const [indicatorCandles, setIndicatorCandles] = useState(chartCandles)
+  if (chartCandles.length !== indicatorCandles.length || chartCandles[0]?.time !== indicatorCandles[0]?.time) {
+    setIndicatorCandles(chartCandles)
+  }
+  const liveCandlesRef = useRef(chartCandles)
+  liveCandlesRef.current = chartCandles
+  useEffect(() => {
+    const timer = window.setInterval(() => setIndicatorCandles(liveCandlesRef.current), 1000)
+    return () => window.clearInterval(timer)
+  }, [])
   const computed = useMemo<ComputedIndicator[]>(
     () =>
       indicators
         .filter((i) => i.visible)
-        .map((i) => computeIndicator(i, chartCandles, palette)),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [candleCount, indicators, palette, symbol, interval, chartType],
+        .map((i) => computeIndicator(i, indicatorCandles, palette)),
+    [indicatorCandles, indicators, palette],
   )
   const computedById = useMemo(() => {
     const map: Record<string, ComputedIndicator> = {}
@@ -443,6 +456,11 @@ export function ChartCell({
           <button type="button" title="설정" onClick={() => setSettingsFor(inst.id)}>
             <Ctl name="gear" />
           </button>
+          {onIndicatorAlert && (
+            <button type="button" title="이 지표에 알림 추가" onClick={() => onIndicatorAlert(inst.id)}>
+              <Ctl name="bell" />
+            </button>
+          )}
           <button type="button" title="삭제" onClick={() => removeIndicator(inst.id)}>
             <Ctl name="trash" />
           </button>

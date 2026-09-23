@@ -42,6 +42,7 @@ import {
 } from '../chart/series'
 import { makeTickFormatter, makeTimeFormatter, formatCountdown, formatPrice, priceFormatter } from '../chart/format'
 import { BandFillPrimitive } from '../chart/bandFill'
+import { ColumnHighlightPrimitive } from '../chart/columnHighlight'
 import type { ComputedIndicator } from '../chart/compute'
 
 /** 오실레이터 패널의 상단 y 좌표 — ChartCell 이 그 자리에 범례 줄을 놓는다. */
@@ -177,6 +178,7 @@ export function Chart({
   const indicatorSeriesRef = useRef(new Map<string, ISeriesApi<'Line'> | ISeriesApi<'Histogram'>>())
   const indicatorLevelsRef = useRef(new Map<string, IPriceLine[]>())
   const bandPrimsRef = useRef(new Map<string, BandFillPrimitive>())
+  const highlightPrimsRef = useRef(new Map<string, ColumnHighlightPrimitive>())
   const compositionRef = useRef<string>('')
   const compareSeriesRef = useRef(new Map<string, ISeriesApi<'Line'>>())
   const alertLinesRef = useRef(new Map<string, IPriceLine>())
@@ -446,6 +448,7 @@ export function Chart({
       // 시리즈를 지우면 그 위 price line·프리미티브도 함께 사라지므로 맵만 비운다.
       levels.clear()
       bandPrimsRef.current.clear()
+      highlightPrimsRef.current.clear()
       compositionRef.current = composition
     }
 
@@ -458,6 +461,8 @@ export function Chart({
       const pane = paneOf(comp)
       let firstSeries: ISeriesApi<'Line'> | ISeriesApi<'Histogram'> | null = null
       for (const line of comp.lines) {
+        // 범례·알림 전용 값은 그리지 않는다.
+        if (line.hidden) continue
         const key = `${comp.instanceId}:${line.key}`
         let series = store.get(key)
         if (!series) {
@@ -468,7 +473,8 @@ export function Chart({
                 priceLineVisible: false,
                 lastValueVisible: false,
                 priceScaleId: line.priceScaleId,
-                priceFormat: line.priceScaleId === 'volume' ? { type: 'volume' } : undefined,
+                priceFormat:
+                  line.priceScaleId === 'volume' || line.legendFormat === 'volume' ? { type: 'volume' } : undefined,
               },
               pane,
             )
@@ -541,11 +547,28 @@ export function Chart({
         firstSeries.detachPrimitive(existingBand)
         bands.delete(comp.instanceId)
       }
+
+      // 봉 단위 배경 강조(예: 거래량 급증) — 첫 시리즈 패널 뒤에 그린다.
+      const highlights = highlightPrimsRef.current
+      const existingHighlight = highlights.get(comp.instanceId)
+      if (comp.highlights && firstSeries) {
+        if (existingHighlight) existingHighlight.setColumns(comp.highlights)
+        else {
+          const prim = new ColumnHighlightPrimitive(comp.highlights)
+          firstSeries.attachPrimitive(prim)
+          highlights.set(comp.instanceId, prim)
+        }
+      } else if (existingHighlight && firstSeries) {
+        firstSeries.detachPrimitive(existingHighlight)
+        highlights.delete(comp.instanceId)
+      }
     }
 
     // 사라진 지표 시리즈 제거.
     const wanted = new Set<string>()
-    for (const comp of indicators) for (const line of comp.lines) wanted.add(`${comp.instanceId}:${line.key}`)
+    for (const comp of indicators) {
+      for (const line of comp.lines) if (!line.hidden) wanted.add(`${comp.instanceId}:${line.key}`)
+    }
     for (const [key, series] of store) {
       if (!wanted.has(key)) {
         chart.removeSeries(series)

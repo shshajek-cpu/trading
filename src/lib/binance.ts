@@ -205,6 +205,15 @@ export function klineStreamUrl(symbol: string, interval: Interval): string {
   return `${MARKET_WS}${s}@kline_${interval}/${s}@aggTrade`
 }
 
+/** 봉만 여러 개 받는 결합 스트림(지표 알림 감시용). 메시지의 stream 이름은 `btcusdt@kline_1m` 꼴. */
+export function klineStreamName(symbol: string, interval: Interval): string {
+  return `${toStreamSymbol(symbol)}@kline_${interval}`
+}
+
+export function combinedKlineStreamUrl(streams: string[]): string {
+  return `${MARKET_WS}${streams.join('/')}`
+}
+
 /** 결합 스트림 메시지 포장. */
 export interface CombinedStreamMessage<T> {
   stream: string

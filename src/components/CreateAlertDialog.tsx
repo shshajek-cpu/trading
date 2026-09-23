@@ -1,8 +1,24 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Dialog } from './ui/Dialog'
 import type { AlertCondition } from '../hooks/usePriceAlerts'
 import { useSymbols } from '../hooks/useSymbols'
 import { displaySymbol, priceDecimals } from '../lib/symbols'
+import type { Interval } from '../lib/binance'
+import { INTERVAL_INFO } from '../lib/intervals'
+import { indicatorTitle, type IndicatorInstance } from '../lib/indicatorConfig'
+import { computeIndicator, plotName } from '../chart/compute'
+import { CHART_PALETTES } from '../lib/theme'
+import {
+  CONDITION_LABELS,
+  CONDITION_ORDER,
+  TRIGGER_LABELS,
+  TRIGGER_ORDER,
+  describeIndicatorAlert,
+  formatAlertValue,
+  type AlertTrigger,
+  type IndicatorCondition,
+  type NewIndicatorAlert,
+} from '../lib/indicatorAlerts'
 import './widgets/widgets.css'
 
 interface CreateAlertDialogProps {
@@ -13,11 +29,17 @@ interface CreateAlertDialogProps {
   /** 우클릭 "…에 알림 추가"처럼 가격을 정해 열 때. 없으면 현재가로 시작한다. */
   initialPrice?: number | null
   onCreate: (symbol: string, condition: AlertCondition, price: number, message?: string) => void
+  /** 지표 알림: 지금 차트의 주기와 지표 목록. 없으면 가격 알림만 만든다. */
+  interval?: Interval
+  indicators?: IndicatorInstance[]
+  /** 범례 🔔 처럼 특정 지표로 열 때 그 지표 id. */
+  initialIndicatorId?: string | null
+  onCreateIndicatorAlert?: (alert: NewIndicatorAlert) => void
 }
 
-type Kind = 'cross' | 'crossUp' | 'crossDown' | 'gt' | 'lt'
+type PriceKind = 'cross' | 'crossUp' | 'crossDown' | 'gt' | 'lt'
 
-const KIND_LABELS: Record<Kind, string> = {
+const PRICE_KIND_LABELS: Record<PriceKind, string> = {
   cross: '교차',
   crossUp: '상향 교차',
   crossDown: '하향 교차',
@@ -25,10 +47,10 @@ const KIND_LABELS: Record<Kind, string> = {
   lt: '보다 작음',
 }
 
-const KIND_ORDER: Kind[] = ['cross', 'crossUp', 'crossDown', 'gt', 'lt']
+const PRICE_KIND_ORDER: PriceKind[] = ['cross', 'crossUp', 'crossDown', 'gt', 'lt']
 
 /** 조건을 푸시 워커가 이해하는 above/below 로 환원. 교차는 현재가 기준으로 방향을 정한다. */
-function resolveCondition(kind: Kind, value: number, livePrice: number | null): AlertCondition {
+function resolveCondition(kind: PriceKind, value: number, livePrice: number | null): AlertCondition {
   if (kind === 'crossUp' || kind === 'gt') return 'above'
   if (kind === 'crossDown' || kind === 'lt') return 'below'
   return livePrice != null && value < livePrice ? 'below' : 'above'
@@ -47,49 +69,137 @@ function fmt(value: number, decimals: number): string {
   return Number(value.toFixed(decimals)).toString()
 }
 
-export function CreateAlertDialog({ open, onClose, symbol, livePrice, initialPrice, onCreate }: CreateAlertDialogProps) {
+const PRICE = 'price'
+
+/** 알림을 걸 수 있는 선: 그리는 선 + 범례·알림 전용 값(예: 급증 강도). */
+function alertLines(instance: IndicatorInstance) {
+  return computeIndicator(instance, [], CHART_PALETTES.dark).lines.map((line) => ({ key: line.key, name: plotName(line) }))
+}
+
+/** 지표를 고르면 처음 채워 줄 기준값. 급증 강도는 "강함" 기준, 오실레이터는 첫 기준선(RSI 70 등). */
+function defaultIndicatorValue(instance: IndicatorInstance, lineKey: string, livePrice: number | null): number | null {
+  if (instance.kind === 'volumeSpike' && lineKey === 'z') return instance.params.high
+  const computed = computeIndicator(instance, [], CHART_PALETTES.dark)
+  if (computed.levels[0]) return computed.levels[0].price
+  if (computed.overlay) return livePrice
+  return null
+}
+
+export function CreateAlertDialog({
+  open,
+  onClose,
+  symbol,
+  livePrice,
+  initialPrice,
+  onCreate,
+  interval,
+  indicators = [],
+  initialIndicatorId,
+  onCreateIndicatorAlert,
+}: CreateAlertDialogProps) {
   const infos = useSymbols()
   const dec = priceDecimals(symbol, infos)
   const tick = infos.find((i) => i.symbol === symbol)?.tickSize ?? 0
-  const [kind, setKind] = useState<Kind>('cross')
+  const canIndicator = Boolean(interval && onCreateIndicatorAlert && indicators.length > 0)
+
+  const [source, setSource] = useState<string>(PRICE)
+  const [priceKind, setPriceKind] = useState<PriceKind>('cross')
+  const [lineKey, setLineKey] = useState('')
+  const [indicatorCondition, setIndicatorCondition] = useState<IndicatorCondition>('crossing')
+  const [trigger, setTrigger] = useState<AlertTrigger>('once')
   const [value, setValue] = useState('')
   const [message, setMessage] = useState('')
   const [messageDirty, setMessageDirty] = useState(false)
   const [error, setError] = useState('')
 
+  const instance = source === PRICE ? null : (indicators.find((i) => i.id === source) ?? null)
+  const lines = useMemo(() => (instance ? alertLines(instance) : []), [instance])
+  const line = lines.find((l) => l.key === lineKey) ?? lines[0]
+
+  const autoMessage = (nextValue: string, nextInstance = instance, nextLine = line, nextCondition = indicatorCondition) => {
+    if (!nextInstance || !nextLine) {
+      return nextValue ? `${symbol} 가격이 ${nextValue}에 도달` : `${symbol} 가격 알림`
+    }
+    const num = Number(nextValue)
+    return `${symbol} ${interval ? INTERVAL_INFO[interval].short : ''} ${describeIndicatorAlert({
+      title: indicatorTitle(nextInstance),
+      lineName: nextLine.name,
+      condition: nextCondition,
+      value: Number.isFinite(num) ? num : 0,
+    })}`
+  }
+
+  // 지표를 고르면 선·조건·트리거·기준값을 그 지표에 맞춰 채운다.
+  const pickSource = (next: string, fromOpen = false) => {
+    setSource(next)
+    setError('')
+    const nextInstance = next === PRICE ? null : (indicators.find((i) => i.id === next) ?? null)
+    if (!nextInstance) {
+      const start = (fromOpen ? initialPrice : null) ?? livePrice
+      const initial = start != null ? fmt(start, dec) : ''
+      setValue(initial)
+      if (fromOpen || !messageDirty) setMessage(autoMessage(initial, null))
+      return
+    }
+    const nextLines = alertLines(nextInstance)
+    const spike = nextInstance.kind === 'volumeSpike'
+    const nextLine = nextLines.find((l) => l.key === 'z') ?? nextLines[0]
+    const nextCondition: IndicatorCondition = spike ? 'greater' : 'crossing'
+    setLineKey(nextLine?.key ?? '')
+    setIndicatorCondition(nextCondition)
+    // 급증은 한 번 울리고 끝나면 다음 급증을 놓친다 — 봉마다 한 번이 기본.
+    setTrigger(spike ? 'perBar' : 'once')
+    const initial = nextLine ? defaultIndicatorValue(nextInstance, nextLine.key, livePrice) : null
+    const text = initial !== null ? formatAlertValue(initial).replace(/,/g, '') : ''
+    setValue(text)
+    if (fromOpen || !messageDirty) setMessage(autoMessage(text, nextInstance, nextLine, nextCondition))
+  }
+
   useEffect(() => {
     if (!open) return
-    const start = initialPrice ?? livePrice
-    const initial = start != null ? fmt(start, dec) : ''
-    setKind('cross')
-    setValue(initial)
-    setMessage(initial ? `${symbol} 가격이 ${initial}에 도달` : `${symbol} 가격 알림`)
     setMessageDirty(false)
-    setError('')
-    // 가격은 열린 순간의 값만 초기값으로 쓴다.
+    setPriceKind('cross')
+    const preset = initialIndicatorId && indicators.some((i) => i.id === initialIndicatorId) ? initialIndicatorId : PRICE
+    pickSource(canIndicator ? preset : PRICE, true)
+    // 열린 순간의 값만 초기값으로 쓴다.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, symbol])
+  }, [open, symbol, initialIndicatorId])
 
   const setValueAndMessage = (next: string) => {
     setValue(next)
-    if (!messageDirty) setMessage(next ? `${symbol} 가격이 ${next}에 도달` : `${symbol} 가격 알림`)
+    if (!messageDirty) setMessage(autoMessage(next))
   }
 
   const bump = (dir: 1 | -1) => {
     const current = Number(value)
     const base = Number.isFinite(current) ? current : (livePrice ?? 0)
-    const step = tick > 0 ? tick : stepFor(base)
-    const next = Math.max(0, base + dir * step)
-    setValueAndMessage(fmt(next, dec))
+    const step = instance ? stepFor(base || 1) : tick > 0 ? tick : stepFor(base)
+    const next = instance ? base + dir * step : Math.max(0, base + dir * step)
+    setValueAndMessage(instance ? formatAlertValue(next).replace(/,/g, '') : fmt(next, dec))
   }
 
   const submit = () => {
     const num = Number(value)
-    if (!Number.isFinite(num) || num <= 0) {
-      setError('올바른 가격을 입력하세요.')
+    if (value.trim() === '' || !Number.isFinite(num) || (!instance && num <= 0)) {
+      setError(instance ? '기준값을 입력하세요.' : '올바른 가격을 입력하세요.')
       return
     }
-    onCreate(symbol, resolveCondition(kind, num, livePrice), num, message)
+    if (instance && line && interval && onCreateIndicatorAlert) {
+      onCreateIndicatorAlert({
+        symbol,
+        interval,
+        indicator: { ...instance, params: { ...instance.params }, colors: [...instance.colors] },
+        title: indicatorTitle(instance),
+        lineKey: line.key,
+        lineName: line.name,
+        condition: indicatorCondition,
+        value: num,
+        trigger,
+        message,
+      })
+    } else {
+      onCreate(symbol, resolveCondition(priceKind, num, livePrice), num, message)
+    }
     onClose()
   }
 
@@ -112,23 +222,72 @@ export function CreateAlertDialog({ open, onClose, symbol, livePrice, initialPri
       }
     >
       <div className="ca-body">
+        {canIndicator && (
+          <label className="ca-field">
+            <span className="ca-label">대상</span>
+            <select className="tv-input ca-select" value={source} onChange={(e) => pickSource(e.target.value)}>
+              <option value={PRICE}>가격</option>
+              {indicators.map((i) => (
+                <option key={i.id} value={i.id}>
+                  {indicatorTitle(i)}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+
+        {instance && lines.length > 1 && (
+          <label className="ca-field">
+            <span className="ca-label">값</span>
+            <select
+              className="tv-input ca-select"
+              value={line?.key ?? ''}
+              onChange={(e) => {
+                const next = lines.find((l) => l.key === e.target.value)
+                setLineKey(e.target.value)
+                if (!messageDirty) setMessage(autoMessage(value, instance, next))
+              }}
+            >
+              {lines.map((l) => (
+                <option key={l.key} value={l.key}>
+                  {l.name}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+
         <label className="ca-field">
           <span className="ca-label">조건</span>
-          <select
-            className="tv-input ca-select"
-            value={kind}
-            onChange={(e) => setKind(e.target.value as Kind)}
-          >
-            {KIND_ORDER.map((k) => (
-              <option key={k} value={k}>
-                {KIND_LABELS[k]}
-              </option>
-            ))}
-          </select>
+          {instance ? (
+            <select
+              className="tv-input ca-select"
+              value={indicatorCondition}
+              onChange={(e) => {
+                const next = e.target.value as IndicatorCondition
+                setIndicatorCondition(next)
+                if (!messageDirty) setMessage(autoMessage(value, instance, line, next))
+              }}
+            >
+              {CONDITION_ORDER.map((c) => (
+                <option key={c} value={c}>
+                  {CONDITION_LABELS[c]}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <select className="tv-input ca-select" value={priceKind} onChange={(e) => setPriceKind(e.target.value as PriceKind)}>
+              {PRICE_KIND_ORDER.map((k) => (
+                <option key={k} value={k}>
+                  {PRICE_KIND_LABELS[k]}
+                </option>
+              ))}
+            </select>
+          )}
         </label>
 
         <label className="ca-field">
-          <span className="ca-label">값</span>
+          <span className="ca-label">{instance ? '기준값' : '값'}</span>
           <div className="ca-stepper">
             <button type="button" className="tv-icon-btn ca-step" aria-label="감소" onClick={() => bump(-1)}>
               −
@@ -137,7 +296,7 @@ export function CreateAlertDialog({ open, onClose, symbol, livePrice, initialPri
               className="tv-input ca-value"
               type="number"
               step="any"
-              min="0"
+              min={instance ? undefined : '0'}
               value={value}
               onChange={(e) => {
                 setValueAndMessage(e.target.value)
@@ -152,7 +311,17 @@ export function CreateAlertDialog({ open, onClose, symbol, livePrice, initialPri
 
         <div className="ca-field">
           <span className="ca-label">트리거</span>
-          <span className="ca-trigger">한 번만</span>
+          {instance ? (
+            <select className="tv-input ca-select" value={trigger} onChange={(e) => setTrigger(e.target.value as AlertTrigger)}>
+              {TRIGGER_ORDER.map((t) => (
+                <option key={t} value={t}>
+                  {TRIGGER_LABELS[t]}
+                </option>
+              ))}
+            </select>
+          ) : (
+            <span className="ca-trigger">한 번만</span>
+          )}
         </div>
 
         <label className="ca-field ca-field-col">
@@ -167,6 +336,13 @@ export function CreateAlertDialog({ open, onClose, symbol, livePrice, initialPri
             }}
           />
         </label>
+
+        {instance && interval && (
+          <p className="ca-note">
+            {INTERVAL_INFO[interval].short} 봉으로 계산합니다. 지표 알림은 이 앱이 열려 있는 동안(다른 탭에 있어도)
+            울리고, 앱을 닫으면 오지 않습니다.
+          </p>
+        )}
 
         {error && <p className="ca-error">{error}</p>}
       </div>
