@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { fetchKlines, type Candle, type Interval } from '../lib/binance'
+import { INTERVAL_SECONDS } from '../lib/intervals'
 
 export interface UseBinanceKlinesResult {
   candles: Candle[]
@@ -31,6 +32,21 @@ const sleep = (ms: number, signal?: AbortSignal) =>
     )
   })
 
+/**
+ * 다시 받은 최신 구간을 이미 가진 캔들 뒤에 잇는다.
+ * 통째로 갈아끼우면 스크롤해서 불러온 과거가 사라지고 보던 위치가 다른 날짜로 튄다
+ * (탭에 돌아올 때·웹소켓이 잠깐 끊겨 재조회할 때). 오래 떠나 있어 틈이 생기면 새 구간으로 바꾼다.
+ */
+function mergeLatest(prev: Candle[], fresh: Candle[], step: number): Candle[] {
+  if (prev.length === 0 || fresh.length === 0) return fresh
+  const first = fresh[0].time
+  const cut = prev.findIndex((c) => c.time >= first)
+  const older = cut === -1 ? prev : prev.slice(0, cut)
+  const lastOlder = older[older.length - 1]
+  if (!lastOlder || first - lastOlder.time > step * 1.5) return fresh
+  return [...older, ...fresh]
+}
+
 export function useBinanceKlines(
   symbol: string,
   interval: Interval,
@@ -54,16 +70,17 @@ export function useBinanceKlines(
     async (signal?: AbortSignal) => {
       setLoading(true)
       setError(null)
+      const key = `${symbol}|${interval}`
 
       // 모바일에선 화면 전환·신호 끊김으로 한 번씩 실패한다. 몇 번 더 두드려본다.
       for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
         try {
           const data = await fetchKlines(symbol, interval, limit, signal)
-          if (signal?.aborted) return
-          setCandles(data)
+          // 받는 사이 종목·주기가 바뀌었으면 버린다(다른 차트 캔들이 섞이지 않게).
+          if (signal?.aborted || seriesKeyRef.current !== key) return
+          setCandles((prev) => mergeLatest(prev, data, INTERVAL_SECONDS[interval]))
           setError(null)
           setLoading(false)
-          setExhausted(false)
           return
         } catch (err) {
           if (signal?.aborted || (err instanceof DOMException && err.name === 'AbortError')) return
