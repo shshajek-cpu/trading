@@ -189,6 +189,11 @@ export function DrawingOverlay(props: DrawingOverlayProps) {
     stay: stayInDrawingMode, locked, hidden, enabled, selectedId,
   }
 
+  // 부모가 렌더마다 새 콜백을 넘겨도 입력 effect 가 다시 걸리지 않게 ref 로 읽는다.
+  // 다시 걸리면 cleanup 의 setScroll(true) 가 드래그 도중 차트 스크롤을 되살려, 선을 끌면 차트까지 따라 움직인다.
+  const handlers = useRef({ onCreate, onUpdate, onRemove, onToolDone })
+  handlers.current = { onCreate, onUpdate, onRemove, onToolDone }
+
   const coordsOf = useCallback(() => {
     const l = latest.current
     return new Coords(l.chart, l.series, l.candles, l.interval)
@@ -281,11 +286,11 @@ export function DrawingOverlay(props: DrawingOverlayProps) {
     (kind: DrawingKind, clicked: DrawingPoint[]) => {
       const l = latest.current
       const pts = buildPoints(kind, clicked, l.interval)
-      onCreate({ symbol: l.symbol, kind, points: pts, style: defaultStyle(kind) })
+      handlers.current.onCreate({ symbol: l.symbol, kind, points: pts, style: defaultStyle(kind) })
       clearCreation()
-      if (!l.stay) onToolDone()
+      if (!l.stay) handlers.current.onToolDone()
     },
-    [onCreate, onToolDone, clearCreation],
+    [clearCreation],
   )
 
   const openTextEditor = useCallback(
@@ -383,12 +388,12 @@ export function DrawingOverlay(props: DrawingOverlayProps) {
         return
       }
 
-      // 커서 도구
+      // 커서 도구. 손가락은 마우스보다 부정확해서 터치는 잡는 폭을 넓힌다.
       const pane = chart.paneSize()
-      const picked = pickDrawing(l.drawings, coords, p, pane.width, pane.height)
+      const picked = pickDrawing(l.drawings, coords, p, pane.width, pane.height, e.pointerType === 'touch')
       if (t === 'eraser') {
         if (picked) {
-          onRemove(picked.drawing.id)
+          handlers.current.onRemove(picked.drawing.id)
           if (l.selectedId === picked.drawing.id) setSelectedId(null)
           e.preventDefault()
           e.stopPropagation()
@@ -480,14 +485,14 @@ export function DrawingOverlay(props: DrawingOverlayProps) {
           const dp = pr1 - pr0
           const next = press.original!.map((pt) => ({ time: pt.time + dt, price: pt.price + dp }))
           press.last = next
-          onUpdate(press.id!, { points: next }, { history: false })
+          handlers.current.onUpdate(press.id!, { points: next }, { history: false })
           break
         }
         case 'anchor': {
           const sp = makePoint(coords, l.candles, p, resolveMagnet(ctrl))
           const next = press.original!.map((pt, i) => (i === press.index ? sp : pt))
           press.last = next
-          onUpdate(press.id!, { points: next }, { history: false })
+          handlers.current.onUpdate(press.id!, { points: next }, { history: false })
           break
         }
         case 'measure': {
@@ -565,8 +570,8 @@ export function DrawingOverlay(props: DrawingOverlayProps) {
         case 'anchor': {
           if (press.last && press.id) {
             // 되돌리기 스택에 한 단계로 남기려고: 원본으로 되돌린 뒤 최종을 커밋.
-            onUpdate(press.id, { points: press.original! }, { history: false })
-            onUpdate(press.id, { points: press.last })
+            handlers.current.onUpdate(press.id, { points: press.original! }, { history: false })
+            handlers.current.onUpdate(press.id, { points: press.last })
           }
           break
         }
@@ -581,7 +586,7 @@ export function DrawingOverlay(props: DrawingOverlayProps) {
         case 'zoom': {
           applyZoom(chart, coords, press.startPt, p)
           setZoomBox(null)
-          onToolDone()
+          handlers.current.onToolDone()
           break
         }
       }
@@ -614,18 +619,41 @@ export function DrawingOverlay(props: DrawingOverlayProps) {
       }
     }
 
+    // 그림이 잡은 손가락의 touchstart 는 차트(lightweight-charts)에 넘기지 않는다. pointerdown 이 먼저 와서
+    // pressRef 가 서 있다. 넘기면 차트가 같은 손가락으로 팬하거나, 길게 눌렀을 때 십자선 추적 모드로 들어간다.
+    const onTouchStart = (e: TouchEvent) => {
+      if (pressRef.current) e.stopPropagation()
+    }
+
+    // 시스템이 제스처를 가져가면(pointercancel) 잡던 것을 원래대로 되돌린다. 안 풀면 차트 스크롤이 계속 꺼져 있다.
+    const onCancel = (e: PointerEvent) => {
+      const press = pressRef.current
+      if (!press || e.pointerId !== press.pointerId) return
+      pressRef.current = null
+      setScroll(true)
+      if ((press.mode === 'move' || press.mode === 'anchor') && press.last && press.id) {
+        handlers.current.onUpdate(press.id, { points: press.original! }, { history: false })
+      }
+      if (press.mode === 'zoom') setZoomBox(null)
+      if (press.mode === 'brush') clearCreation()
+    }
+
     el.addEventListener('pointerdown', onDown, true)
+    el.addEventListener('touchstart', onTouchStart, { capture: true, passive: true })
     window.addEventListener('pointermove', onMove, true)
     window.addEventListener('pointerup', onUp, true)
+    window.addEventListener('pointercancel', onCancel, true)
     el.addEventListener('dblclick', onDblClick, true)
     return () => {
       el.removeEventListener('pointerdown', onDown, true)
+      el.removeEventListener('touchstart', onTouchStart, true)
       window.removeEventListener('pointermove', onMove, true)
       window.removeEventListener('pointerup', onUp, true)
+      window.removeEventListener('pointercancel', onCancel, true)
       el.removeEventListener('dblclick', onDblClick, true)
       setScroll(true)
     }
-  }, [chart, enabled, coordsOf, resolveMagnet, setScroll, finalizeCreate, clearCreation, onUpdate, onRemove, onToolDone, openTextEditor])
+  }, [chart, enabled, coordsOf, resolveMagnet, setScroll, finalizeCreate, clearCreation, openTextEditor])
 
   // ── 우클릭: 누른 자리를 가려 메뉴를 요청한다. 비활성 칸도 받아야 해서 enabled 와 무관하게 건다. ──
   const contextRef = useRef(onContextMenu)
