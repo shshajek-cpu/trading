@@ -1,5 +1,5 @@
-import type { ChartPalette } from '../../lib/theme'
-import { withAlpha, type Drawing, type DrawingStyle } from '../../lib/drawings'
+import { withAlpha, type ChartPalette } from '../../lib/theme'
+import type { Drawing, DrawingStyle } from '../../lib/drawings'
 import type { Coords } from './coords'
 import type { Pt } from './geometry'
 

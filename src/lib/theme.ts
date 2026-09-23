@@ -75,6 +75,17 @@ export const DRAWING_PALETTE = [
   '#000000',
 ] as const
 
+/** #rrggbb + 알파(0~1) → rgba() 문자열. #rrggbb 가 아니면 그대로 돌려준다. */
+export function withAlpha(hex: string, alpha: number): string {
+  const m = /^#?([0-9a-f]{6})$/i.exec(hex.trim())
+  if (!m) return hex
+  const n = parseInt(m[1], 16)
+  const r = (n >> 16) & 255
+  const g = (n >> 8) & 255
+  const b = n & 255
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`
+}
+
 /** Canvas font; keep in sync with --tv-font in styles/tokens.css. */
 export const CHART_FONT =
   "-apple-system, BlinkMacSystemFont, 'Trebuchet MS', Roboto, Ubuntu, 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif"

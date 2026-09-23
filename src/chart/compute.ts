@@ -39,6 +39,7 @@ import {
   type IndicatorInstance,
   type IndicatorKind,
 } from '../lib/indicatorConfig'
+import type { BandSpec } from './bandFill'
 
 export type LegendFormat = 'price' | 'fixed2' | 'volume' | 'ratio'
 
@@ -85,8 +86,8 @@ export interface ComputedIndicator {
   title: string
   lines: PlotLine[]
   levels: LevelLine[]
-  /** 두 값 사이를 옅게 채우는 밴드(예: RSI 70/30). */
-  band?: { top: number; bottom: number; color: string }
+  /** 두 값 사이를 옅게 채우는 밴드(예: RSI 70/30)와 그 밖으로 나간 구간 강조. */
+  band?: BandSpec
   /** 패널 배경을 봉 단위로 옅게 칠하는 구간(예: 거래량 급증 봉). */
   highlights?: { time: number; color: string }[]
   /**
@@ -303,12 +304,19 @@ export function computeIndicator(
         },
       ]
       break
-    case 'rsi':
-      base.lines = [{ key: 'rsi', type: 'line', points: rsi(candles, p.length), color: c[0], legendLabel: '' }]
+    case 'rsi': {
+      const points = rsi(candles, p.length)
+      base.lines = [{ key: 'rsi', type: 'line', points, color: c[0], legendLabel: '' }]
       base.levels = [lvl(p.upper), lvl(p.lower), { price: 50, color: dim, lineStyle: LineStyle.Dotted }]
-      // 70/30 밴드 사이를 RSI 색 10%로 채운다(트레이딩뷰 기본).
-      base.band = { top: p.upper, bottom: p.lower, color: `${c[0]}1a` }
+      // 70/30 밴드 사이를 RSI 색 10%로 채우고(트레이딩뷰 기본), 밴드 밖으로 나간 구간은 선~기준선 사이를 강조한다.
+      base.band = {
+        top: p.upper,
+        bottom: p.lower,
+        color: `${c[0]}1a`,
+        outside: p.fill ? { points, above: c[1], below: c[2], max: 100, min: 0 } : undefined,
+      }
       break
+    }
     case 'macd': {
       const m = macd(candles, p.fast, p.slow, p.signal)
       base.lines = [

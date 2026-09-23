@@ -1,5 +1,5 @@
 import { notifySettingsChanged } from './syncBus'
-import { DRAWING_PALETTE } from './theme'
+import { DRAWING_PALETTE, withAlpha } from './theme'
 
 /** 그릴 수 있는 도구의 종류 — TradingView 왼쪽 툴바 순서를 따른다. */
 export type DrawingKind =
@@ -214,17 +214,6 @@ const DRAWING_KINDS: Record<DrawingKind, true> = {
 
 export const DRAWINGS_STORAGE_KEY = 'trading.drawings.v2'
 const LEGACY_KEY = 'trading.drawings.v1'
-
-/** #rrggbb + 알파(0~1) → rgba() 문자열. */
-export function withAlpha(hex: string, alpha: number): string {
-  const m = /^#?([0-9a-f]{6})$/i.exec(hex.trim())
-  if (!m) return hex
-  const n = parseInt(m[1], 16)
-  const r = (n >> 16) & 255
-  const g = (n >> 8) & 255
-  const b = n & 255
-  return `rgba(${r}, ${g}, ${b}, ${alpha})`
-}
 
 /** 도구를 처음 골랐을 때의 기본 스타일. */
 export function defaultStyle(kind: DrawingKind): DrawingStyle {

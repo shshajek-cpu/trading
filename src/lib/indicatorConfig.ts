@@ -142,9 +142,11 @@ const RSI_DEF: IndicatorDef = {
     { key: 'length', label: '기간', default: 14, min: 1, max: 1000, step: 1 },
     { key: 'upper', label: '과매수', default: 70, min: 50, max: 100, step: 1 },
     { key: 'lower', label: '과매도', default: 30, min: 0, max: 50, step: 1 },
+    { key: 'fill', label: '과매수·과매도 강조 (밴드 밖 채우기)', default: 1, min: 0, max: 1, kind: 'flag', tab: 'style' },
   ],
-  colors: ['#7e57c2'],
-  colorLabels: ['선'],
+  // 강조 색은 트레이딩뷰 RSI 와 같게 과매수 초록 · 과매도 빨강. 세트에서는 RSI 가 마지막 부분이라 뒤에 붙여도 다른 색 자리가 밀리지 않는다.
+  colors: ['#7e57c2', '#4caf50', '#ff5252'],
+  colorLabels: ['선', '과매수 강조', '과매도 강조'],
 }
 
 /**

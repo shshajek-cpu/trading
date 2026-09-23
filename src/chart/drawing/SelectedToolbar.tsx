@@ -1,10 +1,6 @@
 import { useRef, useState } from 'react'
-import {
-  withAlpha,
-  type Drawing,
-  type DrawingKind,
-  type DrawingStyle,
-} from '../../lib/drawings'
+import type { Drawing, DrawingKind, DrawingStyle } from '../../lib/drawings'
+import { withAlpha } from '../../lib/theme'
 import { Popover, MenuSection, MenuItem } from '../../components/ui/Popover'
 import { ToolIcon } from './toolIcons'
 import { tip } from '../../lib/tooltip'
