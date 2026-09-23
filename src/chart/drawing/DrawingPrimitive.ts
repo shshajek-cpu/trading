@@ -15,6 +15,7 @@ import type { ChartPalette } from '../../lib/theme'
 import type { Drawing } from '../../lib/drawings'
 import { Coords } from './coords'
 import { renderDrawing, type RenderScope } from './render'
+import { makeTimeFormatter } from '../format'
 
 export interface DrawingState {
   drawings: Drawing[]
@@ -110,7 +111,9 @@ export class DrawingPrimitive implements ISeriesPrimitive<Time> {
     this.priceViews = []
     this.timeViews = []
     const coords = this.makeCoords()
-    if (!coords || !this.series) return
+    if (!coords || !this.chart || !this.series) return
+    // 시각 라벨은 크로스헤어와 같은 포맷터를 쓴다 — 설정의 시간대·일봉 여부를 그대로 따른다.
+    const timeLabel = this.chart.options().localization.timeFormatter ?? makeTimeFormatter('local', true)
 
     const push = (list: Drawing[]) => {
       for (const d of list) {
@@ -122,7 +125,7 @@ export class DrawingPrimitive implements ISeriesPrimitive<Time> {
         }
         if (d.kind === 'vertical' || d.kind === 'crossLine') {
           const x = coords.timeToX(d.points[0].time)
-          if (x !== null) this.timeViews.push(new AxisView(x, timeLabel(d.points[0].time), d.style.color))
+          if (x !== null) this.timeViews.push(new AxisView(x, timeLabel(d.points[0].time as Time), d.style.color))
         }
         // 선택된 그림은 모든 앵커의 축 라벨을 낸다.
         if (selected) {
@@ -130,7 +133,7 @@ export class DrawingPrimitive implements ISeriesPrimitive<Time> {
             const y = coords.priceToY(p.price)
             if (y !== null) this.priceViews.push(new AxisView(y, coords.format(p.price), d.style.color))
             const x = coords.timeToX(p.time)
-            if (x !== null) this.timeViews.push(new AxisView(x, timeLabel(p.time), d.style.color))
+            if (x !== null) this.timeViews.push(new AxisView(x, timeLabel(p.time as Time), d.style.color))
           }
         }
       }
@@ -168,13 +171,4 @@ export class DrawingPrimitive implements ISeriesPrimitive<Time> {
       if (this.state.preview) renderDrawing(rc, this.state.preview, false)
     })
   }
-}
-
-function timeLabel(time: number): string {
-  const dt = new Date(time * 1000)
-  const mm = `${dt.getUTCMonth() + 1}`.padStart(2, '0')
-  const dd = `${dt.getUTCDate()}`.padStart(2, '0')
-  const hh = `${dt.getUTCHours()}`.padStart(2, '0')
-  const mi = `${dt.getUTCMinutes()}`.padStart(2, '0')
-  return `${mm}-${dd} ${hh}:${mi}`
 }

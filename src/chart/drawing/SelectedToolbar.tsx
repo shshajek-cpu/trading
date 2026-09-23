@@ -200,12 +200,7 @@ export function SelectedToolbar({
           title="알림"
           aria-label="알림"
           aria-pressed={drawing.alert}
-          onClick={() =>
-            onUpdate(
-              drawing.id,
-              drawing.alert ? { alert: false } : { alert: true, fired: false, above: null },
-            )
-          }
+          onClick={() => onUpdate(drawing.id, drawing.alert ? { alert: false } : { alert: true, fired: false })}
         >
           <ToolIcon name="bell" size={20} />
         </button>

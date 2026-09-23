@@ -72,6 +72,8 @@ export interface MobileShellProps {
   onOpenSettings: () => void
   onGoToDate: () => void
   onApplyRange: (interval: Interval, from: number, to: number) => void
+  /** 차트 시간대 — YTD 의 1월 1일을 이 시간대로 센다. */
+  timezone: string
   /** ⚙ 가격축 시트 항목(데스크톱 가격축 우클릭 메뉴와 같다). */
   scaleEntries: MenuEntry[]
   drawing: MobileDrawingControls
@@ -222,7 +224,7 @@ export function MobileShell(props: MobileShellProps) {
             label: r.label,
             icon: <span className="m-tile-text">{INTERVAL_INFO[r.interval].short}</span>,
             onSelect: then(() => {
-              const { from, to } = rangeBounds(r)
+              const { from, to } = rangeBounds(r, props.timezone)
               props.onApplyRange(r.interval, from, to)
             }),
           }))}

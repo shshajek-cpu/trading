@@ -44,11 +44,9 @@ export interface Drawing {
   style: DrawingStyle
   locked: boolean
   hidden: boolean
-  /** 수평선 교차 알림 (기존 기능). */
+  /** 수평선 교차 알림 (기존 기능). 가격이 선의 어느 쪽에 있는지는 저장하지 않는다(틱마다 바뀌는 실행 상태). */
   alert: boolean
   fired: boolean
-  /** 마지막 판정 시 가격이 선 위였는지 — 교차 감지용. */
-  above: boolean | null
   createdAt: number
 }
 
@@ -206,7 +204,7 @@ const DRAWING_KINDS: Record<DrawingKind, true> = {
   longPosition: true, shortPosition: true, priceRange: true, dateRange: true, datePriceRange: true,
 }
 
-const STORAGE_KEY = 'trading.drawings.v2'
+export const DRAWINGS_STORAGE_KEY = 'trading.drawings.v2'
 const LEGACY_KEY = 'trading.drawings.v1'
 
 /** #rrggbb + 알파(0~1) → rgba() 문자열. */
@@ -287,7 +285,6 @@ function isDrawing(value: unknown): value is Drawing {
     typeof d.hidden === 'boolean' &&
     typeof d.alert === 'boolean' &&
     typeof d.fired === 'boolean' &&
-    (d.above === null || typeof d.above === 'boolean') &&
     typeof d.createdAt === 'number'
   )
 }
@@ -300,7 +297,6 @@ function migrateLegacy(value: unknown): Drawing | null {
   const color = typeof d.color === 'string' ? d.color : DRAWING_PALETTE[0]
   const alert = typeof d.alert === 'boolean' ? d.alert : false
   const fired = typeof d.fired === 'boolean' ? d.fired : false
-  const above = d.above === true || d.above === false ? d.above : null
   const createdAt = typeof d.createdAt === 'number' ? d.createdAt : Date.now()
 
   if (d.kind === 'horizontal') {
@@ -315,7 +311,6 @@ function migrateLegacy(value: unknown): Drawing | null {
       hidden: false,
       alert,
       fired,
-      above,
       createdAt,
     }
   }
@@ -331,7 +326,6 @@ function migrateLegacy(value: unknown): Drawing | null {
       hidden: false,
       alert: false,
       fired: false,
-      above: null,
       createdAt,
     }
   }
@@ -340,10 +334,10 @@ function migrateLegacy(value: unknown): Drawing | null {
 
 export function loadDrawings(): Drawing[] {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY)
+    const raw = localStorage.getItem(DRAWINGS_STORAGE_KEY)
     if (raw) {
       const parsed: unknown = JSON.parse(raw)
-      return Array.isArray(parsed) ? parsed.filter(isDrawing) : []
+      return Array.isArray(parsed) ? parsed.filter(isDrawing).map(dropRuntimeFields) : []
     }
   } catch {
     /* v2 파싱 실패 → 마이그레이션 시도 */
@@ -367,9 +361,17 @@ export function loadDrawings(): Drawing[] {
 
 export function saveDrawings(drawings: Drawing[]): void {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(drawings))
+    localStorage.setItem(DRAWINGS_STORAGE_KEY, JSON.stringify(drawings))
     notifySettingsChanged()
   } catch {
     /* 저장 실패는 무시 */
   }
+}
+
+/** 예전 저장본에 있던 교차 판정 상태(`above`)를 떼어 낸다 — 지금은 메모리에서만 들고 다닌다. */
+function dropRuntimeFields(d: Drawing): Drawing {
+  if (!('above' in d)) return d
+  const copy: Drawing & { above?: unknown } = { ...d }
+  delete copy.above
+  return copy
 }

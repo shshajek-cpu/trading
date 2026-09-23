@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { CoinIcon } from '../CoinIcon'
-import { fetch24hTicker, fetchKlines, type Candle, type Ticker24h } from '../../lib/binance'
+import { fetch24hTicker, fetchKlines, rateLimitedUntil, type Candle, type Ticker24h } from '../../lib/binance'
 import {
   describeSymbol,
   displaySymbol,
@@ -86,7 +86,9 @@ export function SymbolDetails({ symbol, infos }: SymbolDetailsProps) {
   useEffect(() => {
     setTicker(null)
     const controller = new AbortController()
+    // 숨은 탭·한도 초과 중엔 조회를 건너뛴다 — 차단이 길어지지 않게. 기존 값은 유지한다.
     const load = () => {
+      if (document.hidden || rateLimitedUntil() > Date.now()) return
       fetch24hTicker(symbol, controller.signal)
         .then((t) => {
           if (!controller.signal.aborted) setTicker(t)
@@ -95,9 +97,11 @@ export function SymbolDetails({ symbol, infos }: SymbolDetailsProps) {
     }
     load()
     const timer = setInterval(load, TICKER_REFRESH_MS)
+    document.addEventListener('visibilitychange', load)
     return () => {
       controller.abort()
       clearInterval(timer)
+      document.removeEventListener('visibilitychange', load)
     }
   }, [symbol])
 

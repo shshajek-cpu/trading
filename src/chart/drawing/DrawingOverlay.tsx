@@ -23,6 +23,7 @@ import type { ChartMenuRequest } from '../../lib/chartMenu'
 import { INTERVAL_SECONDS } from '../../lib/intervals'
 import { DrawingPrimitive } from './DrawingPrimitive'
 import { SelectedToolbar } from './SelectedToolbar'
+import { hasOpenOverlay } from '../../hooks/useBackClose'
 import './DrawingOverlay.css'
 
 export interface DrawingOverlayProps {
@@ -119,7 +120,6 @@ function previewDrawing(symbol: string, kind: DrawingKind, points: DrawingPoint[
     hidden: false,
     alert: false,
     fired: false,
-    above: null,
     createdAt: 0,
   }
 }
@@ -261,14 +261,19 @@ export function DrawingOverlay(props: DrawingOverlayProps) {
     }
   }, [chart, tool, enabled])
 
-  // ── 도구가 바뀌면 진행 중인 생성/측정/미리보기를 정리 ──
+  // ── 도구·심볼이 바뀌면 진행 중인 생성/측정/미리보기를 정리 ──
+  // 심볼이 바뀐 뒤에도 남으면 이전 심볼 가격의 앵커로 새 심볼에 그림이 생긴다.
   useEffect(() => {
     creatingRef.current = null
     measureRef.current = null
     setPreview(null)
     setZoomBox(null)
     setTextEdit(null)
-  }, [tool])
+  }, [tool, symbol])
+
+  useEffect(() => {
+    setSelectedId(null)
+  }, [symbol])
 
   const setScroll = useCallback(
     (on: boolean) => {
@@ -317,11 +322,41 @@ export function DrawingOverlay(props: DrawingOverlayProps) {
       setPreview(previewDrawing(latest.current.symbol, c.kind, pts, defaultStyle(c.kind)))
     }
 
+    // 누르던 것을 없던 일로: 옮기던 그림은 제자리로, 미리보기는 지우고, 차트 스크롤은 되살린다.
+    const abortPress = () => {
+      const press = pressRef.current
+      if (!press) return
+      pressRef.current = null
+      if (el.hasPointerCapture(press.pointerId)) el.releasePointerCapture(press.pointerId)
+      setScroll(true)
+      if ((press.mode === 'move' || press.mode === 'anchor') && press.last && press.id) {
+        handlers.current.onUpdate(press.id, { points: press.original! }, { history: false })
+      } else if (press.mode !== 'move' && press.mode !== 'anchor') {
+        creatingRef.current = null
+        measureRef.current = null
+        setPreview(null)
+        setZoomBox(null)
+      }
+    }
+
     const onDown = (e: PointerEvent) => {
       if (e.button !== undefined && e.button !== 0) return
       const l = latest.current
       if (textEditRef.current) return // 편집 중이면 편집기가 처리
+      // 누르고 있는 동안 들어온 두 번째 손가락(핀치 등)은 무시한다. 같은 포인터가 또 눌렸다면 놓기를 놓친 것 — 새로 시작.
+      const held = pressRef.current
+      if (held) {
+        if (held.pointerId !== e.pointerId) {
+          e.preventDefault()
+          e.stopPropagation()
+          return
+        }
+        abortPress()
+      }
       const p = getPt(e)
+      // 가격·시간축과 아래 지표 칸은 차트 몫이다. 메인 칸 밖 좌표로는 그림 가격이 틀어진다.
+      const pane = chart.paneSize()
+      if (p.x < 0 || p.y < 0 || p.x > pane.width || p.y > pane.height) return
       const coords = coordsOf()
       const ctrl = e.ctrlKey || e.metaKey
       const shift = e.shiftKey
@@ -388,9 +423,8 @@ export function DrawingOverlay(props: DrawingOverlayProps) {
         return
       }
 
-      // 커서 도구. 손가락은 마우스보다 부정확해서 터치는 잡는 폭을 넓힌다.
-      const pane = chart.paneSize()
-      const picked = pickDrawing(l.drawings, coords, p, pane.width, pane.height, e.pointerType === 'touch')
+      // 커서 도구. 손가락은 마우스보다 부정확해서 터치는 잡는 폭을 넓힌다. 전체 숨김이면 잡을 것이 없다.
+      const picked = l.hidden ? null : pickDrawing(l.drawings, coords, p, pane.width, pane.height, e.pointerType === 'touch')
       if (t === 'eraser') {
         if (picked) {
           handlers.current.onRemove(picked.drawing.id)
@@ -456,6 +490,8 @@ export function DrawingOverlay(props: DrawingOverlayProps) {
         }
         return
       }
+      // 다른 손가락의 움직임은 이 누름과 무관하다.
+      if (e.pointerId !== press.pointerId) return
 
       if (Math.hypot(p.x - press.startPt.x, p.y - press.startPt.y) > DRAG_THRESHOLD) press.moved = true
 
@@ -477,6 +513,8 @@ export function DrawingOverlay(props: DrawingOverlayProps) {
           break
         }
         case 'move': {
+          // 고르려고 누른 손의 떨림(몇 px)으로 그림이 밀리고 되돌리기 단계가 쌓이지 않게, 문턱을 넘어야 옮긴다.
+          if (!press.moved) break
           const t0 = coords.xToTime(press.startPt.x) ?? 0
           const t1 = coords.xToTime(p.x) ?? 0
           const pr0 = coords.yToPrice(press.startPt.y) ?? 0
@@ -489,6 +527,7 @@ export function DrawingOverlay(props: DrawingOverlayProps) {
           break
         }
         case 'anchor': {
+          if (!press.moved) break
           const sp = makePoint(coords, l.candles, p, resolveMagnet(ctrl))
           const next = press.original!.map((pt, i) => (i === press.index ? sp : pt))
           press.last = next
@@ -606,7 +645,7 @@ export function DrawingOverlay(props: DrawingOverlayProps) {
       const p = { x: e.clientX - rect.left, y: e.clientY - rect.top }
       const coords = coordsOf()
       const pane = chart.paneSize()
-      const picked = pickDrawing(l.drawings, coords, p, pane.width, pane.height)
+      const picked = l.hidden ? null : pickDrawing(l.drawings, coords, p, pane.width, pane.height)
       if (picked && picked.drawing.kind === 'text' && !l.locked && !picked.drawing.locked) {
         const d = picked.drawing
         const x = coords.timeToX(d.points[0].time)
@@ -627,15 +666,7 @@ export function DrawingOverlay(props: DrawingOverlayProps) {
 
     // 시스템이 제스처를 가져가면(pointercancel) 잡던 것을 원래대로 되돌린다. 안 풀면 차트 스크롤이 계속 꺼져 있다.
     const onCancel = (e: PointerEvent) => {
-      const press = pressRef.current
-      if (!press || e.pointerId !== press.pointerId) return
-      pressRef.current = null
-      setScroll(true)
-      if ((press.mode === 'move' || press.mode === 'anchor') && press.last && press.id) {
-        handlers.current.onUpdate(press.id, { points: press.original! }, { history: false })
-      }
-      if (press.mode === 'zoom') setZoomBox(null)
-      if (press.mode === 'brush') clearCreation()
+      if (pressRef.current?.pointerId === e.pointerId) abortPress()
     }
 
     el.addEventListener('pointerdown', onDown, true)
@@ -645,6 +676,8 @@ export function DrawingOverlay(props: DrawingOverlayProps) {
     window.addEventListener('pointercancel', onCancel, true)
     el.addEventListener('dblclick', onDblClick, true)
     return () => {
+      // 입력이 꺼지면(리플레이·다른 칸 활성·언마운트) 누르던 것도 끝낸다. 남겨 두면 다음 이동에서 되살아난다.
+      abortPress()
       el.removeEventListener('pointerdown', onDown, true)
       el.removeEventListener('touchstart', onTouchStart, true)
       window.removeEventListener('pointermove', onMove, true)
@@ -753,9 +786,12 @@ export function DrawingOverlay(props: DrawingOverlayProps) {
           active.tagName === 'TEXTAREA' ||
           active.tagName === 'SELECT' ||
           active.isContentEditable)
-      // 입력칸·대화상자·메뉴 안의 키는 그쪽 몫이다.
-      if (inInput || (e.target instanceof Element && e.target.closest('.tv-dialog, .tv-popover'))) return
-      const selected = l.selectedId ? l.drawings.find((d) => d.id === l.selectedId && !d.hidden) ?? null : null
+      // 입력칸·메뉴 안의 키, 대화상자·시트가 열려 있을 때의 키는 그쪽 몫이다(포커스가 뒤 페이지에 있어도).
+      if (inInput || hasOpenOverlay() || (e.target instanceof Element && e.target.closest('.tv-dialog, .tv-popover'))) {
+        return
+      }
+      const selected =
+        l.selectedId && !l.hidden ? l.drawings.find((d) => d.id === l.selectedId && !d.hidden) ?? null : null
       const ctrl = e.ctrlKey || e.metaKey
 
       if ((e.key === 'Delete' || e.key === 'Backspace') && selected) {
@@ -801,10 +837,10 @@ export function DrawingOverlay(props: DrawingOverlayProps) {
     return () => window.removeEventListener('keydown', onKey, true)
   }, [enabled, onRemove, onCreate, onUpdate, coordsOf])
 
-  // 선택된 그림(현재 심볼) 찾기. 숨긴 그림은 선택 도구 막대를 띄우지 않는다.
+  // 선택된 그림(현재 심볼) 찾기. 숨긴 그림(개별·전체)은 선택 도구 막대를 띄우지 않는다.
   const selected = useMemo(
-    () => drawings.find((d) => d.id === selectedId && !d.hidden) ?? null,
-    [drawings, selectedId],
+    () => (hidden ? null : drawings.find((d) => d.id === selectedId && !d.hidden) ?? null),
+    [drawings, selectedId, hidden],
   )
 
   const commitText = useCallback(() => {

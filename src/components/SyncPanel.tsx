@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { randomCode } from '../lib/syncCode'
-import type { SyncStatus } from '../hooks/useSync'
+import type { PullResult, SyncStatus } from '../hooks/useSync'
 import { Icon } from './Icon'
 
 interface SyncPanelProps {
@@ -8,7 +8,7 @@ interface SyncPanelProps {
   status: SyncStatus
   message: string
   onSetCode: (code: string) => void
-  onPull: (code: string) => Promise<boolean>
+  onPull: (code: string) => Promise<PullResult>
   onPush: (code: string) => Promise<void>
 }
 
@@ -23,11 +23,26 @@ export function SyncPanel({ code, status, message, onSetCode, onPull, onPush }: 
   const [draft, setDraft] = useState('')
   const [copied, setCopied] = useState(false)
 
-  const connect = (value: string) => {
+  // 새 코드: 이 기기 설정을 서버에 올려 시작한다.
+  const createNew = () => {
+    const v = randomCode()
+    onSetCode(v)
+    void onPush(v)
+  }
+
+  // 기존 코드에 연결: 서버에 기록이 있으면 내려받고, 없으면 이 기기 설정을 올린다.
+  const join = (value: string) => {
     const v = value.trim()
     if (!/^[a-zA-Z0-9-]{6,64}$/.test(v)) return
-    onSetCode(v)
+    if (!window.confirm('기존 코드에 연결하면 이 기기의 설정이 서버 설정으로 대체될 수 있습니다. 계속할까요?')) return
     setDraft('')
+    onSetCode(v)
+    void onPull(v).then((result) => {
+      // 서버에 기록이 있으면 내려받은 뒤 새로 읽어야 화면에 반영된다.
+      if (result === 'pulled') window.location.reload()
+      // 기록이 없을 때만 이 기기 설정을 올린다 — 받기에 실패했는데 올리면 서버 기록을 덮는다.
+      else if (result === 'empty') void onPush(v)
+    })
   }
 
   return (
@@ -62,9 +77,9 @@ export function SyncPanel({ code, status, message, onSetCode, onPull, onPush }: 
             <button
               type="button"
               onClick={() => {
-                void onPull(code).then((ok) => {
+                void onPull(code).then((result) => {
                   // 불러온 설정은 새로 읽어야 화면에 반영된다.
-                  if (ok) window.location.reload()
+                  if (result === 'pulled') window.location.reload()
                 })
               }}
               disabled={status === 'syncing'}
@@ -88,7 +103,7 @@ export function SyncPanel({ code, status, message, onSetCode, onPull, onPush }: 
           <p className="hint">
             코드를 만들어 다른 기기에 입력하면 설정이 공유됩니다. 계정은 필요 없습니다.
           </p>
-          <button type="button" className="cta sync-new" onClick={() => connect(randomCode())}>
+          <button type="button" className="cta sync-new" onClick={createNew}>
             <Icon name="plus" size={16} />
             새 코드 만들기
           </button>
@@ -96,7 +111,7 @@ export function SyncPanel({ code, status, message, onSetCode, onPull, onPush }: 
             className="inline-form sync-join"
             onSubmit={(e) => {
               e.preventDefault()
-              connect(draft)
+              join(draft)
             }}
           >
             <input

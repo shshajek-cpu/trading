@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, type MutableRefObject } from 'react'
 import {
   miniTickerStreamUrl,
   normalizeMiniTicker,
@@ -14,14 +14,20 @@ const IDLE_TIMEOUT_MS = 30000
 
 /**
  * 여러 종목의 24시간 시세를 웹소켓으로 받는다(바이낸스 화면처럼 1~2초마다 갱신).
- * REST 폴링은 호출하는 쪽이 첫 값·예비용으로 느리게 유지한다.
+ * 반환하는 ref 는 지금 소켓이 값을 주고 있는지를 알려준다(첫 메시지 이후 true, 끊기거나 멎으면 false).
+ * 호출하는 쪽은 이 값이 false 일 때만 REST 예비 조회를 돌린다.
  */
-export function useMiniTickers(symbols: string[], onTicker: (ticker: Ticker24h) => void): void {
+export function useMiniTickers(
+  symbols: string[],
+  onTicker: (ticker: Ticker24h) => void,
+): MutableRefObject<boolean> {
   const onTickerRef = useRef(onTicker)
   onTickerRef.current = onTicker
+  const liveRef = useRef(false)
   const key = [...symbols].sort().join(',')
 
   useEffect(() => {
+    liveRef.current = false
     if (!key) return
     const url = miniTickerStreamUrl(key.split(','))
     let disposed = false
@@ -50,13 +56,17 @@ export function useMiniTickers(symbols: string[], onTicker: (ticker: Ticker24h) 
         armIdle(ws)
         try {
           const message = JSON.parse(event.data) as CombinedStreamMessage<MiniTickerEvent>
-          if (message.data?.e === '24hrMiniTicker') onTickerRef.current(normalizeMiniTicker(message.data))
+          if (message.data?.e === '24hrMiniTicker') {
+            liveRef.current = true
+            onTickerRef.current(normalizeMiniTicker(message.data))
+          }
         } catch {
           /* 깨진 메시지는 버린다 */
         }
       }
       ws.onerror = () => ws.close()
       ws.onclose = () => {
+        liveRef.current = false
         if (disposed) return
         const delay = backoff
         backoff = Math.min(backoff * 2, MAX_BACKOFF_MS)
@@ -67,6 +77,7 @@ export function useMiniTickers(symbols: string[], onTicker: (ticker: Ticker24h) 
     connect()
     return () => {
       disposed = true
+      liveRef.current = false
       window.clearTimeout(retryTimer)
       window.clearTimeout(idleTimer)
       if (socket) {
@@ -78,4 +89,6 @@ export function useMiniTickers(symbols: string[], onTicker: (ticker: Ticker24h) 
       }
     }
   }, [key])
+
+  return liveRef
 }

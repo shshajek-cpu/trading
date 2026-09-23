@@ -40,7 +40,7 @@ import {
   type MainSeries,
   type MainSeriesColors,
 } from '../chart/series'
-import { makeTickFormatter, makeTimeFormatter, formatCountdown, formatPrice, priceFormatter } from '../chart/format'
+import { makeTickFormatter, makeTimeFormatter, formatCountdown, formatPrice, priceFormatter, barCloseTime } from '../chart/format'
 import { BandFillPrimitive } from '../chart/bandFill'
 import { ColumnHighlightPrimitive } from '../chart/columnHighlight'
 import type { ComputedIndicator } from '../chart/compute'
@@ -91,6 +91,8 @@ export interface ChartProps {
   onToolDone: () => void
   /** 왼쪽 끝에서 과거 더 불러오기. */
   onReachStart?: () => void
+  /** 거래소에 더 이상 과거가 없음 — 도달 못 하는 목표 구간을 무한정 좇지 않게 한다. */
+  exhausted?: boolean
   /** 크로스헤어가 가리키는 봉 시각(없으면 null). */
   onHoverTime?: (time: number | null) => void
   /** 오실레이터 패널 위치 + 가격축 너비. */
@@ -145,6 +147,7 @@ export function Chart({
   onRemoveDrawing,
   onToolDone,
   onReachStart,
+  exhausted,
   onHoverTime,
   onPanes,
   replayPick,
@@ -170,6 +173,8 @@ export function Chart({
 
   const candlesRef = useRef<Candle[]>([])
   candlesRef.current = candles
+  const exhaustedRef = useRef(exhausted)
+  exhaustedRef.current = exhausted
   const fittedRef = useRef(false)
   const firstTimeRef = useRef<number | null>(null)
   const prevDataRef = useRef<Candle[]>([])
@@ -238,7 +243,9 @@ export function Chart({
     // 날짜로 이동한 시각이 아직 안 불러온 과거면 끝이 시작보다 앞설 수 있다 — 그때는 가장 오래된 구간을 보여 준다.
     const to = pending.to > from ? pending.to : (candlesRef.current[Math.min(candlesRef.current.length - 1, 100)]?.time ?? from + 1)
     chart.timeScale().setVisibleRange({ from: from as Time, to: to as Time })
-    if (first.time <= pending.from || pending.attempts >= 8) {
+    // 목표에 닿았거나, 시도를 다 썼거나, 거래소에 더 이상 과거가 없으면(도달 불가) 목표를 버린다.
+    // 버리지 않으면 이후 setData(차트 종류 변경·갭 재조회)마다 화면이 가장 오래된 봉으로 튄다.
+    if (first.time <= pending.from || pending.attempts >= 8 || exhaustedRef.current) {
       pendingRangeRef.current = null
       return
     }
@@ -781,8 +788,10 @@ export function Chart({
         el.style.display = 'none'
         return
       }
+      // 마감 시각은 barCloseTime 이 준다(월봉은 UTC 다음 달 1일). 마감이 지났는데 새 봉이
+      // 아직 안 온 짧은 구간엔 다음 주기까지 감아 표시한다.
       const span = INTERVAL_SECONDS[interval]
-      let remain = last.time + span - Math.floor(Date.now() / 1000)
+      let remain = barCloseTime(last.time, interval) - Math.floor(Date.now() / 1000)
       if (remain < 0) remain = ((remain % span) + span) % span
       const y = series.priceToCoordinate(last.close)
       if (y === null) {
@@ -812,23 +821,50 @@ export function Chart({
   }, [interval, mainSeries, settings.showCountdown, settings.showLastPriceLabel, settings.upColor, settings.downColor])
 
   // ── 14) 오실레이터 패널 위치 + 자동스케일 상태 보고, 패널 크기 저장. ──
+  // oscKey 는 오실레이터 패널 구성(종류·개수)의 정체성이다. 이 값이 바뀔 때만 패널이 새로 쌓이므로
+  // 저장된 크기 복원도 이때만 한다. indicators(매초 재계산)에 매달면 복원 타이머가 초당 한 번씩
+  // 되살아나 사용자가 끌어 놓은 패널 크기를 30ms 뒤 원래대로 되돌린다 — 그래서 여기서 제외한다.
   const oscKey = indicators.filter((c) => !c.overlay && !c.isVolume).map((c) => c.kind).join('+') || 'main'
+  // report 가 참조하지만 매초 바뀌어 이펙트를 재구독시키면 안 되는 값은 ref 로 잡는다.
+  const indicatorsRef = useRef(indicators)
+  indicatorsRef.current = indicators
+  const autoScaleRef = useRef(autoScale)
+  autoScaleRef.current = autoScale
+
+  // 14a) 패널 구성이 바뀔 때만 저장된 크기를 되돌린다. panes 는 타이머 안에서 지연 조회한다.
+  useEffect(() => {
+    if (!chartRef.current) return
+    const restore = window.setTimeout(() => {
+      const c = chartRef.current
+      if (!c) return
+      const panes = c.panes()
+      const saved = loadPaneSizes(oscKey)
+      if (saved && saved.length === panes.length) panes.forEach((p, i) => p.setStretchFactor(saved[i]))
+    }, 30)
+    return () => window.clearTimeout(restore)
+  }, [oscKey])
+
+  // 14b) 패널 위치·축 너비 보고 + 자동스케일 상태 + 리사이즈 종료 시 크기 저장.
   useEffect(() => {
     const chart = chartRef.current
     if (!chart) return
 
-    const restore = window.setTimeout(() => {
-      const panes = chart.panes()
-      const saved = loadPaneSizes(oscKey)
-      if (saved && saved.length === panes.length) panes.forEach((p, i) => p.setStretchFactor(saved[i]))
-    }, 30)
+    // PERF-1: 직전 보고와 같으면 다시 올리지 않는다(부모의 setPanes 리렌더가 초당 두 번 도는 것을 막는다).
+    let prev: { list: PaneInfo[]; axisWidth: number } | null = null
+    const same = (out: PaneInfo[], axisWidth: number): boolean => {
+      if (!prev || prev.axisWidth !== axisWidth || prev.list.length !== out.length) return false
+      for (let i = 0; i < out.length; i++) {
+        if (prev.list[i].instanceId !== out[i].instanceId || prev.list[i].top !== out[i].top) return false
+      }
+      return true
+    }
 
     const report = () => {
       const c = chartRef.current
       if (!c) return
       const panes = c.panes()
       const axisWidth = c.priceScale('right').width()
-      const oscillators = indicators.filter((x) => !x.overlay && !x.isVolume)
+      const oscillators = indicatorsRef.current.filter((x) => !x.overlay && !x.isVolume)
       const SEPARATOR = 1
       let top = panes[0]?.getHeight() ?? 0
       top += SEPARATOR
@@ -838,29 +874,44 @@ export function Chart({
         if (osc) out.push({ instanceId: osc.instanceId, top })
         top += panes[i].getHeight() + SEPARATOR
       }
-      cbRef.current.onPanes?.(out, axisWidth)
+      if (!same(out, axisWidth)) {
+        prev = { list: out, axisWidth }
+        cbRef.current.onPanes?.(out, axisWidth)
+      }
 
       // 사용자가 가격축을 끌어 자동스케일이 꺼졌으면 부모에 알린다.
       const auto = c.priceScale('right').options().autoScale
-      if (!auto && autoScale) cbRef.current.onAutoScaleChange?.(false)
+      if (!auto && autoScaleRef.current) cbRef.current.onAutoScaleChange?.(false)
     }
     const first = window.setTimeout(report, 80)
     const timer = window.setInterval(report, 500)
 
+    // 리사이즈 종료 저장: 차트 안에서 시작(pointerdown)한 드래그가 끝나면(document 의 pointerup) 저장한다.
+    // 컨테이너 밖에서 손을 떼도 잡히도록 pointerup 은 document 에 건다(예전엔 컨테이너에만 걸려 밖에서
+    // 끝난 드래그가 저장되지 않아 1초 안에 되돌아갔다).
     const container = containerRef.current
-    const onPointerUp = () => {
-      const sizes = chart.panes().map((p) => p.getStretchFactor())
+    let downInside = false
+    const onDown = (e: PointerEvent) => {
+      downInside = !!container && e.target instanceof Node && container.contains(e.target)
+    }
+    const onUp = () => {
+      if (!downInside) return
+      downInside = false
+      const c = chartRef.current
+      if (!c) return
+      const sizes = c.panes().map((p) => p.getStretchFactor())
       if (sizes.length > 1) savePaneSizes(oscKey, sizes)
     }
-    container?.addEventListener('pointerup', onPointerUp)
+    container?.addEventListener('pointerdown', onDown)
+    document.addEventListener('pointerup', onUp)
 
     return () => {
-      window.clearTimeout(restore)
       window.clearTimeout(first)
       window.clearInterval(timer)
-      container?.removeEventListener('pointerup', onPointerUp)
+      container?.removeEventListener('pointerdown', onDown)
+      document.removeEventListener('pointerup', onUp)
     }
-  }, [oscKey, indicators, autoScale])
+  }, [oscKey])
 
   // ── 15) chartRegistry 등록. ──────────────────────────────────────────
   useEffect(() => {

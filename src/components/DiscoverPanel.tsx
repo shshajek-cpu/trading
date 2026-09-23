@@ -12,17 +12,20 @@ import {
 } from '../lib/discover'
 import type { FeatureSet } from '../lib/features'
 import { SIDE_COLORS } from '../lib/pins'
+import { intlZone } from '../lib/timezone'
 
 interface DiscoverPanelProps {
   symbol: string
   interval: Interval
   liveFeatures: FeatureSet | null
+  /** 차트 시간대 — 훑은 기간의 날짜를 차트와 같게 보여준다. */
+  timezone: string
 }
 
 /** 몇 번에 나눠 과거를 받을지. 1000개씩이라 5면 5000봉. */
 const CHUNKS = 5
 
-export function DiscoverPanel({ symbol, interval, liveFeatures }: DiscoverPanelProps) {
+export function DiscoverPanel({ symbol, interval, liveFeatures, timezone }: DiscoverPanelProps) {
   const [cfg, setCfg] = useState<DiscoverConfig>(DEFAULT_CONFIG)
   const [result, setResult] = useState<DiscoverResult | null>(null)
   const [busy, setBusy] = useState(false)
@@ -47,8 +50,9 @@ export function DiscoverPanel({ symbol, interval, liveFeatures }: DiscoverPanelP
         setError('과거 데이터가 모자랍니다. 다른 주기로 시도해 보세요.')
         return
       }
-      const from = new Date(all[0].time * 1000).toLocaleDateString('ko-KR')
-      const to = new Date(all[all.length - 1].time * 1000).toLocaleDateString('ko-KR')
+      const day = (t: number) => new Date(t * 1000).toLocaleDateString('ko-KR', { timeZone: intlZone(timezone) })
+      const from = day(all[0].time)
+      const to = day(all[all.length - 1].time)
       setScannedRange(`${from} ~ ${to} · ${all.length.toLocaleString()}봉`)
 
       const found = discover(all, cfg)
@@ -62,7 +66,7 @@ export function DiscoverPanel({ symbol, interval, liveFeatures }: DiscoverPanelP
     } finally {
       setBusy(false)
     }
-  }, [symbol, interval, cfg])
+  }, [symbol, interval, cfg, timezone])
 
   const verdict = result ? judge(result) : null
   const matchNow = result && liveFeatures ? matchesBands(result.bands, liveFeatures) : false

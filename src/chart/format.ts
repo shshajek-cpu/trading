@@ -3,12 +3,9 @@
  * localization.timeFormatter 와 timeScale.tickMarkFormatter 에 넣을 함수를 만든다.
  */
 import { TickMarkType, type Time } from 'lightweight-charts'
-
-/** settings.timezone → Intl timeZone. 'local' 은 브라우저 기본(undefined). */
-function zoneFor(tz: string): string | undefined {
-  if (tz === 'local') return undefined
-  return tz
-}
+import type { Interval } from '../lib/binance'
+import { INTERVAL_SECONDS } from '../lib/intervals'
+import { intlZone } from '../lib/timezone'
 
 const asMs = (time: Time): number => Number(time) * 1000
 
@@ -18,7 +15,7 @@ const asMs = (time: Time): number => Number(time) * 1000
  */
 export function makeTimeFormatter(tz: string, intraday: boolean): (time: Time) => string {
   const fmt = new Intl.DateTimeFormat('ko-KR', {
-    timeZone: zoneFor(tz),
+    timeZone: intlZone(tz),
     weekday: 'short',
     year: '2-digit',
     month: 'numeric',
@@ -45,7 +42,7 @@ export function priceFormatter(precision: number): (value: number) => string {
 
 /** 시간축 눈금: 연/월/일/시간 종류에 맞춰 최소한만 보여준다. */
 export function makeTickFormatter(tz: string): (time: Time, tickMarkType: TickMarkType) => string {
-  const zone = zoneFor(tz)
+  const zone = intlZone(tz)
   const timeFmt = new Intl.DateTimeFormat('ko-KR', { timeZone: zone, hour: '2-digit', minute: '2-digit', hour12: false })
   const dayFmt = new Intl.DateTimeFormat('ko-KR', { timeZone: zone, day: 'numeric' })
   const monthFmt = new Intl.DateTimeFormat('ko-KR', { timeZone: zone, month: 'short' })
@@ -86,4 +83,17 @@ export function formatCountdown(totalSec: number): string {
   const mm = String(m).padStart(2, '0')
   const ss = String(sec).padStart(2, '0')
   return h > 0 ? `${h}:${mm}:${ss}` : `${mm}:${ss}`
+}
+
+/**
+ * 봉의 마감 시각(초, UTC). 대부분은 열림 + 주기지만, 월봉(1M)은 28~31일로 가변이라
+ * Binance 기준(UTC) 다음 달 1일 00:00 을 마감으로 계산한다.
+ */
+export function barCloseTime(openTime: number, interval: Interval): number {
+  if (interval === '1M') {
+    const d = new Date(openTime * 1000)
+    const next = Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 1, 0, 0, 0, 0)
+    return Math.floor(next / 1000)
+  }
+  return openTime + INTERVAL_SECONDS[interval]
 }

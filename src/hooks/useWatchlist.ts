@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { notifySettingsChanged } from '../lib/syncBus'
-import { fetchAll24hTickers } from '../lib/binance'
+import { fetchAll24hTickers, rateLimitedUntil } from '../lib/binance'
 import { useMiniTickers } from './useMiniTickers'
 
 const STORAGE_KEY = 'trading.watchlist.v1'
@@ -47,11 +47,20 @@ export function useWatchlist() {
   const symbolsRef = useRef(symbols)
   symbolsRef.current = symbols
 
-  // 첫 화면과 웹소켓이 막힌 망을 위한 REST 예비 조회.
+  // 바이낸스 화면처럼 1~2초마다 갱신되는 실시간 시세. liveRef 가 true 면 REST 예비는 쉰다.
+  const wsLive = useMiniTickers(symbols, (t) => {
+    setRows((prev) => ({
+      ...prev,
+      [t.symbol]: { symbol: t.symbol, price: t.lastPrice, changePercent: t.priceChangePercent, change: t.priceChange },
+    }))
+  })
+
+  // 웹소켓이 값을 주기 전(첫 화면)·끊겼을 때만 도는 REST 예비 조회. 숨은 탭·한도 초과 중엔 건너뛴다.
   useEffect(() => {
     const controller = new AbortController()
 
     const load = () => {
+      if (document.hidden || wsLive.current || rateLimitedUntil() > Date.now()) return
       fetchAll24hTickers(controller.signal)
         .then((list) => {
           if (controller.signal.aborted) return
@@ -75,55 +84,58 @@ export function useWatchlist() {
 
     load()
     const timer = setInterval(load, REFRESH_MS)
+    // 탭으로 돌아오면 조건을 확인해 한 번만 새로 받는다.
+    document.addEventListener('visibilitychange', load)
     return () => {
       controller.abort()
       clearInterval(timer)
+      document.removeEventListener('visibilitychange', load)
     }
+  }, [wsLive])
+
+  // 다음 목록을 ref 로 계산해 상태를 갱신하고 저장한다 — setState 갱신 함수 안에서
+  // 부작용(localStorage 쓰기·이벤트)을 내지 않는다(StrictMode 중복 실행 대비).
+  const replace = useCallback((next: string[]) => {
+    symbolsRef.current = next
+    setSymbols(next)
+    saveList(next)
   }, [])
 
-  // 바이낸스 화면처럼 1~2초마다 갱신되는 실시간 시세.
-  useMiniTickers(symbols, (t) => {
-    setRows((prev) => ({
-      ...prev,
-      [t.symbol]: { symbol: t.symbol, price: t.lastPrice, changePercent: t.priceChangePercent, change: t.priceChange },
-    }))
-  })
+  const add = useCallback(
+    (symbol: string) => {
+      const prev = symbolsRef.current
+      if (prev.includes(symbol)) return
+      replace([...prev, symbol])
+    },
+    [replace],
+  )
 
-  const add = useCallback((symbol: string) => {
-    setSymbols((prev) => {
-      if (prev.includes(symbol)) return prev
-      const next = [...prev, symbol]
-      saveList(next)
-      return next
-    })
-  }, [])
+  const remove = useCallback(
+    (symbol: string) => {
+      replace(symbolsRef.current.filter((s) => s !== symbol))
+    },
+    [replace],
+  )
 
-  const remove = useCallback((symbol: string) => {
-    setSymbols((prev) => {
-      const next = prev.filter((s) => s !== symbol)
-      saveList(next)
-      return next
-    })
-  }, [])
-
-  const reorder = useCallback((next: string[]) => {
-    setSymbols((prev) => {
+  const reorder = useCallback(
+    (next: string[]) => {
       // 순서만 바꾼다. 현재 목록과 구성이 다르면(경합) 무시한다.
-      if (next.length !== prev.length) return prev
+      const prev = symbolsRef.current
+      if (next.length !== prev.length) return
       const same = new Set(prev)
-      if (!next.every((s) => same.has(s))) return prev
-      saveList(next)
-      return next
-    })
-  }, [])
+      if (!next.every((s) => same.has(s))) return
+      replace(next)
+    },
+    [replace],
+  )
 
-  const toggle = useCallback((symbol: string) => {
-    setSymbols((prev) => {
-      const next = prev.includes(symbol) ? prev.filter((s) => s !== symbol) : [...prev, symbol]
-      saveList(next)
-      return next
-    })
-  }, [])
+  const toggle = useCallback(
+    (symbol: string) => {
+      const prev = symbolsRef.current
+      replace(prev.includes(symbol) ? prev.filter((s) => s !== symbol) : [...prev, symbol])
+    },
+    [replace],
+  )
 
   return { symbols, rows, add, remove, toggle, reorder }
 }

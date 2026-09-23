@@ -42,7 +42,12 @@ import { MtfPanel } from './components/MtfPanel'
 
 import { usePriceAlerts, type PriceAlert, type AlertCondition } from './hooks/usePriceAlerts'
 import { useIndicatorAlerts } from './hooks/useIndicatorAlerts'
-import { describeIndicatorAlert, formatAlertValue, type IndicatorAlert } from './lib/indicatorAlerts'
+import {
+  describeIndicatorAlert,
+  formatAlertValue,
+  type IndicatorAlert,
+  type NewIndicatorAlert,
+} from './lib/indicatorAlerts'
 import { useNotifications } from './hooks/useNotifications'
 import { useSymbols } from './hooks/useSymbols'
 import { usePipWindow } from './hooks/usePipWindow'
@@ -141,14 +146,34 @@ function App() {
 
   // ── data hooks ────────────────────────────────────────────────────
   const symbols = useSymbols()
-  const { notify, permission } = useNotifications()
+  const { notify, permission, requestPermission } = useNotifications()
   const isMobile = useIsMobile()
+  // 폰↔데스크톱 화면이 바뀌면(회전·창 크기) 한쪽 전용 겹침은 닫는다. 남겨 두면 되돌아올 때 저절로 다시 뜨거나
+  // 데스크톱 서랍이 폰 화면 위에 남는다.
+  useEffect(() => {
+    setMobileSheet(null)
+    setMenuOpen(false)
+  }, [isMobile])
   const fullscreen = useFullscreen()
   const pip = usePipWindow()
   const install = useInstallPrompt()
   const watchlist = useWatchlist()
   const pinStore = usePins()
   const sync = useSync()
+
+  // 칸마다 그 종목·주기의 핀. 렌더마다 새 배열을 넘기면 차트가 초당 몇 번씩 마커를 다시 건다.
+  const pinsFor = useMemo(() => {
+    const cache = new Map<string, typeof pinStore.pins>()
+    return (symbol: string, interval: string) => {
+      const key = `${symbol}|${interval}`
+      let list = cache.get(key)
+      if (!list) {
+        list = pinStore.pins.filter((p) => p.symbol === symbol && p.interval === interval)
+        cache.set(key, list)
+      }
+      return list
+    }
+  }, [pinStore.pins])
 
   const { layout, active, cells, splitCol, splitRow } = layoutState
   const activeCell = cells[active] ?? cells[0]
@@ -175,12 +200,12 @@ function App() {
       const custom = (alert as PriceAlert & { message?: string }).message
       const label = alert.condition === 'above' ? '이상' : '이하'
       const message = custom || `${alert.symbol} ${alert.price} ${label} 도달 (현재 ${price})`
-      notify('가격 알림', message)
+      notify('가격 알림', message, `price-${alert.id}`)
       pushToast(message)
     },
     [notify, pushToast],
   )
-  const { alerts, addAlert, removeAlert, checkPrice } = usePriceAlerts(handleTrigger)
+  const { alerts, addAlert, removeAlert, checkPrice, markFired } = usePriceAlerts(handleTrigger)
 
   // indicator alerts (브라우저에서 지표 값을 계산해 판정한다)
   const handleIndicatorFire = useCallback(
@@ -188,19 +213,38 @@ function App() {
       const message =
         alert.message ||
         `${alert.symbol} ${alert.interval} ${describeIndicatorAlert(alert)} (현재 ${formatAlertValue(value)})`
-      notify('지표 알림', message)
+      notify('지표 알림', message, `ind-${alert.id}`)
       pushToast(message)
     },
     [notify, pushToast],
   )
   const indicatorAlerts = useIndicatorAlerts(handleIndicatorFire)
 
+  // 알림을 만드는 순간(사용자 조작)에 시스템 알림 권한을 묻는다 — 브라우저는 조작 밖의 권한 요청을 막는다.
+  const askNotifyPermission = useCallback(() => {
+    if (permission === 'default') void requestPermission()
+  }, [permission, requestPermission])
+  const createPriceAlert = useCallback(
+    (symbol: string, condition: AlertCondition, price: number, message?: string) => {
+      askNotifyPermission()
+      addAlert(symbol, condition, price, message)
+    },
+    [askNotifyPermission, addAlert],
+  )
+  const createIndicatorAlert = useCallback(
+    (alert: NewIndicatorAlert) => {
+      askNotifyPermission()
+      indicatorAlerts.addAlert(alert)
+    },
+    [askNotifyPermission, indicatorAlerts],
+  )
+
   // line-cross alerts
   const handleCross = useCallback(
     (drawing: Drawing, price: number) => {
       const line = drawing.points[0]?.price
       const message = `${drawing.symbol} 수평선 ${line ?? ''} 통과 (현재 ${price})`
-      notify('선 통과 알림', message)
+      notify('선 통과 알림', message, `line-${drawing.id}`)
       pushToast(message)
     },
     [notify, pushToast],
@@ -219,7 +263,7 @@ function App() {
     canRedo,
   } = useDrawings(handleCross)
 
-  const push = usePushAlerts(sync.code, alerts)
+  const push = usePushAlerts(sync.code, alerts, markFired)
 
   const handlePrice = useCallback(
     (symbol: string, price: number) => {
@@ -580,7 +624,7 @@ function App() {
             ? [
                 item(
                   d.alert ? '알림 끄기' : '알림 켜기',
-                  () => updateDrawing(d.id, d.alert ? { alert: false } : { alert: true, fired: false, above: null }),
+                  () => updateDrawing(d.id, d.alert ? { alert: false } : { alert: true, fired: false }),
                   { icon: icon(d.alert ? 'bellOff' : 'bell') },
                 ),
               ]
@@ -711,7 +755,7 @@ function App() {
   // ── per-cell chart renderer ───────────────────────────────────────
   const renderCell = (cell: CellConfig, index: number, gridStyle?: React.CSSProperties) => {
     const isActive = index === active
-    const cellPins = pinStore.pins.filter((p) => p.symbol === cell.symbol && p.interval === cell.interval)
+    const cellPins = pinsFor(cell.symbol, cell.interval)
     return (
       <ErrorBoundary
         key={index}
@@ -802,15 +846,16 @@ function App() {
             alerts={alerts}
             lineAlerts={drawings.filter((d) => d.alert)}
             symbols={symbols}
-            onAdd={(symbol, condition, price, message) => addAlert(symbol, condition, price, message)}
+            onAdd={createPriceAlert}
             onRemove={removeAlert}
             onDisableLineAlert={(lineId) => updateDrawing(lineId, { alert: false })}
             indicatorAlerts={indicatorAlerts.alerts}
             onRemoveIndicatorAlert={indicatorAlerts.removeAlert}
             interval={activeCell.interval}
             indicators={indicators}
-            onAddIndicatorAlert={indicatorAlerts.addAlert}
+            onAddIndicatorAlert={createIndicatorAlert}
             permission={permission}
+            onRequestPermission={() => void requestPermission()}
             push={push}
             hasSyncCode={Boolean(sync.code)}
             onCreateSyncCode={createSyncCode}
@@ -855,10 +900,18 @@ function App() {
             onClear={pinStore.clear}
             liveFeatures={liveFeatures}
             symbol={activeSymbol}
+            timezone={settings.timezone}
           />
         )
       case 'discover':
-        return <DiscoverPanel symbol={activeSymbol} interval={activeCell.interval} liveFeatures={liveFeatures} />
+        return (
+          <DiscoverPanel
+            symbol={activeSymbol}
+            interval={activeCell.interval}
+            liveFeatures={liveFeatures}
+            timezone={settings.timezone}
+          />
+        )
       case 'sync':
         return (
           <SyncPanel
@@ -976,10 +1029,8 @@ function App() {
         interval={activeCell.interval}
         indicators={indicators}
         initialIndicatorId={alertIndicatorId}
-        onCreateIndicatorAlert={indicatorAlerts.addAlert}
-        onCreate={(symbol: string, condition: AlertCondition, price: number, message?: string) =>
-          addAlert(symbol, condition, price, message)
-        }
+        onCreateIndicatorAlert={createIndicatorAlert}
+        onCreate={createPriceAlert}
       />
 
       <GoToDateDialog
@@ -1056,7 +1107,7 @@ function App() {
             onRemoveDrawing={removeDrawing}
             onToolDone={() => setTool('cross')}
             pinMode={false}
-            pins={pinStore.pins.filter((p) => p.symbol === activeCell.symbol && p.interval === activeCell.interval)}
+            pins={pinsFor(activeCell.symbol, activeCell.interval)}
             onAddPin={() => {}}
             onPinFail={() => {}}
             replay={false}
@@ -1142,6 +1193,7 @@ function App() {
           onOpenSettings={() => setSettingsOpen(true)}
           onGoToDate={() => setGoToOpen(true)}
           onApplyRange={applyDateRange}
+          timezone={settings.timezone}
           scaleEntries={scaleEntries}
           drawing={{ ...drawingToolbarProps, canUndo, canRedo, onUndo: undo, onRedo: redo }}
         />

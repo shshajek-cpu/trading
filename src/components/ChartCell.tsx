@@ -6,9 +6,10 @@ import { useBinanceKlines } from '../hooks/useBinanceKlines'
 import { useBinanceWebSocket } from '../hooks/useBinanceWebSocket'
 import { useTicker24h } from '../hooks/useTicker24h'
 import type { Candle, Interval } from '../lib/binance'
+import { rateLimitedUntil } from '../lib/binance'
 import type { ChartSettings } from '../lib/chartSettings'
 import type { ChartType, ScaleMode } from '../lib/chartTypes'
-import { INTERVAL_INFO, INTERVAL_SECONDS } from '../lib/intervals'
+import { INTERVAL_INFO } from '../lib/intervals'
 import type { IndicatorInstance } from '../lib/indicatorConfig'
 import { indicatorTitle } from '../lib/indicatorConfig'
 import type { PriceAlert } from '../hooks/usePriceAlerts'
@@ -17,7 +18,7 @@ import type { Pin } from '../lib/pins'
 import { computeFeatures, MIN_HISTORY, type FeatureSet } from '../lib/features'
 import { CHART_PALETTES } from '../lib/theme'
 import { computeIndicator, indicatorLegend, type ComputedIndicator } from '../chart/compute'
-import { formatPrice } from '../chart/format'
+import { formatPrice, barCloseTime } from '../chart/format'
 import { getChart } from '../lib/chartRegistry'
 import type { ChartMenuRequest } from '../lib/chartMenu'
 import './chart.css'
@@ -165,7 +166,7 @@ export function ChartCell({
   const replayBaseRef = useRef<Candle[]>([])
 
   const ticker = useTicker24h(symbol)
-  const { candles, loading, error, reload, loadOlder, loadingOlder } = useBinanceKlines(symbol, interval)
+  const { candles, loading, error, reload, loadOlder, loadingOlder, exhausted } = useBinanceKlines(symbol, interval)
 
   const lastTickRef = useRef(0)
   const onPriceRef = useRef(onPrice)
@@ -212,7 +213,8 @@ export function ChartCell({
       const base = pendingRef.current ?? liveRef.current ?? lastRestCandleRef.current
       if (!base) return
       const t = Math.floor(timeMs / 1000)
-      if (t < base.time || t >= base.time + INTERVAL_SECONDS[interval]) return
+      // 봉의 마감(월봉은 28~31일 가변)을 넘긴 체결은 현재 봉에 섞지 않는다.
+      if (t < base.time || t >= barCloseTime(base.time, interval)) return
       pendingRef.current = {
         ...base,
         close: price,
@@ -248,6 +250,8 @@ export function ChartCell({
 
   useEffect(() => {
     const timer = window.setInterval(() => {
+      // 레이트리밋(429/418) 쿨다운 중엔 REST 를 건드리지 않는다 — getJson 이 즉시 던져 봤자 낭비다.
+      if (rateLimitedUntil() > Date.now()) return
       if (Date.now() - lastTickRef.current > STALE_MS && !loading) void reload()
     }, STALE_MS)
     return () => window.clearInterval(timer)
@@ -511,6 +515,7 @@ export function ChartCell({
           onRemoveDrawing={onRemoveDrawing}
           onToolDone={onToolDone}
           onReachStart={() => void loadOlder()}
+          exhausted={exhausted}
           onHoverTime={setHoverTime}
           onPanes={(list, axisWidth) => setPanes({ list, axisWidth })}
           replayPick={replayPicking}

@@ -65,13 +65,13 @@ CSS 그리드 한 판(`.tv-app`), 칸 사이는 `--tv-gap` 거터.
 - **차트 도구 줄**: 심볼(검색) · 주기(주기 시트) · + 추가 시트(그리기·지표·알림·비교·지표 템플릿·차트 사진 저장) · ✎ 그리기 시트(도구 타일·자석·모드 유지·잠금·숨기기·실행 취소·삭제) · ⋯ 더보기 시트(심볼 정보·차트 유형·알림 관리·기간·날짜로 이동·바 리플레이·객체 트리·차트 설정·핀·동기화).
 - 그리기 도구를 고르면 시트가 닫히고 시간축 위에 "도구 ✕" 칩이 뜬다. ✕ 로 그리기를 끝낸다.
 - **시트**: `BottomSheet`(배경 탭·✕·Esc·안드로이드 뒤로가기로 닫힘). 타일은 `SheetTiles`, 목록은 `SheetList`(우클릭 메뉴와 같은 `MenuEntry` 를 받는다 — ⚙ 가격 축 시트가 데스크톱 가격축 메뉴와 같은 항목을 쓴다).
-- 안전 영역(`--sat`/`--sab`) 패딩과 안드로이드 뒤로가기 닫기(`useBackClose`)를 시트·다이얼로그에 붙인다.
+- 안전 영역(`--sat`/`--sab`) 패딩과 안드로이드 뒤로가기·Esc 닫기(`useBackClose`)를 시트·다이얼로그에 붙인다.
 
 ---
 
 ## 4. 키보드 단축키 (`useShortcuts`)
 
-입력칸/텍스트영역/contenteditable 에 포커스가 있으면 전부 무시한다.
+입력칸/텍스트영역/contenteditable 에 포커스가 있거나, 대화상자·시트·서랍이 열려 있으면(`hasOpenOverlay`) 전부 무시한다.
 
 - **도구**: Alt+T 추세선 · Alt+H 수평선 · Alt+J 수평 광선 · Alt+V 수직선 · Alt+C 크로스라인 · Alt+F 피보나치 · Alt+Shift+R 사각형.
 - Esc: 십자선으로 되돌리고 열린 메뉴를 닫는다.
@@ -96,7 +96,7 @@ CSS 그리드 한 판(`.tv-app`), 칸 사이는 `--tv-gap` 거터.
 
 ## 6. 규칙
 
-- 새 겹침 요소(서랍·오버레이·다이얼로그)에는 반드시 `useBackClose` 를 붙인다.
+- 새 겹침 요소(서랍·오버레이·다이얼로그)에는 반드시 `useBackClose` 를 붙이고, 따로 Esc 를 듣지 않는다 — 뒤로가기와 Esc 는 스택 맨 위 하나만 닫는다. 안쪽 입력칸이 Esc 를 쓰면 `preventDefault` 한다.
 - 라벨은 상태로 바뀌지 않는다. 상태는 색·배경(`.active`)으로 알린다.
 - 이모지 금지. 아이콘은 `Icon.tsx` 에만 추가한다.
 - 켜고 끄기는 `.tv-switch`.
@@ -129,8 +129,9 @@ src/
     useShortcuts.ts         전역 단축키
     useUiPrefs.ts           기기별 UI 설정(그리기 토글·즐겨찾기 간격)
     useFullscreen.ts        전체 화면 토글
-    useBackClose.ts         뒤로가기로 겹침 요소 닫기
+    useBackClose.ts         뒤로가기·Esc 로 맨 위 겹침 요소 닫기, hasOpenOverlay
   lib/
     layoutConfig.ts         CellConfig·레이아웃·분할·MTF·pane 크기
     chartRegistry.ts        차트 명령 핸들
+    timezone.ts             차트 시간대 계산(Intl 인자·검증·벽시계↔epoch)
 ```

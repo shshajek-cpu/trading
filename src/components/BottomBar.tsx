@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import type { Interval } from '../lib/binance'
 import type { ScaleMode } from '../lib/chartTypes'
 import { DATE_RANGES, rangeBounds, type DateRange } from '../lib/dateRanges'
+import { intlZone } from '../lib/timezone'
 import { TimezoneMenu } from './menus/TimezoneMenu'
 import { Icon } from './Icon'
 
@@ -16,15 +17,11 @@ interface BottomBarProps {
   onAutoScaleChange: (v: boolean) => void
 }
 
-function zoneArg(tz: string): string | undefined {
-  return tz === 'local' ? undefined : tz
-}
-
 function offsetLabel(tz: string): string {
   if (tz === 'UTC') return 'UTC'
   try {
     const parts = new Intl.DateTimeFormat('en-US', {
-      timeZone: zoneArg(tz),
+      timeZone: intlZone(tz),
       timeZoneName: 'shortOffset',
     }).formatToParts(new Date())
     const name = parts.find((p) => p.type === 'timeZoneName')?.value ?? 'UTC'
@@ -55,7 +52,7 @@ export function BottomBar({
   }, [])
 
   const time = new Intl.DateTimeFormat('en-GB', {
-    timeZone: zoneArg(timezone),
+    timeZone: intlZone(timezone),
     hour: '2-digit',
     minute: '2-digit',
     second: '2-digit',
@@ -63,7 +60,7 @@ export function BottomBar({
   }).format(now)
 
   const applyRange = (r: DateRange) => {
-    const { from, to } = rangeBounds(r)
+    const { from, to } = rangeBounds(r, timezone)
     setLastRange(r.id)
     onApplyRange(r.interval, from, to)
   }

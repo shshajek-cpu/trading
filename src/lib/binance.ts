@@ -78,12 +78,42 @@ export function toStreamSymbol(symbol: string): string {
   return symbol.trim().toLowerCase()
 }
 
+/**
+ * 요청 한도 초과(429) 또는 IP 차단(418)에 걸린 상태. until 은 요청을 재개해도 되는 시각(epoch ms).
+ * 쿨다운이 도는 동안 REST 헬퍼는 네트워크를 건드리지 않고 이 오류를 즉시 던진다 — 차단이 길어지지 않게.
+ */
+export class RateLimitError extends Error {
+  readonly until: number
+  constructor(until: number) {
+    super(`Binance rate limited until ${new Date(until).toISOString()}`)
+    this.name = 'RateLimitError'
+    this.until = until
+  }
+}
+
+/** 모듈 전역 쿨다운. 마지막으로 받은 429/418 의 Retry-After 로 정해진다. */
+let cooldownUntil = 0
+
+/** 쿨다운이 살아 있으면 재개 가능 시각(ms), 아니면 0. */
+export function rateLimitedUntil(): number {
+  return cooldownUntil > Date.now() ? cooldownUntil : 0
+}
+
 async function getJson<T>(path: string, params: Record<string, string | number>, signal?: AbortSignal): Promise<T> {
+  if (cooldownUntil > Date.now()) throw new RateLimitError(cooldownUntil)
   const url = new URL(path, FAPI_BASE)
   for (const [key, value] of Object.entries(params)) {
     url.searchParams.set(key, String(value))
   }
   const res = await fetch(url, { signal })
+  if (res.status === 429 || res.status === 418) {
+    // Retry-After 는 초 단위. 없으면 429 는 60초, 418(차단)은 5분을 기본으로 쉰다.
+    const header = Number(res.headers.get('Retry-After'))
+    const fallback = res.status === 418 ? 300 : 60
+    const secs = Number.isFinite(header) && header > 0 ? header : fallback
+    cooldownUntil = Date.now() + secs * 1000
+    throw new RateLimitError(cooldownUntil)
+  }
   if (!res.ok) {
     const body = await res.text().catch(() => '')
     throw new Error(`Binance ${path} ${res.status} ${res.statusText}${body ? `: ${body}` : ''}`)

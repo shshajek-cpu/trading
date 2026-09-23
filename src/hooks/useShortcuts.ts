@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react'
 import { comboOf, type ShortcutId } from '../lib/shortcuts'
+import { hasOpenOverlay } from './useBackClose'
 
 export interface ShortcutHandlers {
   /** 바꿀 수 있는 단축키가 눌렸을 때(lib/shortcuts 의 SHORTCUT_DEFS). */
@@ -21,8 +22,9 @@ function inField(target: EventTarget | null): boolean {
 }
 
 /**
- * Global keyboard shortcuts. Suppressed while focus is in a form field, a dialog or a menu,
- * when an earlier handler already consumed the key (e.g. arrows moving a selected drawing), or when disabled.
+ * Global keyboard shortcuts. Suppressed while focus is in a form field or a menu, while a dialog / bottom sheet /
+ * drawer is open (focus may sit on the page behind it), when an earlier handler already consumed the key
+ * (e.g. arrows moving a selected drawing), or when disabled.
  * `byCombo` maps "Alt+KeyR"-style combos to actions; the user can rebind them in the shortcuts dialog.
  */
 export function useShortcuts(handlers: ShortcutHandlers, byCombo: Record<string, ShortcutId>, enabled = true): void {
@@ -34,8 +36,8 @@ export function useShortcuts(handlers: ShortcutHandlers, byCombo: Record<string,
   useEffect(() => {
     if (!enabled) return
     const onKey = (e: KeyboardEvent) => {
-      if (e.defaultPrevented || inField(e.target)) return
-      if (e.target instanceof Element && e.target.closest('.tv-dialog, .tv-popover')) return
+      if (e.defaultPrevented || inField(e.target) || hasOpenOverlay()) return
+      if (e.target instanceof Element && e.target.closest('.tv-dialog, .tv-popover, .m-sheet')) return
       const h = ref.current
       const combo = comboOf(e)
       const id = combo ? mapRef.current[combo] : undefined

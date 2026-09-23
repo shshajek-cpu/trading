@@ -18,27 +18,17 @@ interface DialogProps {
   children: ReactNode
 }
 
-/** TradingView modal: dimmed backdrop, 20px title, close ×, Escape and Android back close it. */
+/** TradingView modal: dimmed backdrop, 20px title, close ×. Escape and Android back close it (useBackClose, top layer only). */
 export function Dialog({ open, onClose, title, width = 560, height, header, footer, className, children }: DialogProps) {
   const panelRef = useRef<HTMLDivElement>(null)
-  const onCloseRef = useRef(onClose)
-  onCloseRef.current = onClose
 
   useBackClose(open, onClose)
 
   useEffect(() => {
     if (!open) return
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') {
-        e.stopPropagation()
-        onCloseRef.current()
-      }
-    }
-    document.addEventListener('keydown', onKey)
     // Focus the first field so typing starts immediately (symbol search, indicator search).
     const first = panelRef.current?.querySelector<HTMLElement>('input, select, textarea, button:not(.tv-dialog-close)')
     first?.focus()
-    return () => document.removeEventListener('keydown', onKey)
   }, [open])
 
   if (!open) return null

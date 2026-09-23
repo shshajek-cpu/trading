@@ -13,6 +13,7 @@ import { computeIndicator, type ComputedIndicator } from '../chart/compute'
 import { CHART_PALETTES } from '../lib/theme'
 import {
   conditionMet,
+  INDICATOR_ALERTS_STORAGE_KEY,
   loadIndicatorAlerts,
   saveIndicatorAlerts,
   type IndicatorAlert,
@@ -67,6 +68,18 @@ export function useIndicatorAlerts(onFire: (alert: IndicatorAlert, value: number
   fireRef.current = onFire
 
   useEffect(() => saveIndicatorAlerts(alerts), [alerts])
+
+  // 다른 탭이 바꾼 알림을 받아 온다. 안 받으면 이 탭이 옛 목록을 통째로 저장해 꺼진 알림을 되살린다.
+  useEffect(() => {
+    const onStorage = (e: StorageEvent) => {
+      if (e.key !== INDICATOR_ALERTS_STORAGE_KEY) return
+      const next = loadIndicatorAlerts()
+      alertsRef.current = next
+      setAlerts(next)
+    }
+    window.addEventListener('storage', onStorage)
+    return () => window.removeEventListener('storage', onStorage)
+  }, [])
 
   const addAlert = useCallback((input: NewIndicatorAlert) => {
     if (!Number.isFinite(input.value)) return
@@ -124,10 +137,12 @@ export function useIndicatorAlerts(onFire: (alert: IndicatorAlert, value: number
           computed = computeIndicator(alert.indicator, feed.candles, palette)
           cache.set(cacheKey, computed)
         }
-        const points = computed.lines.find((l) => l.key === alert.lineKey)?.points
+        const line = computed.lines.find((l) => l.key === alert.lineKey)
+        const points = line?.points
         const cur = points?.[points.length - 1]
         // 지표가 지금 봉까지 계산돼야 판정한다(앞쪽 봉이 모자라 값이 없으면 건너뛴다).
-        if (!points || !cur || cur.time !== barTime) continue
+        // 일목 선행·후행 스팬은 앞뒤로 밀려 그려져 마지막 점 시각이 다르지만, 그 점이 지금 봉으로 계산한 값이다.
+        if (!line || !points || !cur || (!line.displaced && cur.time !== barTime)) continue
         if (!conditionMet(alert.condition, points[points.length - 2]?.value, cur.value, alert.value)) continue
         fired.push({ alert, value: cur.value })
       }

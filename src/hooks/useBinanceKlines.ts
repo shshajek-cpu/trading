@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { fetchKlines, type Candle, type Interval } from '../lib/binance'
+import { fetchKlines, RateLimitError, rateLimitedUntil, type Candle, type Interval } from '../lib/binance'
 import { INTERVAL_SECONDS } from '../lib/intervals'
 
 export interface UseBinanceKlinesResult {
@@ -63,6 +63,8 @@ export function useBinanceKlines(
   const seriesKeyRef = useRef(`${symbol}|${interval}`)
   seriesKeyRef.current = `${symbol}|${interval}`
   const olderControllerRef = useRef<AbortController | null>(null)
+  // 429/418 쿨다운이 끝나면 한 번만 자동 재시도할 타이머.
+  const rateTimerRef = useRef<number | undefined>(undefined)
   const candlesRef = useRef<Candle[]>([])
   candlesRef.current = candles
 
@@ -84,6 +86,18 @@ export function useBinanceKlines(
           return
         } catch (err) {
           if (signal?.aborted || (err instanceof DOMException && err.name === 'AbortError')) return
+          // 한도 초과는 재시도로 두드려도 소용없다 — 쿨다운이 끝날 때 딱 한 번만 다시 받는다.
+          if (err instanceof RateLimitError) {
+            if (seriesKeyRef.current !== key) return
+            setError(err)
+            setLoading(false)
+            window.clearTimeout(rateTimerRef.current)
+            const wait = Math.max(0, err.until - Date.now()) + 250 + Math.random() * 500
+            rateTimerRef.current = window.setTimeout(() => {
+              if (!signal?.aborted) void load(signal)
+            }, wait)
+            return
+          }
           if (attempt === MAX_ATTEMPTS) {
             setError(err instanceof Error ? err : new Error(String(err)))
             setLoading(false)
@@ -115,13 +129,15 @@ export function useBinanceKlines(
       olderControllerRef.current?.abort()
       olderControllerRef.current = null
       reloadRef.current = null
+      window.clearTimeout(rateTimerRef.current)
     }
   }, [load])
 
   // 화면으로 돌아오거나 망이 살아나면 스스로 복구한다 — 사용자가 누르게 두지 않는다.
   useEffect(() => {
     const retry = () => {
-      if (document.visibilityState === 'visible') reloadRef.current?.()
+      // 한도 초과 중엔 두드리지 않는다 — 쿨다운이 끝나면 load 가 스스로 재시도한다.
+      if (document.visibilityState === 'visible' && rateLimitedUntil() <= Date.now()) reloadRef.current?.()
     }
     document.addEventListener('visibilitychange', retry)
     window.addEventListener('online', retry)
@@ -132,7 +148,7 @@ export function useBinanceKlines(
   }, [])
 
   const loadOlder = useCallback(async () => {
-    if (busyRef.current || exhausted) return
+    if (busyRef.current || exhausted || rateLimitedUntil() > Date.now()) return
     const oldest = candlesRef.current[0]
     if (!oldest) return
 

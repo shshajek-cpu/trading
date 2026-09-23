@@ -82,7 +82,7 @@ export function describeIndicatorAlert(a: Pick<IndicatorAlert, 'title' | 'lineNa
   return `${a.title} · ${a.lineName} ${CONDITION_LABELS[a.condition]} ${formatAlertValue(a.value)}`
 }
 
-const STORAGE_KEY = 'trading.indicatorAlerts.v1'
+export const INDICATOR_ALERTS_STORAGE_KEY = 'trading.indicatorAlerts.v1'
 
 const CONDITIONS = new Set<string>(CONDITION_ORDER)
 const TRIGGERS = new Set<string>(TRIGGER_ORDER)
@@ -131,7 +131,7 @@ function toAlert(v: unknown): IndicatorAlert | null {
 
 export function loadIndicatorAlerts(): IndicatorAlert[] {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY)
+    const raw = localStorage.getItem(INDICATOR_ALERTS_STORAGE_KEY)
     if (!raw) return []
     const parsed: unknown = JSON.parse(raw)
     if (!Array.isArray(parsed)) return []
@@ -143,7 +143,7 @@ export function loadIndicatorAlerts(): IndicatorAlert[] {
 
 export function saveIndicatorAlerts(alerts: IndicatorAlert[]): void {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(alerts))
+    localStorage.setItem(INDICATOR_ALERTS_STORAGE_KEY, JSON.stringify(alerts))
     notifySettingsChanged()
   } catch {
     /* 저장 실패는 무시 — 메모리 상태는 유지된다. */

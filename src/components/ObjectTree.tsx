@@ -60,12 +60,7 @@ export function ObjectTree({
                     aria-label="알림"
                     aria-pressed={d.alert}
                     onClick={() =>
-                      onUpdateDrawing(
-                        d.id,
-                        d.alert
-                          ? { alert: false }
-                          : { alert: true, fired: false, above: null },
-                      )
+                      onUpdateDrawing(d.id, d.alert ? { alert: false } : { alert: true, fired: false })
                     }
                   >
                     <ToolIcon name="bell" size={16} />

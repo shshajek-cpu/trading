@@ -396,6 +396,16 @@
   font-size: var(--tv-fs-xs);
 }
 
+.aw-hint-action {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.aw-hint-action span {
+  flex: 1;
+}
+
 .aw-rows {
   margin: 0;
   padding: 0;

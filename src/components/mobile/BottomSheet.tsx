@@ -1,4 +1,4 @@
-import { useEffect, useRef, type ReactNode } from 'react'
+import type { ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import { useBackClose } from '../../hooks/useBackClose'
 import { Icon } from '../Icon'
@@ -14,23 +14,10 @@ interface BottomSheetProps {
 
 /**
  * TradingView 앱의 아래에서 올라오는 시트: 어두운 배경, 손잡이, 큰 제목, ✕.
- * 배경을 누르거나 안드로이드 뒤로가기·Esc 로 닫힌다.
+ * 배경을 누르거나 안드로이드 뒤로가기·Esc 로 닫힌다(useBackClose — 맨 위 하나만).
  */
 export function BottomSheet({ open, onClose, title, children }: BottomSheetProps) {
-  const onCloseRef = useRef(onClose)
-  onCloseRef.current = onClose
   useBackClose(open, onClose)
-
-  useEffect(() => {
-    if (!open) return
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key !== 'Escape') return
-      e.stopPropagation()
-      onCloseRef.current()
-    }
-    document.addEventListener('keydown', onKey)
-    return () => document.removeEventListener('keydown', onKey)
-  }, [open])
 
   if (!open) return null
   return createPortal(

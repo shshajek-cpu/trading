@@ -60,7 +60,11 @@ export function IndicatorTemplatesMenu({ indicators, onApply, onClose }: Indicat
             onChange={(e) => setName(e.target.value)}
             onKeyDown={(e) => {
               if (e.key === 'Enter') save()
-              if (e.key === 'Escape') setNaming(false)
+              if (e.key === 'Escape') {
+                // 이름 입력만 접는다 — 감싼 시트·대화상자까지 닫히지 않게.
+                e.preventDefault()
+                setNaming(false)
+              }
             }}
           />
           <button type="button" className="tv-btn primary" onClick={save}>

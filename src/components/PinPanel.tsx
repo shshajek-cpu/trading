@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react'
 import { FEATURE_LABELS, formatFeature, type FeatureSet } from '../lib/features'
 import { SIDE_COLORS, SIDE_LABELS, type Pin, type PinSide } from '../lib/pins'
 import { deriveRule, describeRule, MIN_PINS, scoreAgainst } from '../lib/pinRules'
+import { intlZone } from '../lib/timezone'
 
 interface PinPanelProps {
   pins: Pin[]
@@ -14,6 +15,8 @@ interface PinPanelProps {
   /** 현재 차트 맨 끝 시점의 지표 — 지금 점수를 매기는 데 쓴다. */
   liveFeatures: FeatureSet | null
   symbol: string
+  /** 차트 시간대 — 핀 시각을 차트 시간축과 같게 보여준다. */
+  timezone: string
 }
 
 const SIDES: PinSide[] = ['long', 'short', 'skip']
@@ -28,6 +31,7 @@ export function PinPanel({
   onClear,
   liveFeatures,
   symbol,
+  timezone,
 }: PinPanelProps) {
   const [tab, setTab] = useState<'record' | 'rule'>('record')
 
@@ -110,7 +114,15 @@ export function PinPanel({
                 <span className="pin-dot" style={{ background: SIDE_COLORS[pin.side] }} />
                 <span className="pin-meta">
                   {pin.symbol.replace('USDT', '')} {pin.interval}
-                  <em>{new Date(pin.time * 1000).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</em>
+                  <em>
+                    {new Date(pin.time * 1000).toLocaleString('ko-KR', {
+                      timeZone: intlZone(timezone),
+                      month: 'numeric',
+                      day: 'numeric',
+                      hour: '2-digit',
+                      minute: '2-digit',
+                    })}
+                  </em>
                 </span>
                 <span className="pin-rsi">RSI {pin.features.rsi14.toFixed(0)}</span>
                 <button

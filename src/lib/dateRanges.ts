@@ -1,4 +1,5 @@
 import type { Interval } from './binance'
+import { nowIn, zonedToEpoch } from './timezone'
 
 const DAY = 86400
 
@@ -23,10 +24,13 @@ export const DATE_RANGES: DateRange[] = [
   { id: 'all', label: '전체', interval: '1M', span: 'all' },
 ]
 
-/** 지금 기준 그 기간의 시작·끝(unix 초). */
-export function rangeBounds(range: DateRange): { from: number; to: number } {
+/** 지금 기준 그 기간의 시작·끝(unix 초). YTD 는 차트 시간대(tz)의 1월 1일 0시부터. */
+export function rangeBounds(range: DateRange, tz: string): { from: number; to: number } {
   const to = Math.floor(Date.now() / 1000)
-  if (range.span === 'ytd') return { from: Math.floor(new Date(new Date().getFullYear(), 0, 1).getTime() / 1000), to }
+  if (range.span === 'ytd') {
+    const year = nowIn(tz).date.slice(0, 4)
+    return { from: zonedToEpoch(`${year}-01-01`, '00:00', tz) ?? to, to }
+  }
   if (range.span === 'all') return { from: 0, to }
   return { from: to - range.span, to }
 }

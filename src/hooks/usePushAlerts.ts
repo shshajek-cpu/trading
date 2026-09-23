@@ -18,12 +18,17 @@ function toRecord(sub: PushSubscription) {
 }
 
 
+/** 서버 응답. 서버가 먼저 울린 알림 id 를 돌려준다(로컬에서 끄는 데 쓴다). */
+interface SaveWatchResult {
+  firedIds?: string[]
+}
+
 async function saveWatch(
   code: string,
   alerts: PriceAlert[],
   sub?: PushSubscription,
   signal?: AbortSignal,
-): Promise<void> {
+): Promise<SaveWatchResult> {
   const res = await fetch(`/api/push?code=${encodeURIComponent(code)}`, {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
@@ -36,6 +41,7 @@ async function saveWatch(
     signal,
   })
   if (!res.ok) throw new Error(`서버 등록 실패 ${res.status}`)
+  return (await res.json()) as SaveWatchResult
 }
 
 async function getPublicKey(): Promise<Uint8Array> {
@@ -60,7 +66,11 @@ function usesApplicationServerKey(sub: PushSubscription, key: Uint8Array): boole
  * 브라우저 푸시는 서비스워커가 받아야 하고, 서버는 보낼 주소를 알아야 한다.
  * 어느 기기의 알림인지 묶으려면 동기화 코드가 필요하다.
  */
-export function usePushAlerts(code: string, alerts: PriceAlert[]) {
+export function usePushAlerts(
+  code: string,
+  alerts: PriceAlert[],
+  onServerFired: (ids: string[]) => void,
+) {
   const supported =
     typeof navigator !== 'undefined' &&
     typeof Notification !== 'undefined' &&
@@ -72,6 +82,19 @@ export function usePushAlerts(code: string, alerts: PriceAlert[]) {
   const timerRef = useRef(0)
   const alertsRef = useRef(alerts)
   alertsRef.current = alerts
+  // 지금 이 기기의 구독. 디바운스 동기화 때 endpoint 를 알려 버킷을 맞춘다.
+  const subRef = useRef<PushSubscription | null>(null)
+  // 참조를 고정해 effect 의존성이 흔들리지 않게 한다.
+  const onServerFiredRef = useRef(onServerFired)
+  onServerFiredRef.current = onServerFired
+
+  // 서버가 이미 울린 알림 중 로컬에 있는 것을 꺼 앱을 다시 열 때 중복 발동을 막는다.
+  const notifyServerFired = (firedIds: string[] | undefined) => {
+    if (!firedIds || firedIds.length === 0) return
+    const local = alertsRef.current
+    const ids = firedIds.filter((id) => local.some((a) => a.id === id))
+    if (ids.length > 0) onServerFiredRef.current(ids)
+  }
 
   // 브라우저에 남아 있는 구독도 현재 코드의 서버 레코드에 다시 묶는다.
   // KV 가 비었거나 동기화 코드를 바꾼 뒤에도 새로 구독할 필요 없이 복구된다.
@@ -91,12 +114,15 @@ export function usePushAlerts(code: string, alerts: PriceAlert[]) {
         const sub = await reg.pushManager.getSubscription()
         if (cancelled) return
         if (!sub) {
+          subRef.current = null
           setState('off')
           setMessage('')
           return
         }
-        await saveWatch(code, alertsRef.current, sub, controller.signal)
+        subRef.current = sub
+        const result = await saveWatch(code, alertsRef.current, sub, controller.signal)
         if (!cancelled) {
+          notifyServerFired(result.firedIds)
           setState('on')
           setMessage('')
         }
@@ -149,8 +175,10 @@ export function usePushAlerts(code: string, alerts: PriceAlert[]) {
           applicationServerKey: publicKey as BufferSource,
         })
 
+        subRef.current = sub
         // 구독과 현재 감시 목록을 한 요청으로 저장해야 앱을 바로 닫아도 빠지지 않는다.
-        await saveWatch(targetCode, alerts, sub)
+        const result = await saveWatch(targetCode, alerts, sub)
+        notifyServerFired(result.firedIds)
         setState('on')
         setMessage('앱을 닫아도 알림이 옵니다')
       } catch (error) {
@@ -177,6 +205,7 @@ export function usePushAlerts(code: string, alerts: PriceAlert[]) {
         }
         await sub.unsubscribe()
       }
+      subRef.current = null
       setState('off')
       setMessage('')
     } catch (error) {
@@ -192,15 +221,20 @@ export function usePushAlerts(code: string, alerts: PriceAlert[]) {
     const controller = new AbortController()
     window.clearTimeout(timerRef.current)
     timerRef.current = window.setTimeout(() => {
-      void saveWatch(code, alerts, undefined, controller.signal).catch((error: unknown) => {
-        if (
-          !cancelled &&
-          !(error instanceof DOMException && error.name === 'AbortError')
-        ) {
-          setState('error')
-          setMessage(error instanceof Error ? error.message : '알림 목록 동기화 실패')
-        }
-      })
+      // 이 기기의 구독을 함께 보내 서버가 이 기기 버킷만 갱신하게 한다(다른 기기 알림 보존).
+      void saveWatch(code, alerts, subRef.current ?? undefined, controller.signal)
+        .then((result) => {
+          if (!cancelled) notifyServerFired(result.firedIds)
+        })
+        .catch((error: unknown) => {
+          if (
+            !cancelled &&
+            !(error instanceof DOMException && error.name === 'AbortError')
+          ) {
+            setState('error')
+            setMessage(error instanceof Error ? error.message : '알림 목록 동기화 실패')
+          }
+        })
     }, 1500)
     return () => {
       cancelled = true

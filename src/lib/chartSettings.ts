@@ -1,4 +1,5 @@
 import { notifySettingsChanged } from './syncBus'
+import { isValidTimeZone } from './timezone'
 import type { ThemeName } from './theme'
 
 /** Chart settings dialog state (TradingView ⚙ → Symbol / Status line / Scales / Canvas). */
@@ -71,6 +72,8 @@ export function loadChartSettings(): ChartSettings {
     if (next.theme !== 'dark' && next.theme !== 'light') next.theme = DEFAULT_CHART_SETTINGS.theme
     if (!['both', 'vertical', 'horizontal', 'none'].includes(next.grid)) next.grid = 'both'
     if (next.crosshair !== 'normal' && next.crosshair !== 'magnet') next.crosshair = 'normal'
+    // 모르는 시간대 이름은 Intl 이 RangeError 를 던져 앱 전체가 멈춘다.
+    if (!isValidTimeZone(next.timezone)) next.timezone = DEFAULT_CHART_SETTINGS.timezone
     return next
   } catch {
     return DEFAULT_CHART_SETTINGS

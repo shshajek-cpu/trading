@@ -28,8 +28,21 @@ interface WatchAlert {
 
 interface WatchRecord {
   subs: PushSubscription[]
-  alerts: WatchAlert[]
+  // 기기별 알림 버킷. /api/push 가 각 기기 endpoint 로 나눠 담는다.
+  alertsBy?: Record<string, WatchAlert[]>
+  // 버킷 도입 전 레거시 평면 목록. 감시기는 건드리지 않고 첫 PUT 에서 정리된다.
+  alerts?: WatchAlert[]
   firedIds: string[]
+}
+
+/** alertsBy 버킷과 레거시 목록을 합쳐 알림 id 로 중복을 제거한다. */
+function unionAlerts(record: WatchRecord): WatchAlert[] {
+  const byId = new Map<string, WatchAlert>()
+  for (const list of Object.values(record.alertsBy ?? {})) {
+    for (const a of list) byId.set(a.id, a)
+  }
+  for (const a of record.alerts ?? []) if (!byId.has(a.id)) byId.set(a.id, a)
+  return [...byId.values()]
 }
 
 /** 감시할 동기화 코드 목록. /api/push 가 구독·알림이 바뀔 때 맞춘다. */
@@ -37,7 +50,11 @@ const INDEX_KEY = 'w-index'
 
 const TICKERS_URL = 'https://api.gateio.ws/api/v4/futures/usdt/tickers'
 
-/** gate.io 는 BTC_USDT 형식이다. 밑줄을 빼 바이낸스 표기로 맞춘다. */
+/**
+ * gate.io 는 BTC_USDT 형식이다. 밑줄을 빼 바이낸스 표기(BTCUSDT)로 맞춘다.
+ * gate 는 1000 배 계약을 따로 상장하지 않고 원 코인만 둔다(PEPE_USDT 등).
+ * 그래서 바이낸스 1000PEPEUSDT 같은 표기도 찾을 수 있게 ×1000 값을 함께 넣는다.
+ */
 async function fetchPrices(): Promise<Map<string, number>> {
   const res = await fetch(TICKERS_URL, { headers: { Accept: 'application/json' } })
   if (!res.ok) throw new Error(`시세 조회 실패 ${res.status}`)
@@ -45,7 +62,13 @@ async function fetchPrices(): Promise<Map<string, number>> {
   const map = new Map<string, number>()
   for (const t of list) {
     const p = Number(t.last)
-    if (Number.isFinite(p)) map.set(t.contract.replace('_', ''), p)
+    if (!Number.isFinite(p)) continue
+    const symbol = t.contract.replace('_', '')
+    map.set(symbol, p)
+    if (symbol.endsWith('USDT')) {
+      const coin = symbol.slice(0, -'USDT'.length)
+      map.set(`1000${coin}USDT`, p * 1000)
+    }
   }
   return map
 }
@@ -66,7 +89,7 @@ async function rebuildIndex(env: Env, current: string[] | null): Promise<string[
     const page = await env.SETTINGS.list({ prefix: 'w:', cursor })
     for (const key of page.keys) {
       const record = await env.SETTINGS.get<WatchRecord>(key.name, 'json')
-      if (record && record.subs.length > 0 && record.alerts.length > 0) codes.push(key.name.slice(2))
+      if (record && record.subs.length > 0 && unionAlerts(record).length > 0) codes.push(key.name.slice(2))
     }
     cursor = page.list_complete ? undefined : page.cursor
   } while (cursor)
@@ -86,10 +109,12 @@ async function checkAll(env: Env, rebuild: boolean): Promise<void> {
   for (const code of codes) {
     const key = `w:${code}`
     const record = await env.SETTINGS.get<WatchRecord>(key, 'json')
-    if (!record || record.subs.length === 0 || record.alerts.length === 0) continue
+    if (!record || record.subs.length === 0) continue
+    const watch = unionAlerts(record)
+    if (watch.length === 0) continue
 
     const fired = new Set(record.firedIds)
-    const hits = record.alerts.filter((alert) => {
+    const hits = watch.filter((alert) => {
       const now = prices.get(alert.symbol)
       return now !== undefined && !fired.has(alert.id) && meets(alert, now)
     })
@@ -103,7 +128,8 @@ async function checkAll(env: Env, rebuild: boolean): Promise<void> {
       const payload = JSON.stringify({
         title: `${alert.symbol} ${alert.condition === 'above' ? '▲' : '▼'} ${alert.price}`,
         body: `현재가 ${price}`,
-        tag: alert.id,
+        // 로컬 시스템 알림과 같은 태그를 써 OS 가 하나로 합치게 한다.
+        tag: `price-${alert.id}`,
       })
       for (const sub of record.subs) {
         // 한 기기의 발송 실패(네트워크 등)가 나머지 기기와 발동 기록을 막지 않게 한다.
@@ -122,11 +148,15 @@ async function checkAll(env: Env, rebuild: boolean): Promise<void> {
       }
     }
 
+    // 죽은 구독은 그 버킷까지 지운다. 레거시 목록은 감시기가 건드리지 않는다(첫 PUT 에서 정리).
+    const alertsBy = { ...(record.alertsBy ?? {}) }
+    for (const ep of dead) delete alertsBy[ep]
     await env.SETTINGS.put(
       key,
       JSON.stringify({
         subs: record.subs.filter((s) => !dead.includes(s.endpoint)),
-        alerts: record.alerts,
+        alertsBy,
+        ...(record.alerts ? { alerts: record.alerts } : {}),
         firedIds: [...fired],
       } satisfies WatchRecord),
     )
@@ -159,14 +189,13 @@ export default {
       if (!code) return new Response('code 가 필요합니다', { status: 400 })
       const rec = await env.SETTINGS.get<WatchRecord>(`w:${code}`, 'json')
       const prices = await fetchPrices()
+      const watch = rec ? unionAlerts(rec) : []
       return Response.json({
         subs: rec?.subs.length ?? 0,
-        alerts: rec?.alerts ?? [],
+        alerts: watch,
         watched: ((await env.SETTINGS.get<string[]>(INDEX_KEY, 'json')) ?? []).includes(code),
         firedIds: rec?.firedIds ?? [],
-        livePrices: Object.fromEntries(
-          (rec?.alerts ?? []).map((a) => [a.symbol, prices.get(a.symbol) ?? null]),
-        ),
+        livePrices: Object.fromEntries(watch.map((a) => [a.symbol, prices.get(a.symbol) ?? null])),
       })
     }
 

@@ -33,6 +33,8 @@ interface AlertsWidgetProps {
   indicators: IndicatorInstance[]
   onAddIndicatorAlert: (alert: NewIndicatorAlert) => void
   permission: NotificationPermission | 'unsupported'
+  /** 시스템 알림 권한 요청 — 버튼을 눌렀을 때만 묻는다. */
+  onRequestPermission: () => void
   push: PushProps
   hasSyncCode: boolean
   onCreateSyncCode: () => string
@@ -59,6 +61,7 @@ export function AlertsWidget({
   indicators,
   onAddIndicatorAlert,
   permission,
+  onRequestPermission,
   push,
   hasSyncCode,
   onCreateSyncCode,
@@ -77,6 +80,14 @@ export function AlertsWidget({
       </header>
 
       <div className="aw-body">
+        {permission === 'default' && (
+          <p className="aw-hint aw-hint-action">
+            <span>시스템 알림을 켜면 다른 창을 보고 있어도 알려 줍니다.</span>
+            <button type="button" className="tv-btn primary" onClick={onRequestPermission}>
+              알림 허용
+            </button>
+          </p>
+        )}
         {permission === 'denied' && (
           <p className="aw-hint">시스템 알림이 차단되어 화면 안내로만 표시됩니다.</p>
         )}
@@ -152,7 +163,8 @@ export function AlertsWidget({
             <ul className="aw-rows">
               {lineAlerts.map((d) => {
                 const price = d.points[0]?.price ?? 0
-                const up = d.above !== false
+                // 지금 가격이 선 위면 초록, 아래면 빨강. 다른 종목은 실시간 가격을 모르니 기본색.
+                const up = d.symbol !== symbol || livePrice === null || livePrice >= price
                 const color = up ? 'var(--tv-up)' : 'var(--tv-down)'
                 return (
                   <li key={d.id} className={`aw-row${d.fired ? ' fired' : ''}`}>

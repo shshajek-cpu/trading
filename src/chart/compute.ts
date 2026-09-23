@@ -60,6 +60,11 @@ export interface PlotLine {
   hidden?: boolean
   /** 알림 창에서 고르는 이름. 없으면 PLOT_NAMES 로 정한다. */
   name?: string
+  /**
+   * 봉 위치에서 앞뒤로 밀려 그려지는 선(일목 선행·후행 스팬). 마지막 점이 지금 봉 시각이 아니어도
+   * 지금 봉으로 계산한 최신 값이다 — 알림은 그 값으로 판정한다.
+   */
+  displaced?: boolean
 }
 
 export interface LevelLine {
@@ -199,9 +204,9 @@ export function computeIndicator(
       base.lines = [
         { key: 'tenkan', type: 'line', points: ich.tenkan, color: c[0], legendLabel: '전환', legendFormat: 'price' },
         { key: 'kijun', type: 'line', points: ich.kijun, color: c[1], legendLabel: '기준', legendFormat: 'price' },
-        { key: 'spanA', type: 'line', points: ich.spanA, color: c[2], legendFormat: 'price' },
-        { key: 'spanB', type: 'line', points: ich.spanB, color: c[3], legendFormat: 'price' },
-        { key: 'chikou', type: 'line', points: ich.chikou, color: c[4], legendFormat: 'price' },
+        { key: 'spanA', type: 'line', points: ich.spanA, color: c[2], legendFormat: 'price', displaced: true },
+        { key: 'spanB', type: 'line', points: ich.spanB, color: c[3], legendFormat: 'price', displaced: true },
+        { key: 'chikou', type: 'line', points: ich.chikou, color: c[4], legendFormat: 'price', displaced: true },
       ]
       break
     }

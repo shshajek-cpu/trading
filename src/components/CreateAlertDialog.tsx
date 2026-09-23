@@ -198,6 +198,15 @@ export function CreateAlertDialog({
         message,
       })
     } else {
+      // 상향·하향 교차는 가격이 반대편에서 넘어와야 한다. 이미 넘어가 있으면 첫 틱에 바로 울려 버린다.
+      if (livePrice != null && priceKind === 'crossUp' && livePrice >= num) {
+        setError('현재가가 이미 이 가격 위에 있어 바로 울립니다. 더 높은 가격을 넣거나 "보다 큼"을 고르세요.')
+        return
+      }
+      if (livePrice != null && priceKind === 'crossDown' && livePrice <= num) {
+        setError('현재가가 이미 이 가격 아래에 있어 바로 울립니다. 더 낮은 가격을 넣거나 "보다 작음"을 고르세요.')
+        return
+      }
       onCreate(symbol, resolveCondition(priceKind, num, livePrice), num, message)
     }
     onClose()
