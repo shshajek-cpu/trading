@@ -12,6 +12,8 @@ export interface WatchRow {
   symbol: string
   price: number
   changePercent: number
+  /** 절대 24시간 변동액(견적 통화). */
+  change: number
 }
 
 function loadList(): string[] {
@@ -59,6 +61,7 @@ export function useWatchlist() {
               symbol: t.symbol,
               price: t.lastPrice,
               changePercent: t.priceChangePercent,
+              change: t.priceChange,
             }
           }
           setRows(next)
@@ -93,6 +96,17 @@ export function useWatchlist() {
     })
   }, [])
 
+  const reorder = useCallback((next: string[]) => {
+    setSymbols((prev) => {
+      // 순서만 바꾼다. 현재 목록과 구성이 다르면(경합) 무시한다.
+      if (next.length !== prev.length) return prev
+      const same = new Set(prev)
+      if (!next.every((s) => same.has(s))) return prev
+      saveList(next)
+      return next
+    })
+  }, [])
+
   const toggle = useCallback((symbol: string) => {
     setSymbols((prev) => {
       const next = prev.includes(symbol) ? prev.filter((s) => s !== symbol) : [...prev, symbol]
@@ -101,5 +115,5 @@ export function useWatchlist() {
     })
   }, [])
 
-  return { symbols, rows, add, remove, toggle }
+  return { symbols, rows, add, remove, toggle, reorder }
 }

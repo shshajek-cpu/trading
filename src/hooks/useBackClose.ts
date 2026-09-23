@@ -1,40 +1,59 @@
 import { useEffect, useRef } from 'react'
 
 /**
- * 안드로이드 뒤로가기(또는 브라우저 뒤로) 로 열린 것을 닫는다.
+ * 안드로이드 뒤로가기(또는 브라우저 뒤로)로 열린 것을 닫는다.
  *
  * 앱에서는 무언가 열려 있을 때 뒤로가기를 누르면 그것만 닫히는 게 당연하다.
- * 이 처리가 없으면 시트가 열린 채로 뒤로가기를 눌렀을 때 앱이 통째로 꺼져
- * 사용자가 보던 화면을 잃는다.
+ * 열릴 때 가짜 방문 기록을 하나 쌓고, 뒤로가기가 그 기록을 소비하게 둔다.
  *
- * 방법: 열릴 때 가짜 방문 기록을 하나 쌓고, 뒤로가기가 그 기록을 소비하게 둔다.
- * 화면 주소는 그대로라 새로고침하거나 공유해도 달라지는 것이 없다.
+ * 여러 개가 겹쳐 열릴 수 있다(메뉴 서랍 → 관심 목록 전체 화면). 그래서
+ * - 뒤로가기는 맨 위에 열린 것 하나만 닫는다(스택).
+ * - X 버튼 등으로 닫혀 우리가 직접 `history.back()` 을 부를 때 생기는 popstate 는
+ *   다른 오버레이를 닫지 않도록 건너뛴다. 서랍이 닫히면서 부른 back() 이
+ *   같은 순간 새로 열린 관심 목록을 닫아 버리던 문제를 막는다.
  */
+interface Entry {
+  popped: boolean
+  close: () => void
+}
+
+const stack: Entry[] = []
+let ignoredPops = 0
+let listening = false
+
+function onPopState(): void {
+  if (ignoredPops > 0) {
+    ignoredPops--
+    return
+  }
+  const top = stack.pop()
+  if (!top) return
+  top.popped = true
+  top.close()
+}
+
 export function useBackClose(open: boolean, onClose: () => void): void {
-  // 우리가 쌓은 기록인지 표시해 둔다 — 남의 기록까지 건드리면 안 된다.
-  const pushedRef = useRef(false)
   const onCloseRef = useRef(onClose)
   onCloseRef.current = onClose
 
   useEffect(() => {
     if (!open) return
-
-    window.history.pushState({ overlay: true }, '')
-    pushedRef.current = true
-
-    const onPop = () => {
-      // 뒤로가기가 우리 기록을 이미 걷어냈다. 다시 부르지 않도록 표시만 끄고 닫는다.
-      pushedRef.current = false
-      onCloseRef.current()
+    if (!listening) {
+      window.addEventListener('popstate', onPopState)
+      listening = true
     }
-    window.addEventListener('popstate', onPop)
+
+    const entry: Entry = { popped: false, close: () => onCloseRef.current() }
+    window.history.pushState({ overlay: true }, '')
+    stack.push(entry)
 
     return () => {
-      window.removeEventListener('popstate', onPop)
-      // 뒤로가기가 아니라 X 버튼 등으로 닫혔다면 쌓아둔 기록을 우리가 걷어낸다.
-      // 안 그러면 기록이 쌓여 뒤로가기를 여러 번 눌러야 앱을 벗어난다.
-      if (pushedRef.current) {
-        pushedRef.current = false
+      const index = stack.indexOf(entry)
+      if (index >= 0) stack.splice(index, 1)
+      // 뒤로가기가 아니라 코드로 닫혔다면 쌓아둔 기록을 우리가 걷어낸다.
+      // 그때 생기는 popstate 는 사용자의 뒤로가기가 아니므로 무시한다.
+      if (!entry.popped) {
+        ignoredPops++
         window.history.back()
       }
     }

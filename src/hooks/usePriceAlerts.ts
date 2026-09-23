@@ -10,6 +10,8 @@ export interface PriceAlert {
   price: number
   active: boolean
   createdAt: number
+  /** 발동 시 함께 보여줄 메모. 선택. */
+  message?: string
 }
 
 const STORAGE_KEY = 'trading.priceAlerts.v1'
@@ -24,7 +26,8 @@ function isAlert(value: unknown): value is PriceAlert {
     typeof a.price === 'number' &&
     Number.isFinite(a.price) &&
     typeof a.active === 'boolean' &&
-    typeof a.createdAt === 'number'
+    typeof a.createdAt === 'number' &&
+    (a.message === undefined || typeof a.message === 'string')
   )
 }
 
@@ -41,7 +44,7 @@ function loadAlerts(): PriceAlert[] {
 
 export interface UsePriceAlertsResult {
   alerts: PriceAlert[]
-  addAlert: (symbol: string, condition: AlertCondition, price: number) => void
+  addAlert: (symbol: string, condition: AlertCondition, price: number, message?: string) => void
   removeAlert: (id: string) => void
   /** 최신 가격을 흘려보내면 조건 충족 알림을 발동시킨다. */
   checkPrice: (symbol: string, price: number) => void
@@ -64,20 +67,25 @@ export function usePriceAlerts(
     }
   }, [alerts])
 
-  const addAlert = useCallback((symbol: string, condition: AlertCondition, price: number) => {
-    if (!Number.isFinite(price) || price <= 0) return
-    setAlerts((prev) => [
-      ...prev,
-      {
-        id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-        symbol,
-        condition,
-        price,
-        active: true,
-        createdAt: Date.now(),
-      },
-    ])
-  }, [])
+  const addAlert = useCallback(
+    (symbol: string, condition: AlertCondition, price: number, message?: string) => {
+      if (!Number.isFinite(price) || price <= 0) return
+      const trimmed = message?.trim()
+      setAlerts((prev) => [
+        ...prev,
+        {
+          id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          symbol,
+          condition,
+          price,
+          active: true,
+          createdAt: Date.now(),
+          ...(trimmed ? { message: trimmed } : {}),
+        },
+      ])
+    },
+    [],
+  )
 
   const removeAlert = useCallback((id: string) => {
     setAlerts((prev) => prev.filter((a) => a.id !== id))

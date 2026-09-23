@@ -1,64 +1,72 @@
 import { useEffect, useState } from 'react'
 import { fetchExchangeInfo } from '../lib/binance'
+import { toSymbolInfo, type SymbolInfo } from '../lib/symbols'
 
-const CACHE_KEY = 'trading.symbols.v1'
+const CACHE_KEY = 'trading.symbols.v3'
 const CACHE_TTL_MS = 12 * 60 * 60 * 1000
+
+const FALLBACK: SymbolInfo = {
+  symbol: 'BTCUSDT',
+  baseAsset: 'BTC',
+  quoteAsset: 'USDT',
+  contractType: 'PERPETUAL',
+  underlyingType: 'COIN',
+  pricePrecision: 2,
+  tickSize: 0.1,
+}
 
 interface Cached {
   at: number
-  names: string[]
+  infos: SymbolInfo[]
 }
 
-function readCache(): string[] | null {
+function readCached(): Cached | null {
   try {
     const raw = localStorage.getItem(CACHE_KEY)
     if (!raw) return null
     const c = JSON.parse(raw) as Cached
-    if (!Array.isArray(c.names) || c.names.length === 0) return null
-    return Date.now() - c.at < CACHE_TTL_MS ? c.names : null
+    if (!Array.isArray(c.infos) || c.infos.length === 0) return null
+    if (typeof c.at !== 'number') return null
+    return c
   } catch {
     return null
   }
 }
 
 /**
- * 거래중인 USDT 선물 심볼 이름 목록.
+ * 거래중인 USDT 선물 심볼 메타데이터.
  *
- * 원본(exchangeInfo)이 1MB 라 모바일 회선에서 곧잘 끊긴다. 한 번 받으면 반나절 재사용하고,
- * 실패해도 지난 목록으로 버틴다.
+ * exchangeInfo(약 1MB)는 모바일 회선에서 곧잘 끊긴다. 한 번 받으면 반나절 재사용하고,
+ * 실패해도 지난 목록으로 버틴다(만료 캐시 폴백). 아무것도 없으면 BTCUSDT 하나로 시작.
  */
-export function useSymbols(fallback: string): string[] {
-  const [symbols, setSymbols] = useState<string[]>(() => readCache() ?? [fallback])
+export function useSymbols(): SymbolInfo[] {
+  const [infos, setInfos] = useState<SymbolInfo[]>(() => readCached()?.infos ?? [FALLBACK])
 
   useEffect(() => {
-    if (readCache()) return
+    const cached = readCached()
+    if (cached && Date.now() - cached.at < CACHE_TTL_MS) return
 
     const controller = new AbortController()
     fetchExchangeInfo(controller.signal)
       .then((list) => {
         if (controller.signal.aborted) return
-        const names = list.map((s) => s.symbol).sort((a, b) => a.localeCompare(b))
-        if (names.length === 0) return
-        setSymbols(names)
+        const next = list
+          .map(toSymbolInfo)
+          .sort((a, b) => a.symbol.localeCompare(b.symbol))
+        if (next.length === 0) return
+        setInfos(next)
         try {
-          localStorage.setItem(CACHE_KEY, JSON.stringify({ at: Date.now(), names } satisfies Cached))
+          localStorage.setItem(CACHE_KEY, JSON.stringify({ at: Date.now(), infos: next } satisfies Cached))
         } catch {
           /* 저장 실패해도 이번 세션은 동작한다 */
         }
       })
       .catch(() => {
         // 목록을 못 받아도 차트는 돌아야 한다. 만료된 캐시라도 있으면 쓴다.
-        try {
-          const raw = localStorage.getItem(CACHE_KEY)
-          if (!raw) return
-          const c = JSON.parse(raw) as Cached
-          if (Array.isArray(c.names) && c.names.length > 0) setSymbols(c.names)
-        } catch {
-          /* 그래도 없으면 fallback 으로 둔다 */
-        }
+        if (cached) setInfos(cached.infos)
       })
     return () => controller.abort()
   }, [])
 
-  return symbols
+  return infos
 }

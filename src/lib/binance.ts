@@ -34,6 +34,12 @@ export interface ExchangeSymbol {
   status: string
   pricePrecision: number
   quantityPrecision: number
+  /** 분기물 인도일(ms). 무기한은 보통 아주 먼 미래값이 온다. */
+  deliveryDate?: number
+  /** COIN | INDEX 등. 주식·원자재 분류에 쓴다. */
+  underlyingType?: string
+  /** exchangeInfo 필터. 가격 자릿수(PRICE_FILTER.tickSize)를 여기서 뽑는다. */
+  filters?: { filterType: string; tickSize?: string }[]
 }
 
 interface RawExchangeInfo {

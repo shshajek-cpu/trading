@@ -1,129 +1,155 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { Chart } from './Chart'
-import { SymbolPicker } from './SymbolPicker'
-import { Icon } from './Icon'
+import { Chart, type PaneInfo, type CompareInfo } from './Chart'
+import { CoinIcon } from './CoinIcon'
+import { IndicatorSettingsDialog } from './IndicatorSettingsDialog'
 import { useBinanceKlines } from '../hooks/useBinanceKlines'
 import { useBinanceWebSocket } from '../hooks/useBinanceWebSocket'
 import { useTicker24h } from '../hooks/useTicker24h'
 import type { Candle, Interval } from '../lib/binance'
-import type { IndicatorSettings } from '../lib/indicatorConfig'
+import type { ChartSettings } from '../lib/chartSettings'
+import type { ChartType, ScaleMode } from '../lib/chartTypes'
+import { INTERVAL_INFO } from '../lib/intervals'
+import type { IndicatorInstance } from '../lib/indicatorConfig'
+import { indicatorTitle } from '../lib/indicatorConfig'
 import type { PriceAlert } from '../hooks/usePriceAlerts'
-import type { Drawing } from '../lib/drawings'
+import type { Drawing, DrawingTool, MagnetMode, NewDrawing } from '../lib/drawings'
 import type { Pin } from '../lib/pins'
 import { computeFeatures, MIN_HISTORY, type FeatureSet } from '../lib/features'
-import { COLORS } from '../lib/theme'
+import { CHART_PALETTES } from '../lib/theme'
+import { computeIndicator, indicatorLegend, type ComputedIndicator } from '../chart/compute'
+import { formatPrice } from '../chart/format'
+import { getChart } from '../lib/chartRegistry'
+import './chart.css'
+import './indicators.css'
 
-const INTERVALS: Interval[] = ['1m', '5m', '15m', '1h', '4h', '1d']
 /** 웹소켓 틱이 이보다 오래 없으면 REST 재조회로 차트를 따라잡는다. */
 const STALE_MS = 15000
 
-interface ChartCellProps {
+/** 리플레이 속도(봉당 ms). */
+const REPLAY_SPEEDS: { label: string; ms: number }[] = [
+  { label: '0.1초', ms: 100 },
+  { label: '0.3초', ms: 300 },
+  { label: '1초', ms: 1000 },
+  { label: '3초', ms: 3000 },
+]
+
+export interface ChartCellProps {
+  cellIndex: number | null
   symbol: string
+  description: string
   interval: Interval
-  symbols: string[]
-  indicators: IndicatorSettings
+  /** 심볼 가격 소수 자릿수(셸이 priceDecimals(symbol, infos)로 준다). */
+  pricePrecision: number
+  chartType: ChartType
+  scaleMode: ScaleMode
+  autoScale: boolean
+  onAutoScaleChange: (v: boolean) => void
+  compare: string[]
+  onCompareChange: (next: string[]) => void
+  indicators: IndicatorInstance[]
+  onIndicatorsChange: (next: IndicatorInstance[]) => void
+  settings: ChartSettings
   alerts: PriceAlert[]
   drawings: Drawing[]
-  drawMode: boolean
-  onDrawPrice: (price: number) => void
-  /** 핀 모드와 이 칸에 찍힌 핀들. */
+  drawingTool: DrawingTool
+  magnet: MagnetMode
+  stayInDrawingMode: boolean
+  drawingsLocked: boolean
+  drawingsHidden: boolean
+  onCreateDrawing: (d: NewDrawing) => void
+  onUpdateDrawing: (id: string, patch: Partial<Omit<Drawing, 'id'>>, opts?: { history?: boolean }) => void
+  onRemoveDrawing: (id: string) => void
+  onToolDone: () => void
   pinMode: boolean
   pins: Pin[]
   onAddPin: (input: { time: number; price: number; features: FeatureSet }) => void
   onPinFail: (reason: string) => void
-  /** 이 칸이 활성일 때, 맨 끝 시점의 지표를 위로 올려준다. */
   onLiveFeatures?: (f: FeatureSet | null) => void
-  onMoveDrawing: (id: string, price: number) => void
+  replay: boolean
+  onReplayExit: () => void
   active: boolean
-  showMiniBar: boolean
+  highlightActive: boolean
   onActivate: () => void
-  onSymbolChange: (symbol: string) => void
-  onIntervalChange: (interval: Interval) => void
   onPrice: (symbol: string, price: number) => void
-  /** 모바일 패널 컨트롤 — 지표를 접거나 그 지표 설정을 열때. */
-  onToggleIndicator?: (which: 'rsi' | 'macd') => void
-  onOpenIndicatorSettings?: () => void
-  /** 분할 그리드에서 이 칸이 차지할 자리. */
   gridStyle?: React.CSSProperties
-  /**
-   * 폰 앱 모드.
-   * 종목·시세·주기를 앱 헤더가 이미 보여주므로 칸 안의 머리띠를 접고 차트만 그린다.
-   * 현재가는 부모에게 올려 헤더가 쓰게 한다.
-   */
-  bare?: boolean
-  onLivePrice?: (price: number | null) => void
 }
 
-/** 거래량은 자리수가 커서 그대로 쓰면 정보바가 밀린다. */
-function formatVolume(value: number): string {
-  if (value >= 1e9) return `${(value / 1e9).toFixed(2)}B`
-  if (value >= 1e6) return `${(value / 1e6).toFixed(2)}M`
-  if (value >= 1e3) return `${(value / 1e3).toFixed(2)}K`
-  return value.toFixed(2)
-}
-
-function formatPrice(value: number): string {
-  const digits = value >= 1000 ? 2 : value >= 1 ? 4 : 6
-  return value.toLocaleString('en-US', {
-    minimumFractionDigits: digits,
-    maximumFractionDigits: digits,
-  })
+/** 범례 조작용 소형 아이콘(직접 그린 SVG). */
+function Ctl({ name }: { name: 'eye' | 'eyeOff' | 'gear' | 'trash' | 'caret' | 'close' }) {
+  const p: Record<typeof name, string> = {
+    eye: 'M8 3.5C4.5 3.5 2 8 2 8s2.5 4.5 6 4.5S14 8 14 8 11.5 3.5 8 3.5Zm0 7A2.5 2.5 0 1 1 8 5.5a2.5 2.5 0 0 1 0 5Z',
+    eyeOff: 'M2 2l12 12M6 6.2A2.5 2.5 0 0 0 9.8 9.8M8 3.5c3.5 0 6 4.5 6 4.5a12 12 0 0 1-1.8 2.3M4 4.6A12 12 0 0 0 2 8s2.5 4.5 6 4.5',
+    gear: 'M8 5.5A2.5 2.5 0 1 0 8 10.5 2.5 2.5 0 0 0 8 5.5Zm5.4 2.5-1.3-.4a4 4 0 0 0-.4-1l.7-1.2-1-1-1.2.7a4 4 0 0 0-1-.4L8.9 2.6H7.1L6.8 3.9a4 4 0 0 0-1 .4L4.6 3.6l-1 1 .7 1.2a4 4 0 0 0-.4 1l-1.3.4v1.6l1.3.4a4 4 0 0 0 .4 1l-.7 1.2 1 1 1.2-.7a4 4 0 0 0 1 .4l.3 1.3h1.8l.3-1.3a4 4 0 0 0 1-.4l1.2.7 1-1-.7-1.2a4 4 0 0 0 .4-1l1.3-.4Z',
+    trash: 'M5 3V2h6v1h3v1.5H2V3h3Zm-1 3h8l-.6 8H4.6L4 6Z',
+    caret: 'M4 6l4 4 4-4',
+    close: 'M3 3l10 10M13 3 3 13',
+  }
+  const stroke = name === 'caret' || name === 'close' || name === 'eyeOff'
+  return (
+    <svg viewBox="0 0 16 16" width={14} height={14} aria-hidden="true">
+      <path d={p[name]} fill={stroke ? 'none' : 'currentColor'} stroke={stroke ? 'currentColor' : 'none'} strokeWidth={1.4} strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  )
 }
 
 export function ChartCell({
+  cellIndex,
   symbol,
+  description,
   interval,
-  symbols,
+  pricePrecision,
+  chartType,
+  scaleMode,
+  autoScale,
+  onAutoScaleChange,
+  compare,
+  onCompareChange,
   indicators,
+  onIndicatorsChange,
+  settings,
   alerts,
   drawings,
-  drawMode,
-  onDrawPrice,
+  drawingTool,
+  magnet,
+  stayInDrawingMode,
+  drawingsLocked,
+  drawingsHidden,
+  onCreateDrawing,
+  onUpdateDrawing,
+  onRemoveDrawing,
+  onToolDone,
   pinMode,
   pins,
   onAddPin,
   onPinFail,
   onLiveFeatures,
-  onMoveDrawing,
+  replay,
+  onReplayExit,
   active,
-  showMiniBar,
+  highlightActive,
   onActivate,
-  onSymbolChange,
-  onIntervalChange,
   onPrice,
-  onToggleIndicator,
-  onOpenIndicatorSettings,
   gridStyle,
-  bare = false,
-  onLivePrice,
 }: ChartCellProps) {
   const [liveCandle, setLiveCandle] = useState<Candle | null>(null)
-  const [intervalOpen, setIntervalOpen] = useState(false)
-  // 크로스헤어를 올린 봉. 안 올렸으면 마지막 봉을 보여준다(트레이딩뷰와 같은 동작).
-  const [hoverCandle, setHoverCandle] = useState<Candle | null>(null)
-  /** 지표 패널이 실제로 시작하는 y 좌표와 가격축 너비. 조작 버튼을 정확히 그 자리에 놓는다. */
-  const [paneLayout, setPaneLayout] = useState<{
-    rsi: number | null
-    macd: number | null
-    axisWidth: number
-  }>({ rsi: null, macd: null, axisWidth: 64 })
+  const [hoverTime, setHoverTime] = useState<number | null>(null)
+  const [collapsed, setCollapsed] = useState(false)
+  const [settingsFor, setSettingsFor] = useState<string | null>(null)
+  const [panes, setPanes] = useState<{ list: PaneInfo[]; axisWidth: number }>({ list: [], axisWidth: 64 })
+  const [compareInfo, setCompareInfo] = useState<CompareInfo[]>([])
+  const [narrow, setNarrow] = useState(false)
+  const chartWrapRef = useRef<HTMLDivElement>(null)
 
-  // 값이 그대로면 다시 그리지 않는다 — 차트가 0.5초마다 알려 주기 때문.
-  const handlePaneLayout = useCallback(
-    (next: { rsi: number | null; macd: number | null; axisWidth: number }) => {
-      setPaneLayout((prev) =>
-        prev.rsi === next.rsi && prev.macd === next.macd && prev.axisWidth === next.axisWidth
-          ? prev
-          : next,
-      )
-    },
-    [],
-  )
+  // 리플레이 상태.
+  const [replayStart, setReplayStart] = useState<number | null>(null)
+  const [replayPos, setReplayPos] = useState(0)
+  const [replayPlaying, setReplayPlaying] = useState(false)
+  const [replaySpeed, setReplaySpeed] = useState(1000)
+  const [speedOpen, setSpeedOpen] = useState(false)
+  const replayBaseRef = useRef<Candle[]>([])
+
   const ticker = useTicker24h(symbol)
-  const { candles, loading, error, reload, loadOlder, loadingOlder } = useBinanceKlines(
-    symbol,
-    interval,
-  )
+  const { candles, loading, error, reload, loadOlder, loadingOlder } = useBinanceKlines(symbol, interval)
 
   const lastTickRef = useRef(0)
   const onPriceRef = useRef(onPrice)
@@ -138,21 +164,15 @@ export function ChartCell({
     [symbol],
   )
 
-  const handleReconnect = useCallback(() => {
-    void reload()
-  }, [reload])
-
   const status = useBinanceWebSocket(symbol, interval, {
     onCandle: handleCandle,
-    onReconnect: handleReconnect,
+    onReconnect: () => void reload(),
   })
 
-  // 폴링 시세로도 알림을 검사한다(웹소켓 데이터가 막힌 환경 대비).
   useEffect(() => {
     if (ticker) onPriceRef.current(ticker.symbol, ticker.lastPrice)
   }, [ticker])
 
-  // 틱이 끊긴 동안 REST 재조회로 따라잡는다.
   useEffect(() => {
     const timer = window.setInterval(() => {
       if (Date.now() - lastTickRef.current > STALE_MS && !loading) void reload()
@@ -160,7 +180,18 @@ export function ChartCell({
     return () => window.clearInterval(timer)
   }, [reload, loading])
 
-  // 심볼/인터벌 변경 시 이전 실시간 봉 폐기
+  // 좁은 칸(범례 컨테이너 < 520px, 예: 폰)에서는 OHLC 를 한 줄로 접는다.
+  useEffect(() => {
+    const el = chartWrapRef.current
+    if (!el) return
+    const ro = new ResizeObserver((entries) => {
+      for (const e of entries) setNarrow(e.contentRect.width < 520)
+    })
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
+
+  // 심볼/주기 변경 시 이전 실시간 봉 폐기.
   const seriesKey = `${symbol}-${interval}`
   const seriesKeyRef = useRef(seriesKey)
   if (seriesKeyRef.current !== seriesKey) {
@@ -176,193 +207,241 @@ export function ChartCell({
     return [...candles, liveCandle]
   }, [candles, liveCandle])
 
-  // 정보바에 쓸 봉 — 크로스헤어를 올렸으면 그 봉, 아니면 맨 끝.
-  const legendCandle = hoverCandle ?? mergedCandles[mergedCandles.length - 1] ?? null
-  const legendUp = legendCandle ? legendCandle.close >= legendCandle.open : true
-  const legendChange =
-    legendCandle && legendCandle.open > 0
-      ? ((legendCandle.close - legendCandle.open) / legendCandle.open) * 100
-      : 0
+  const replayPicking = replay && replayStart === null
 
-  // 핀을 찍은 캔들의 지표를 그 시점 기준으로 계산한다.
-  const handlePinPoint = useCallback(
+  // 리플레이 진입/이탈 처리. 이탈하면 TradingView처럼 실시간 끝으로 돌아간다.
+  const wasReplayRef = useRef(false)
+  useEffect(() => {
+    if (replay) {
+      replayBaseRef.current = mergedCandles
+      setReplayStart(null)
+      setReplayPos(0)
+      setReplayPlaying(false)
+    } else {
+      setReplayStart(null)
+      setReplayPlaying(false)
+      if (wasReplayRef.current && cellIndex !== null) {
+        // 전체 캔들이 다시 그려진 뒤에 옮겨야 한다.
+        window.setTimeout(() => getChart(cellIndex)?.scrollToRealtime(), 50)
+      }
+    }
+    wasReplayRef.current = replay
+    // 진입 시점의 캔들만 스냅샷한다.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [replay])
+
+  // 재생: 일정 간격으로 한 봉씩 전진.
+  useEffect(() => {
+    if (!replay || replayStart === null || !replayPlaying) return
+    const total = replayBaseRef.current.length
+    const timer = window.setInterval(() => {
+      setReplayPos((pos) => {
+        if (pos >= total - 1) {
+          setReplayPlaying(false)
+          return pos
+        }
+        return pos + 1
+      })
+    }, replaySpeed)
+    return () => window.clearInterval(timer)
+  }, [replay, replayStart, replayPlaying, replaySpeed])
+
+  // 차트에 넘길 캔들 — 리플레이 중엔 잘라서, 아니면 실시간 병합본.
+  const chartCandles = useMemo(() => {
+    if (!replay) return mergedCandles
+    const base = replayBaseRef.current
+    if (replayStart === null) return base
+    return base.slice(0, Math.max(1, replayPos + 1))
+  }, [replay, replayStart, replayPos, mergedCandles])
+
+  const palette = CHART_PALETTES[settings.theme]
+
+  // 지표 계산 — 캔들 수가 바뀔 때만(요건: ≤1/s 스로틀). 값은 참조가 아니라 개수로 감시.
+  const candleCount = chartCandles.length
+  const computed = useMemo<ComputedIndicator[]>(
+    () =>
+      indicators
+        .filter((i) => i.visible)
+        .map((i) => computeIndicator(i, chartCandles, palette)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [candleCount, indicators, palette, symbol, interval, chartType],
+  )
+  const computedById = useMemo(() => {
+    const map: Record<string, ComputedIndicator> = {}
+    for (const c of computed) map[c.instanceId] = c
+    return map
+  }, [computed])
+
+  // 범례에 쓸 봉 — 크로스헤어를 올렸으면 그 봉, 아니면 마지막.
+  const legendCandle = useMemo(() => {
+    if (hoverTime !== null) {
+      const found = chartCandles.find((c) => c.time === hoverTime)
+      if (found) return found
+    }
+    return chartCandles[chartCandles.length - 1] ?? null
+  }, [hoverTime, chartCandles])
+  const legendUp = legendCandle ? legendCandle.close >= legendCandle.open : true
+  const legendChange = legendCandle ? legendCandle.close - legendCandle.open : 0
+  const legendChangePct =
+    legendCandle && legendCandle.open > 0 ? (legendChange / legendCandle.open) * 100 : 0
+
+  // 핀 클릭/리플레이 클릭 라우팅.
+  const handleChartClick = useCallback(
     (time: number, price: number) => {
-      const index = mergedCandles.findIndex((c) => c.time === time)
-      if (index < 0) {
-        onPinFail('캔들을 찾지 못했습니다.')
+      if (replayPicking) {
+        const base = replayBaseRef.current
+        const idx = base.findIndex((c) => c.time === time)
+        if (idx >= 0) {
+          setReplayStart(time)
+          setReplayPos(idx)
+        }
         return
       }
-      if (index < MIN_HISTORY) {
-        onPinFail(`지표를 계산하려면 앞쪽 캔들이 ${MIN_HISTORY}개 이상 필요합니다. 왼쪽으로 밀어 과거를 더 불러오세요.`)
-        return
+      if (pinMode) {
+        const idx = mergedCandles.findIndex((c) => c.time === time)
+        if (idx < 0) return onPinFail('캔들을 찾지 못했습니다.')
+        if (idx < MIN_HISTORY)
+          return onPinFail(
+            `지표를 계산하려면 앞쪽 캔들이 ${MIN_HISTORY}개 이상 필요합니다. 왼쪽으로 밀어 과거를 더 불러오세요.`,
+          )
+        const features = computeFeatures(mergedCandles, idx)
+        if (!features) return onPinFail('이 지점은 지표를 계산할 수 없습니다.')
+        onAddPin({ time, price, features })
       }
-      const features = computeFeatures(mergedCandles, index)
-      if (!features) {
-        onPinFail('이 지점은 지표를 계산할 수 없습니다.')
-        return
-      }
-      onAddPin({ time, price, features })
     },
-    [mergedCandles, onAddPin, onPinFail],
+    [replayPicking, pinMode, mergedCandles, onAddPin, onPinFail],
   )
 
-  // 맨 끝 캔들 기준 지표. 매 틱마다 돌리면 무거우니 캔들 수가 바뀔 때만 계산한다.
-  const candleCount = mergedCandles.length
+  // 맨 끝 봉 기준 실시간 지표(핀 자동 판정용).
   useEffect(() => {
     if (!onLiveFeatures) return
-    if (candleCount <= MIN_HISTORY) {
+    if (mergedCandles.length <= MIN_HISTORY) {
       onLiveFeatures(null)
       return
     }
-    onLiveFeatures(computeFeatures(mergedCandles, candleCount - 1))
-    // mergedCandles 는 틱마다 새 배열이 된다 — 길이로만 다시 계산한다.
+    onLiveFeatures(computeFeatures(mergedCandles, mergedCandles.length - 1))
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [candleCount, symbol, interval, onLiveFeatures])
+  }, [mergedCandles.length, symbol, interval, onLiveFeatures])
 
-  const livePrice = mergedCandles.length > 0 ? mergedCandles[mergedCandles.length - 1].close : null
-  const changePercent = ticker?.priceChangePercent ?? null
-  const positive = (changePercent ?? 0) >= 0
+  const symbolAlerts = useMemo(() => alerts.filter((a) => a.symbol === symbol && a.active), [alerts, symbol])
+  const symbolDrawings = useMemo(() => drawings.filter((d) => d.symbol === symbol), [drawings, symbol])
 
-  // 폰 앱 헤더가 현재가를 크게 보여준다 — 값이 바뀔 때만 올린다.
-  const onLivePriceRef = useRef(onLivePrice)
-  onLivePriceRef.current = onLivePrice
-  useEffect(() => {
-    onLivePriceRef.current?.(livePrice)
-  }, [livePrice])
+  const base = symbol.replace(/USDT$|USDC$|BUSD$/, '')
+  const overlayEnabled = active && !pinMode && !replayPicking
 
-  const symbolAlerts = useMemo(
-    () => alerts.filter((a) => a.symbol === symbol && a.active),
-    [alerts, symbol],
+  const toggleVisible = useCallback(
+    (id: string) => onIndicatorsChange(indicators.map((i) => (i.id === id ? { ...i, visible: !i.visible } : i))),
+    [indicators, onIndicatorsChange],
   )
-  const symbolDrawings = useMemo(
-    () => drawings.filter((d) => d.symbol === symbol),
-    [drawings, symbol],
+  const removeIndicator = useCallback(
+    (id: string) => onIndicatorsChange(indicators.filter((i) => i.id !== id)),
+    [indicators, onIndicatorsChange],
+  )
+  const updateIndicator = useCallback(
+    (next: IndicatorInstance) => onIndicatorsChange(indicators.map((i) => (i.id === next.id ? next : i))),
+    [indicators, onIndicatorsChange],
   )
 
+  const overlays = indicators.filter((i) => {
+    const c = computedById[i.id]
+    return !c || c.overlay || c.isVolume
+  })
+  const oscillators = indicators.filter((i) => {
+    const c = computedById[i.id]
+    return c && !c.overlay && !c.isVolume
+  })
+  const settingsInstance = settingsFor ? indicators.find((i) => i.id === settingsFor) ?? null : null
+
+  const fmtPrice = (v: number) => formatPrice(v, pricePrecision)
+
+  const renderIndicatorRow = (inst: IndicatorInstance) => {
+    const comp = computedById[inst.id]
+    const entries = comp && inst.visible ? indicatorLegend(comp, hoverTime, fmtPrice) : []
+    return (
+      <div className="tv-ind-row" key={inst.id}>
+        <span className="tv-ind-title">{indicatorTitle(inst)}</span>
+        {inst.visible ? (
+          entries.map((e, i) => (
+            <span key={i} className="tv-ind-val" style={{ color: e.color }}>
+              {e.label ? <em>{e.label}</em> : null}
+              {e.text}
+            </span>
+          ))
+        ) : (
+          <span className="tv-ind-hidden">숨김</span>
+        )}
+        <span className="tv-ind-ctl">
+          <button type="button" title={inst.visible ? '숨기기' : '표시'} onClick={() => toggleVisible(inst.id)}>
+            <Ctl name={inst.visible ? 'eye' : 'eyeOff'} />
+          </button>
+          <button type="button" title="설정" onClick={() => setSettingsFor(inst.id)}>
+            <Ctl name="gear" />
+          </button>
+          <button type="button" title="삭제" onClick={() => removeIndicator(inst.id)}>
+            <Ctl name="trash" />
+          </button>
+        </span>
+      </div>
+    )
+  }
 
   return (
-    // 칸 어디를 눌러도 활성 칸이 되도록 하는 래퍼. 키보드 조작 대상이 아니라 온클릭만 둔다.
+    // 칸 어디를 눌러도 활성 칸이 되게 하는 래퍼.
     // eslint-disable-next-line jsx-a11y/no-static-element-interactions, jsx-a11y/click-events-have-key-events
     <section
-      className={`chart-cell${active ? ' active' : ''}${bare ? ' bare' : ''}`}
+      className={`chart-cell${active ? ' active' : ''}${highlightActive ? ' highlight' : ''}`}
       style={gridStyle}
       onMouseDownCapture={onActivate}
     >
-      {showMiniBar && !bare && (
-        <div className="cell-bar">
-          <SymbolPicker symbol={symbol} symbols={symbols} onChange={onSymbolChange} />
-          <div className="seg intervals" role="group" aria-label="주기">
-            {INTERVALS.map((iv) => (
-              <button
-                key={iv}
-                type="button"
-                aria-pressed={iv === interval}
-                className={iv === interval ? 'active' : undefined}
-                onClick={() => onIntervalChange(iv)}
-              >
-                {iv}
-              </button>
-            ))}
-          </div>
-
-          {/* 모바일: 분봉을 나열하지 않고 현재값 하나만 보이는 드롭다운으로. */}
-          <div className="interval-select">
-            <button
-              type="button"
-              className="interval-current"
-              aria-label={`주기 ${interval}, 눌러서 변경`}
-              aria-expanded={intervalOpen}
-              onClick={() => setIntervalOpen((v) => !v)}
-            >
-              <span>{interval}</span>
-              <Icon name="chevron" size={13} />
-            </button>
-            {intervalOpen && (
-              <>
-                <button
-                  type="button"
-                  className="interval-backdrop"
-                  aria-label="닫기"
-                  onClick={() => setIntervalOpen(false)}
-                />
-                <div className="interval-menu">
-                  {INTERVALS.map((iv) => (
-                    <button
-                      key={iv}
-                      type="button"
-                      className={iv === interval ? 'active' : undefined}
-                      onClick={() => {
-                        onIntervalChange(iv)
-                        setIntervalOpen(false)
-                      }}
-                    >
-                      {iv}
-                    </button>
-                  ))}
-                </div>
-              </>
-            )}
-          </div>
-          <div className="price-block">
-            <span
-              className="last-price"
-              style={{
-                color: livePrice === null ? COLORS.text : positive ? COLORS.up : COLORS.down,
-              }}
-            >
-              {livePrice === null ? '—' : formatPrice(livePrice)}
-            </span>
-            {changePercent !== null && (
-              <span
-                className={`change ${positive ? 'up' : 'down'}`}
-                style={{ color: positive ? COLORS.up : COLORS.down }}
-              >
-                {positive ? '+' : ''}
-                {changePercent.toFixed(2)}%
-              </span>
-            )}
-            <span
-              className={`ws-status ws-${status}`}
-              title={
-                status === 'open'
-                  ? '실시간 연결됨'
-                  : status === 'connecting'
-                    ? '연결하는 중'
-                    : '연결 끊김'
-              }
-            >
-              ●
-            </span>
-          </div>
-        </div>
-      )}
-
-      <div className="cell-chart">
+      <div className="cell-chart" ref={chartWrapRef}>
         <Chart
           key={seriesKey}
-          candles={mergedCandles}
+          symbol={symbol}
           interval={interval}
-          indicators={indicators}
+          candles={chartCandles}
+          pricePrecision={pricePrecision}
+          chartType={chartType}
+          scaleMode={scaleMode}
+          autoScale={autoScale}
+          onAutoScaleChange={onAutoScaleChange}
+          compare={compare}
+          indicators={computed}
+          settings={settings}
           alerts={symbolAlerts}
           drawings={symbolDrawings}
-          drawMode={drawMode}
-          pinMode={pinMode}
           pins={pins}
-          onPinPoint={handlePinPoint}
-          onDrawPrice={onDrawPrice}
-          onMoveDrawing={onMoveDrawing}
+          cellIndex={cellIndex}
+          drawingTool={drawingTool}
+          magnet={magnet}
+          stayInDrawingMode={stayInDrawingMode}
+          drawingsLocked={drawingsLocked}
+          drawingsHidden={drawingsHidden}
+          overlayEnabled={overlayEnabled}
+          onCreateDrawing={onCreateDrawing}
+          onUpdateDrawing={onUpdateDrawing}
+          onRemoveDrawing={onRemoveDrawing}
+          onToolDone={onToolDone}
           onReachStart={() => void loadOlder()}
-          onHoverCandle={setHoverCandle}
-          onPaneLayout={onToggleIndicator ? handlePaneLayout : undefined}
+          onHoverTime={setHoverTime}
+          onPanes={(list, axisWidth) => setPanes({ list, axisWidth })}
+          replayPick={replayPicking}
+          captureClicks={pinMode || replayPicking}
+          onChartClick={handleChartClick}
+          onCompareInfo={setCompareInfo}
         />
-        {/* 트레이딩뷰식 OHLC 정보바 — 크로스헤어를 올린 봉, 안 올렸으면 마지막 봉. */}
-        {legendCandle && (
-          <div className="ohlc-legend">
-            <span className="ohlc-sym">
-              {symbol.replace('USDT', '')}
-              <em>{interval}</em>
+
+        {/* 트레이딩뷰식 범례(왼쪽 위). */}
+        <div className="tv-legend">
+          <div className="tv-legend-head">
+            <CoinIcon base={base} size={18} />
+            <span className="tv-legend-title">{description}</span>
+            <span className="tv-legend-meta">
+              · {INTERVAL_INFO[interval].short} · Binance
             </span>
-            <span className="ohlc-values" style={{ color: legendUp ? COLORS.up : COLORS.down }}>
+            <span className={`tv-dot ${status === 'open' ? 'ok' : status === 'connecting' ? 'warn' : 'bad'}`} />
+          </div>
+          {settings.showLegendOhlc && legendCandle && !narrow && (
+            <div className="tv-legend-ohlc" style={{ color: legendUp ? settings.upColor : settings.downColor }}>
               {([
                 ['시', legendCandle.open],
                 ['고', legendCandle.high],
@@ -371,68 +450,101 @@ export function ChartCell({
               ] as const).map(([label, value]) => (
                 <span key={label}>
                   <em>{label}</em>
-                  {formatPrice(value)}
+                  {fmtPrice(value)}
                 </span>
               ))}
-              <span className="ohlc-chg">
+              <span className="tv-legend-chg">
                 {legendUp ? '+' : ''}
-                {legendChange.toFixed(2)}%
+                {fmtPrice(legendChange)} ({legendUp ? '+' : ''}
+                {legendChangePct.toFixed(2)}%)
               </span>
-            </span>
-            <span className="ohlc-vol">
-              <em>거래량</em>
-              {formatVolume(legendCandle.volume)}
-            </span>
-          </div>
-        )}
+            </div>
+          )}
+          {settings.showLegendOhlc && legendCandle && narrow && (
+            <div className="tv-legend-ohlc compact" style={{ color: legendUp ? settings.upColor : settings.downColor }}>
+              <span>
+                <em>C</em>
+                {fmtPrice(legendCandle.close)}
+              </span>
+              <span className="tv-legend-chg">
+                {legendUp ? '+' : ''}
+                {fmtPrice(legendChange)} ({legendUp ? '+' : ''}
+                {legendChangePct.toFixed(2)}%)
+              </span>
+            </div>
+          )}
+
+          {settings.showIndicatorLegend && (overlays.length > 0 || compare.length > 0) && (
+            <div className="tv-legend-inds">
+              <button
+                type="button"
+                className="tv-legend-collapse"
+                title={collapsed ? '지표 펼치기' : '지표 접기'}
+                aria-expanded={!collapsed}
+                onClick={() => setCollapsed((v) => !v)}
+              >
+                <span className={collapsed ? 'flip' : undefined}>
+                  <Ctl name="caret" />
+                </span>
+              </button>
+              {!collapsed && (
+                <div className="tv-legend-inds-list">
+                  {overlays.map(renderIndicatorRow)}
+                  {compare.map((sym) => {
+                    const info = compareInfo.find((c) => c.symbol === sym)
+                    return (
+                      <div className="tv-ind-row compare" key={sym}>
+                        <span className="tv-ind-title" style={info ? { color: info.color } : undefined}>
+                          {sym.replace(/USDT$/, '')}
+                        </span>
+                        {info && (
+                          <span className="tv-ind-val" style={{ color: info.color }}>
+                            {info.changePct >= 0 ? '+' : ''}
+                            {info.changePct.toFixed(2)}%
+                          </span>
+                        )}
+                        <button
+                          type="button"
+                          title="비교 제거"
+                          onClick={() => onCompareChange(compare.filter((s) => s !== sym))}
+                        >
+                          <Ctl name="close" />
+                        </button>
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+
+        {/* 오실레이터 패널 범례 — 잰 패널 상단 위치에 놓는다. */}
+        {settings.showIndicatorLegend &&
+          panes.list.map((pane) => {
+            const inst = oscillators.find((o) => o.id === pane.instanceId)
+            if (!inst) return null
+            return (
+              <div className="tv-osc-legend" key={pane.instanceId} style={{ top: `${pane.top + 4}px` }}>
+                {renderIndicatorRow(inst)}
+              </div>
+            )
+          })}
+
         {loadingOlder && (
           <div className="loading-older">
             <span className="spinner" />
             과거 불러오는 중
           </div>
         )}
-        {/* 지표 패널 이름표 + 조작 — 패널이 실제로 시작하는 자리(왼쪽 위)에 붙인다.
-            가격축은 오른쪽이므로 왼쪽 위가 눈금·값과 가장 덜 겹친다. */}
-        {onToggleIndicator && (indicators.rsi.enabled || indicators.macd.enabled) && (
-          <div className="pane-controls">
-            {(['rsi', 'macd'] as const)
-              .filter((which) => indicators[which].enabled && paneLayout[which] !== null)
-              .map((which) => (
-                <div
-                  key={which}
-                  className="pane-ctl"
-                  style={{ top: `${(paneLayout[which] ?? 0) + 5}px` }}
-                >
-                  <span className="pane-name">{which.toUpperCase()}</span>
-                  <button
-                    type="button"
-                    title={`${which.toUpperCase()} 설정`}
-                    aria-label={`${which.toUpperCase()} 설정`}
-                    onClick={onOpenIndicatorSettings}
-                  >
-                    <Icon name="settings" size={15} />
-                  </button>
-                  <button
-                    type="button"
-                    title={`${which.toUpperCase()} 닫기`}
-                    aria-label={`${which.toUpperCase()} 닫기`}
-                    onClick={() => onToggleIndicator(which)}
-                  >
-                    <Icon name="close" size={15} />
-                  </button>
-                </div>
-              ))}
-          </div>
-        )}
 
-        {loading && mergedCandles.length === 0 && (
+        {loading && chartCandles.length === 0 && (
           <div className="overlay">
             <span className="spinner lg" />
             불러오는 중
           </div>
         )}
-        {/* 캐시된 추세가 이미 보이면 오류로 덮지 않는다 — 뒤에서 알아서 다시 받는다. */}
-        {error && mergedCandles.length === 0 && (
+        {error && chartCandles.length === 0 && (
           <div className="overlay error">
             <p>
               {error.message === 'Failed to fetch'
@@ -440,12 +552,68 @@ export function ChartCell({
                 : `데이터를 불러오지 못했습니다: ${error.message}`}
             </p>
             <button type="button" className="cta" onClick={() => void reload()}>
-              <Icon name="refresh" size={16} />
               다시 시도
             </button>
           </div>
         )}
+
+        {/* 리플레이 안내 + 컨트롤러. */}
+        {replayPicking && <div className="replay-hint">리플레이 시작점을 선택하세요</div>}
+        {replay && replayStart !== null && (
+          <div className="replay-controller">
+            <button
+              type="button"
+              title={replayPlaying ? '일시정지' : '재생'}
+              onClick={() => setReplayPlaying((v) => !v)}
+            >
+              {replayPlaying ? '⏸' : '▶'}
+            </button>
+            <button
+              type="button"
+              title="한 봉 앞으로"
+              onClick={() => setReplayPos((p) => Math.min(replayBaseRef.current.length - 1, p + 1))}
+            >
+              ⏭
+            </button>
+            <div className="replay-speed">
+              <button type="button" onClick={() => setSpeedOpen((v) => !v)}>
+                {REPLAY_SPEEDS.find((s) => s.ms === replaySpeed)?.label ?? '1초'}
+              </button>
+              {speedOpen && (
+                <div className="replay-speed-menu">
+                  {REPLAY_SPEEDS.map((s) => (
+                    <button
+                      key={s.ms}
+                      type="button"
+                      className={s.ms === replaySpeed ? 'active' : undefined}
+                      onClick={() => {
+                        setReplaySpeed(s.ms)
+                        setSpeedOpen(false)
+                      }}
+                    >
+                      {s.label}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+            <button type="button" className="replay-live" title="실시간으로" onClick={onReplayExit}>
+              실시간으로
+            </button>
+            <button type="button" title="리플레이 종료" onClick={onReplayExit}>
+              <Ctl name="close" />
+            </button>
+          </div>
+        )}
       </div>
+
+      {settingsInstance && (
+        <IndicatorSettingsDialog
+          instance={settingsInstance}
+          onChange={updateIndicator}
+          onClose={() => setSettingsFor(null)}
+        />
+      )}
     </section>
   )
 }

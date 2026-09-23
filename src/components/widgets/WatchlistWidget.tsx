@@ -1,0 +1,253 @@
+import { useEffect, useMemo, useRef, useState } from 'react'
+import type { WatchRow } from '../../hooks/useWatchlist'
+import { CoinIcon } from '../CoinIcon'
+import { Icon } from '../Icon'
+import { Popover, MenuItem } from '../ui/Popover'
+import { SymbolSearchDialog } from '../SymbolSearchDialog'
+import { describeSymbol, displaySymbol, priceDecimals, type SymbolInfo } from '../../lib/symbols'
+import './widgets.css'
+
+interface WatchlistWidgetProps {
+  symbols: string[]
+  rows: Record<string, WatchRow>
+  infos: SymbolInfo[]
+  current: string
+  onPick: (s: string) => void
+  onAdd: (s: string) => void
+  onRemove: (s: string) => void
+  onReorder: (next: string[]) => void
+  variant: 'panel' | 'fullscreen'
+  onClose?: () => void
+}
+
+type SortCol = 'symbol' | 'price' | 'change' | 'changePercent'
+type SortDir = 'asc' | 'desc' | 'none'
+
+function fmtPrice(n: number, decimals: number): string {
+  return n.toLocaleString('en-US', { minimumFractionDigits: decimals, maximumFractionDigits: decimals })
+}
+
+function fmtChange(n: number, decimals: number): string {
+  return `${n > 0 ? '+' : ''}${fmtPrice(n, decimals)}`
+}
+
+function fmtPct(n: number): string {
+  return `${n > 0 ? '+' : ''}${n.toFixed(2)}%`
+}
+
+export function WatchlistWidget({
+  symbols,
+  rows,
+  infos,
+  current,
+  onPick,
+  onAdd,
+  onRemove,
+  onReorder,
+  variant,
+  onClose,
+}: WatchlistWidgetProps) {
+  const [sortCol, setSortCol] = useState<SortCol>('symbol')
+  const [sortDir, setSortDir] = useState<SortDir>('none')
+  const [addOpen, setAddOpen] = useState(false)
+  const [menuOpen, setMenuOpen] = useState(false)
+  const menuBtn = useRef<HTMLButtonElement>(null)
+
+  // 마지막 틱 방향 플래시.
+  const prevPrices = useRef<Record<string, number>>({})
+  const [flash, setFlash] = useState<Record<string, 'up' | 'down'>>({})
+  useEffect(() => {
+    const next: Record<string, 'up' | 'down'> = {}
+    for (const s of symbols) {
+      const p = rows[s]?.price
+      const old = prevPrices.current[s]
+      if (p != null && old != null && p !== old) next[s] = p > old ? 'up' : 'down'
+      if (p != null) prevPrices.current[s] = p
+    }
+    if (Object.keys(next).length === 0) return
+    setFlash(next)
+    const t = setTimeout(() => setFlash({}), 400)
+    return () => clearTimeout(t)
+  }, [rows, symbols])
+
+  const sorted = useMemo(() => {
+    if (sortDir === 'none') return symbols
+    const factor = sortDir === 'asc' ? 1 : -1
+    const key = (s: string): number | string => {
+      const r = rows[s]
+      if (sortCol === 'symbol') return s
+      if (!r) return sortDir === 'asc' ? Infinity : -Infinity
+      if (sortCol === 'price') return r.price
+      if (sortCol === 'change') return r.change
+      return r.changePercent
+    }
+    return [...symbols].sort((a, b) => {
+      const ka = key(a)
+      const kb = key(b)
+      if (typeof ka === 'string' && typeof kb === 'string') return ka.localeCompare(kb) * factor
+      return ((ka as number) - (kb as number)) * factor
+    })
+  }, [symbols, rows, sortCol, sortDir])
+
+  const cycleSort = (col: SortCol) => {
+    if (sortCol !== col) {
+      setSortCol(col)
+      setSortDir('asc')
+      return
+    }
+    setSortDir((d) => (d === 'none' ? 'asc' : d === 'asc' ? 'desc' : 'none'))
+  }
+
+  const sortMark = (col: SortCol) => (sortCol === col && sortDir !== 'none' ? (sortDir === 'asc' ? '▲' : '▼') : '')
+
+  // 드래그 정렬(정렬이 없을 때만).
+  const dragFrom = useRef<number | null>(null)
+  const canDrag = sortDir === 'none' && variant === 'panel'
+  const onDrop = (to: number) => {
+    const from = dragFrom.current
+    dragFrom.current = null
+    if (from == null || from === to) return
+    const next = [...symbols]
+    const [moved] = next.splice(from, 1)
+    next.splice(to, 0, moved)
+    onReorder(next)
+  }
+
+  const clearAll = () => {
+    setMenuOpen(false)
+    if (symbols.length === 0) return
+    if (!window.confirm('관심 목록을 모두 지울까요?')) return
+    for (const s of symbols) onRemove(s)
+  }
+
+  const isFull = variant === 'fullscreen'
+
+  return (
+    <section className={`wl${isFull ? ' wl-full' : ''}`}>
+      <header className="wl-head">
+        <span className="wl-title">
+          관심 목록 <span className="wl-caret">▾</span>
+        </span>
+        <button type="button" className="tv-icon-btn" aria-label="심볼 추가" onClick={() => setAddOpen(true)}>
+          <Icon name="plus" size={18} />
+        </button>
+        {isFull ? (
+          <button type="button" className="tv-icon-btn" aria-label="닫기" onClick={onClose}>
+            <Icon name="close" size={18} />
+          </button>
+        ) : (
+          <button
+            ref={menuBtn}
+            type="button"
+            className="tv-icon-btn"
+            aria-label="더보기"
+            onClick={() => setMenuOpen((v) => !v)}
+          >
+            <Icon name="more" size={18} />
+          </button>
+        )}
+      </header>
+
+      {!isFull && (
+        <div className="wl-cols">
+          <button type="button" className="wl-col wl-col-sym" onClick={() => cycleSort('symbol')}>
+            심볼 <span className="wl-mark">{sortMark('symbol')}</span>
+          </button>
+          <button type="button" className="wl-col wl-col-num" onClick={() => cycleSort('price')}>
+            현재가 <span className="wl-mark">{sortMark('price')}</span>
+          </button>
+          <button type="button" className="wl-col wl-col-num wl-col-change" onClick={() => cycleSort('change')}>
+            변동 <span className="wl-mark">{sortMark('change')}</span>
+          </button>
+          <button type="button" className="wl-col wl-col-num" onClick={() => cycleSort('changePercent')}>
+            변동% <span className="wl-mark">{sortMark('changePercent')}</span>
+          </button>
+        </div>
+      )}
+
+      <ul className="wl-rows">
+        {sorted.map((s, idx) => {
+          const r = rows[s]
+          const pct = r?.changePercent ?? 0
+          const up = pct >= 0
+          const color = up ? 'var(--tv-up)' : 'var(--tv-down)'
+          const dec = priceDecimals(s, infos)
+          return (
+            <li
+              key={s}
+              className={`wl-row${s === current ? ' active' : ''}${flash[s] ? ` flash-${flash[s]}` : ''}`}
+              draggable={canDrag}
+              onDragStart={() => (dragFrom.current = idx)}
+              onDragOver={(e) => canDrag && e.preventDefault()}
+              onDrop={() => canDrag && onDrop(idx)}
+              onClick={() => onPick(s)}
+            >
+              <CoinIcon base={infos.find((i) => i.symbol === s)?.baseAsset ?? s.replace(/USDT.*/, '')} size={isFull ? 28 : 18} />
+              {isFull ? (
+                <>
+                  <div className="wl-full-main">
+                    <span className="wl-full-sym">{displaySymbol(s, infos)}</span>
+                    <span className="wl-full-desc">{describeSymbol(s, infos)}</span>
+                  </div>
+                  <div className="wl-full-num">
+                    <span className="wl-full-price">{r ? fmtPrice(r.price, dec) : '—'}</span>
+                    <span className="wl-full-chg" style={{ color }}>
+                      {r ? `${fmtChange(r.change, dec)} ${fmtPct(pct)}` : ''}
+                    </span>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <span className="wl-sym">{displaySymbol(s, infos)}</span>
+                  <span className="wl-price">{r ? fmtPrice(r.price, dec) : '—'}</span>
+                  <span className="wl-num wl-change" style={{ color }}>
+                    {r ? fmtChange(r.change, dec) : ''}
+                  </span>
+                  <span className="wl-num" style={{ color }}>
+                    {r ? fmtPct(pct) : ''}
+                  </span>
+                  <button
+                    type="button"
+                    className="tv-icon-btn wl-remove"
+                    aria-label="목록에서 제거"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      onRemove(s)
+                    }}
+                  >
+                    <Icon name="close" size={14} />
+                  </button>
+                </>
+              )}
+            </li>
+          )
+        })}
+        {symbols.length === 0 && <li className="wl-empty">관심 목록이 비어 있습니다.</li>}
+      </ul>
+
+      {!isFull && (
+        <Popover anchor={menuBtn.current} open={menuOpen} onClose={() => setMenuOpen(false)} placement="bottom-end">
+          <MenuItem
+            label="정렬 초기화"
+            onSelect={() => {
+              setSortDir('none')
+              setSortCol('symbol')
+              setMenuOpen(false)
+            }}
+          />
+          <MenuItem label="모두 지우기" onSelect={clearAll} />
+        </Popover>
+      )}
+
+      <SymbolSearchDialog
+        open={addOpen}
+        onClose={() => setAddOpen(false)}
+        title="관심 목록에 추가"
+        symbols={infos}
+        onSelect={onAdd}
+        selected={symbols}
+        keepOpen
+      />
+    </section>
+  )
+}

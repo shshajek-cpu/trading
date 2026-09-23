@@ -1,0 +1,146 @@
+/* 그리기 입력 오버레이 — tokens.css 변수만 사용, blur 없음. */
+.tv-drawoverlay {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  z-index: 3;
+}
+
+.tv-draw-zoombox {
+  position: absolute;
+  border: 1px dashed var(--tv-accent);
+  background: rgb(41 98 255 / 12%);
+  pointer-events: none;
+}
+
+.tv-draw-textedit {
+  position: absolute;
+  z-index: 6;
+  min-width: 80px;
+  height: 24px;
+  padding: 0 6px;
+  border: 1px solid var(--tv-accent);
+  border-radius: var(--tv-radius-sm);
+  background: var(--tv-elevated);
+  color: var(--tv-text);
+  font: var(--tv-fs) / 1 var(--tv-font);
+  outline: none;
+  pointer-events: auto;
+}
+
+/* ── 선택된 그림 플로팅 툴바 ── */
+.tv-draw-seltoolbar {
+  position: absolute;
+  top: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 5;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  height: 36px;
+  padding: 0 4px;
+  background: var(--tv-elevated);
+  border: 1px solid var(--tv-border);
+  border-radius: var(--tv-radius);
+  box-shadow: var(--tv-shadow);
+  pointer-events: auto;
+}
+
+.tv-draw-seltoolbar.moved {
+  transform: none;
+}
+
+.tv-draw-selgrip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 28px;
+  border: 0;
+  border-radius: var(--tv-radius-sm);
+  background: transparent;
+  color: var(--tv-text-dim);
+  cursor: grab;
+}
+
+.tv-draw-selgrip:active {
+  cursor: grabbing;
+}
+
+.tv-draw-selbtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--tv-radius-sm);
+  background: transparent;
+  color: var(--tv-text);
+  cursor: pointer;
+}
+
+.tv-draw-selbtn:hover {
+  background: var(--tv-hover);
+}
+
+.tv-draw-selbtn.on {
+  color: var(--tv-accent-text);
+  background: var(--tv-row-active);
+}
+
+.tv-draw-swatch {
+  display: inline-block;
+  width: 16px;
+  height: 16px;
+  border: 1px solid var(--tv-border-strong);
+  border-radius: 3px;
+}
+
+/* ── 색 선택 그리드 ── */
+.tv-draw-colorgrid {
+  padding: 8px;
+}
+
+.tv-draw-colorrow {
+  display: grid;
+  grid-template-columns: repeat(5, 22px);
+  gap: 6px;
+}
+
+.tv-draw-colorcell {
+  width: 22px;
+  height: 22px;
+  border: 1px solid var(--tv-border-strong);
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.tv-draw-colorcell.active {
+  outline: 2px solid var(--tv-accent);
+  outline-offset: 1px;
+}
+
+.tv-draw-colorcustom {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--tv-border);
+  color: var(--tv-text-dim);
+  font-size: var(--tv-fs-sm);
+}
+
+.tv-draw-colorcustom input {
+  width: 28px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid var(--tv-border-strong);
+  border-radius: var(--tv-radius-sm);
+  background: none;
+  cursor: pointer;
+}

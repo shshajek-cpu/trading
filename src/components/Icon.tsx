@@ -1,244 +1,437 @@
 import type { ReactNode } from 'react'
 
 /**
- * 이모지 대신 쓰는 선 아이콘 묶음.
- * 이모지는 기기마다 모양·크기가 달라 줄이 흐트러진다. 굵기 1.6의 단일 획으로 통일한다.
+ * Own hand-drawn line-icon set — never TradingView's assets. Every glyph is drawn on a
+ * 28×28 grid with a thin 1.5px single stroke so the toolbar reads as one weight.
  */
 export type IconName =
-  | 'watchlist'
-  | 'timeframe'
+  // shell / toolbar
+  | 'menu'
+  | 'compare'
   | 'indicator'
-  | 'line'
-  | 'pin'
-  | 'discover'
-  | 'bell'
-  | 'sync'
+  | 'template'
+  | 'alarm'
+  | 'replay'
+  | 'undo'
+  | 'redo'
   | 'layout1'
   | 'layout2'
   | 'layout4'
-  | 'pip'
-  | 'undo'
-  | 'trash'
-  | 'close'
-  | 'chevron'
+  | 'save'
+  | 'search'
   | 'settings'
-  | 'more'
-  | 'plus'
+  | 'fullscreen'
+  | 'fullscreenExit'
+  | 'camera'
+  | 'pip'
+  | 'equalize'
+  // widget tabs
+  | 'watchlist'
+  | 'bell'
+  | 'bellOff'
+  | 'objectTree'
+  | 'mtf'
+  | 'pin'
+  | 'discover'
+  | 'sync'
+  // chart types
+  | 'typeBars'
+  | 'typeCandles'
+  | 'typeHollow'
+  | 'typeVolumeCandles'
+  | 'typeLine'
+  | 'typeLineMarkers'
+  | 'typeStepLine'
+  | 'typeArea'
+  | 'typeHlcArea'
+  | 'typeBaseline'
+  | 'typeColumns'
+  | 'typeHighLow'
+  | 'typeHeikinAshi'
+  // generic
+  | 'chevron'
+  | 'chevronRight'
+  | 'close'
   | 'check'
   | 'copy'
-  | 'arrowUp'
-  | 'arrowDown'
-  | 'pen'
-  | 'equalize'
-  | 'bellOff'
-  | 'refresh'
-  | 'candles'
+  | 'plus'
+  | 'trash'
   | 'star'
   | 'starFill'
-  | 'search'
-  | 'back'
-  | 'expand'
-  | 'crosshair'
+  | 'eye'
+  | 'eyeOff'
+  | 'lock'
+  | 'unlock'
+  | 'calendar'
+  | 'clock'
+  | 'download'
+  | 'clipboard'
+  | 'refresh'
+  | 'arrowUp'
+  | 'arrowDown'
+  | 'moon'
+  | 'keyboard'
+  | 'install'
+  | 'more'
+
+const S = { fill: 'none', stroke: 'currentColor', strokeWidth: 1.5, strokeLinecap: 'round' as const, strokeLinejoin: 'round' as const }
+
+/** A candlestick: wick line + body rect. `f` fills the body (bullish/bearish solid). */
+function candle(x: number, top: number, bottom: number, bodyTop: number, bodyBottom: number, f: boolean) {
+  return (
+    <>
+      <line x1={x} y1={top} x2={x} y2={bottom} {...S} />
+      <rect x={x - 2.4} y={bodyTop} width={4.8} height={bodyBottom - bodyTop} rx={0.5} stroke="currentColor" strokeWidth={1.4} fill={f ? 'currentColor' : 'none'} />
+    </>
+  )
+}
 
 const PATHS: Record<IconName, ReactNode> = {
-  watchlist: (
+  menu: (
     <>
-      <path d="M9 6h12" />
-      <path d="M9 12h12" />
-      <path d="M9 18h12" />
-      <circle cx="4" cy="6" r="1.3" fill="currentColor" stroke="none" />
-      <circle cx="4" cy="12" r="1.3" fill="currentColor" stroke="none" />
-      <circle cx="4" cy="18" r="1.3" fill="currentColor" stroke="none" />
+      <line x1={5} y1={9} x2={23} y2={9} {...S} />
+      <line x1={5} y1={14} x2={23} y2={14} {...S} />
+      <line x1={5} y1={19} x2={23} y2={19} {...S} />
     </>
   ),
-  timeframe: (
+  compare: (
     <>
-      <path d="M12 3 3 7.5 12 12l9-4.5z" />
-      <path d="m3 12 9 4.5 9-4.5" />
-      <path d="m3 16.5 9 4.5 9-4.5" />
+      <circle cx={14} cy={14} r={9} {...S} />
+      <line x1={14} y1={9.5} x2={14} y2={18.5} {...S} />
+      <line x1={9.5} y1={14} x2={18.5} y2={14} {...S} />
     </>
   ),
-  indicator: <path d="M3 13h3.2l2.6-7.5 4 15 2.6-7.5H21" />,
-  line: (
+  indicator: <text x={14} y={20} textAnchor="middle" fontSize={19} fontStyle="italic" fontFamily="serif" fill="currentColor">ƒ</text>,
+  template: (
     <>
-      <path d="M3 12h18" />
-      <circle cx="8" cy="12" r="1.8" fill="currentColor" stroke="none" />
-      <circle cx="16" cy="12" r="1.8" fill="currentColor" stroke="none" />
+      <rect x={5} y={6} width={18} height={16} rx={2} {...S} />
+      <line x1={5} y1={11} x2={23} y2={11} {...S} />
+      <line x1={11} y1={11} x2={11} y2={22} {...S} />
     </>
   ),
-  pin: (
+  alarm: (
     <>
-      <path d="M12 21s6.5-5.7 6.5-11a6.5 6.5 0 1 0-13 0c0 5.3 6.5 11 6.5 11z" />
-      <circle cx="12" cy="10" r="2.4" />
+      <circle cx={14} cy={15} r={7} {...S} />
+      <line x1={14} y1={15} x2={14} y2={11} {...S} />
+      <line x1={14} y1={15} x2={17} y2={16} {...S} />
+      <line x1={7} y1={6} x2={4} y2={9} {...S} />
+      <line x1={21} y1={6} x2={24} y2={9} {...S} />
     </>
   ),
-  discover: (
+  replay: (
     <>
-      <circle cx="11" cy="11" r="7" />
-      <path d="m20.5 20.5-3.9-3.9" />
-      <path d="M8.5 12.2 10.7 9l2.2 3.6L15 10" />
-    </>
-  ),
-  bell: (
-    <>
-      <path d="M18.5 8.5a6.5 6.5 0 0 0-13 0c0 6.5-2.5 7.5-2.5 7.5h18s-2.5-1-2.5-7.5z" />
-      <path d="M13.8 20a2.1 2.1 0 0 1-3.6 0" />
-    </>
-  ),
-  bellOff: (
-    <>
-      <path d="M18.5 8.5a6.5 6.5 0 0 0-9.7-5.6" />
-      <path d="M5.5 8.5c0 6.5-2.5 7.5-2.5 7.5h13" />
-      <path d="M13.8 20a2.1 2.1 0 0 1-3.6 0" />
-      <path d="m3 3 18 18" />
-    </>
-  ),
-  sync: (
-    <>
-      <path d="M20.5 4v5.5H15" />
-      <path d="M3.5 20v-5.5H9" />
-      <path d="M4.2 10a8 8 0 0 1 13.2-3.1l3.1 2.6" />
-      <path d="M19.8 14a8 8 0 0 1-13.2 3.1L3.5 14.5" />
-    </>
-  ),
-  refresh: (
-    <>
-      <path d="M20.5 5v5h-5" />
-      <path d="M19.9 10a8 8 0 1 0 .3 4.6" />
-    </>
-  ),
-  layout1: <rect x="3.5" y="4.5" width="17" height="15" rx="2.6" />,
-  layout2: (
-    <>
-      <rect x="3.5" y="4.5" width="17" height="15" rx="2.6" />
-      <path d="M12 4.5v15" />
-    </>
-  ),
-  layout4: (
-    <>
-      <rect x="3.5" y="4.5" width="17" height="15" rx="2.6" />
-      <path d="M12 4.5v15" />
-      <path d="M3.5 12h17" />
-    </>
-  ),
-  pip: (
-    <>
-      <rect x="3" y="5" width="18" height="14" rx="2.6" />
-      <rect x="11.5" y="11.5" width="7" height="5" rx="1.4" />
+      <path d="M9 14 L18 9 L18 19 Z" {...S} />
+      <line x1={7} y1={8} x2={7} y2={20} {...S} />
     </>
   ),
   undo: (
     <>
-      <path d="M3.5 6v5.5H9" />
-      <path d="M4.2 11.5A8 8 0 1 1 6 17" />
+      <path d="M8 10 L4 14 L8 18" {...S} />
+      <path d="M4 14 H16 a6 6 0 0 1 6 6" {...S} />
     </>
   ),
-  trash: (
+  redo: (
     <>
-      <path d="M4 6.5h16" />
-      <path d="M9.5 6.5V5a1.5 1.5 0 0 1 1.5-1.5h2A1.5 1.5 0 0 1 14.5 5v1.5" />
-      <path d="m6.5 6.5 1 12.6A1.6 1.6 0 0 0 9.1 20.5h5.8a1.6 1.6 0 0 0 1.6-1.4l1-12.6" />
+      <path d="M20 10 L24 14 L20 18" {...S} />
+      <path d="M24 14 H12 a6 6 0 0 0 -6 6" {...S} />
     </>
   ),
-  close: <path d="M6.5 6.5 17.5 17.5M17.5 6.5 6.5 17.5" />,
-  chevron: <path d="m6.5 9.5 5.5 5.5 5.5-5.5" />,
+  layout1: <rect x={5} y={6} width={18} height={16} rx={1.5} {...S} />,
+  layout2: (
+    <>
+      <rect x={5} y={6} width={18} height={16} rx={1.5} {...S} />
+      <line x1={14} y1={6} x2={14} y2={22} {...S} />
+    </>
+  ),
+  layout4: (
+    <>
+      <rect x={5} y={6} width={18} height={16} rx={1.5} {...S} />
+      <line x1={14} y1={6} x2={14} y2={22} {...S} />
+      <line x1={5} y1={14} x2={23} y2={14} {...S} />
+    </>
+  ),
+  save: (
+    <>
+      <path d="M6 6 h12 l4 4 v12 a0 0 0 0 1 0 0 H6 Z" {...S} />
+      <rect x={9} y={6} width={7} height={5} {...S} />
+      <rect x={9} y={15} width={10} height={7} {...S} />
+    </>
+  ),
+  search: (
+    <>
+      <circle cx={12.5} cy={12.5} r={6.5} {...S} />
+      <line x1={17.5} y1={17.5} x2={22} y2={22} {...S} />
+    </>
+  ),
   settings: (
     <>
-      <path d="M3.5 8h9M16.5 8h4M3.5 16h3.5M11 16h9.5" />
-      <circle cx="14.5" cy="8" r="2.3" />
-      <circle cx="9" cy="16" r="2.3" />
+      <circle cx={14} cy={14} r={3.2} {...S} />
+      <path d="M14 4 v3 M14 21 v3 M4 14 h3 M21 14 h3 M7 7 l2 2 M19 19 l2 2 M21 7 l-2 2 M9 19 l-2 2" {...S} />
     </>
   ),
-  more: (
+  fullscreen: (
     <>
-      <circle cx="5" cy="12" r="1.6" fill="currentColor" stroke="none" />
-      <circle cx="12" cy="12" r="1.6" fill="currentColor" stroke="none" />
-      <circle cx="19" cy="12" r="1.6" fill="currentColor" stroke="none" />
+      <path d="M5 10 V5 h5 M23 10 V5 h-5 M5 18 v5 h5 M23 18 v5 h-5" {...S} />
     </>
   ),
-  plus: <path d="M12 5v14M5 12h14" />,
-  check: <path d="m4.5 12.5 5 5 10-11" />,
-  copy: (
+  fullscreenExit: (
     <>
-      <rect x="9" y="9" width="11.5" height="11.5" rx="2.4" />
-      <path d="M5.5 15A2 2 0 0 1 3.5 13V5.5a2 2 0 0 1 2-2H13a2 2 0 0 1 2 2" />
+      <path d="M10 5 v5 H5 M18 5 v5 h5 M10 23 v-5 H5 M18 23 v-5 h5" {...S} />
     </>
   ),
-  arrowUp: <path d="M12 20V4.5M5.5 11 12 4.5 18.5 11" />,
-  arrowDown: <path d="M12 4v15.5M18.5 13 12 19.5 5.5 13" />,
-  pen: (
+  camera: (
     <>
-      <path d="M16.8 3.6a2.3 2.3 0 0 1 3.6 2.9L8.4 19.4l-4.9 1.1 1.1-4.9z" />
-      <path d="m14.5 5.9 3.6 3.6" />
+      <path d="M4 10 h4 l2-2.5 h6 l2 2.5 h4 v11 H4 Z" {...S} />
+      <circle cx={14} cy={15} r={4} {...S} />
+    </>
+  ),
+  pip: (
+    <>
+      <rect x={4} y={7} width={20} height={14} rx={2} {...S} />
+      <rect x={13} y={13} width={8} height={6} rx={1} stroke="currentColor" strokeWidth={1.4} fill="currentColor" />
     </>
   ),
   equalize: (
     <>
-      <path d="M8 3.5H5.5a2 2 0 0 0-2 2V8" />
-      <path d="M16 3.5h2.5a2 2 0 0 1 2 2V8" />
-      <path d="M8 20.5H5.5a2 2 0 0 1-2-2V16" />
-      <path d="M16 20.5h2.5a2 2 0 0 0 2-2V16" />
+      <line x1={5} y1={14} x2={23} y2={14} {...S} />
+      <path d="M11 9 L6 14 L11 19 M17 9 L22 14 L17 19" {...S} />
     </>
   ),
-  candles: (
+  watchlist: (
     <>
-      <path d="M7 3v3.5M7 17.5V21" />
-      <rect x="4.5" y="6.5" width="5" height="11" rx="1.2" />
-      <path d="M17 5v2.5M17 15.5V19" />
-      <rect x="14.5" y="7.5" width="5" height="8" rx="1.2" />
+      <line x1={6} y1={8} x2={22} y2={8} {...S} />
+      <line x1={6} y1={14} x2={22} y2={14} {...S} />
+      <line x1={6} y1={20} x2={16} y2={20} {...S} />
     </>
   ),
-  star: (
-    <path d="m12 3.6 2.6 5.4 5.9.8-4.3 4.1 1.1 5.9-5.3-2.9-5.3 2.9 1.1-5.9L3.5 9.8l5.9-.8z" />
-  ),
-  starFill: (
-    <path
-      d="m12 3.6 2.6 5.4 5.9.8-4.3 4.1 1.1 5.9-5.3-2.9-5.3 2.9 1.1-5.9L3.5 9.8l5.9-.8z"
-      fill="currentColor"
-    />
-  ),
-  search: (
+  bell: (
     <>
-      <circle cx="11" cy="11" r="7" />
-      <path d="m20.5 20.5-3.9-3.9" />
+      <path d="M14 5 a6 6 0 0 1 6 6 v4 l2 3 H6 l2-3 v-4 a6 6 0 0 1 6-6 Z" {...S} />
+      <path d="M11.5 21 a2.5 2.5 0 0 0 5 0" {...S} />
     </>
   ),
-  back: <path d="M19 12H5.5M11 5.5 4.5 12l6.5 6.5" />,
-  expand: (
+  bellOff: (
     <>
-      <path d="M14.5 3.5h6v6" />
-      <path d="M9.5 20.5h-6v-6" />
-      <path d="M20.5 3.5 13 11" />
-      <path d="M3.5 20.5 11 13" />
+      <path d="M14 5 a6 6 0 0 1 6 6 v4 l2 3 H6 l2-3 v-4 a6 6 0 0 1 6-6 Z" {...S} />
+      <path d="M11.5 21 a2.5 2.5 0 0 0 5 0" {...S} />
+      <line x1={5} y1={5} x2={23} y2={23} stroke="currentColor" strokeWidth={1.6} strokeLinecap="round" />
     </>
   ),
-  crosshair: (
+  objectTree: (
     <>
-      <circle cx="12" cy="12" r="8" />
-      <path d="M12 1.5v5M12 17.5v5M1.5 12h5M17.5 12h5" />
+      <rect x={5} y={6} width={5} height={4} rx={1} {...S} />
+      <path d="M12 8 h4 M12 14 h4 M12 20 h4 M12 8 v12" {...S} />
+      <rect x={17} y={6} width={6} height={4} rx={1} {...S} />
+      <rect x={17} y={12} width={6} height={4} rx={1} {...S} />
+      <rect x={17} y={18} width={6} height={4} rx={1} {...S} />
+    </>
+  ),
+  mtf: (
+    <>
+      <rect x={5} y={6} width={7} height={7} rx={1} {...S} />
+      <rect x={16} y={6} width={7} height={7} rx={1} {...S} />
+      <rect x={5} y={16} width={7} height={7} rx={1} {...S} />
+      <rect x={16} y={16} width={7} height={7} rx={1} {...S} />
+    </>
+  ),
+  pin: (
+    <>
+      <path d="M14 4 l3 6 4 1 -6 5 1 7 -6-4 -6 4 1-7 -6-5 4-1 Z" transform="scale(0.62) translate(8.5 6)" {...S} />
+    </>
+  ),
+  discover: (
+    <>
+      <circle cx={14} cy={14} r={9} {...S} />
+      <path d="M18 10 L12.5 12.5 L10 18 L15.5 15.5 Z" stroke="currentColor" strokeWidth={1.4} fill="none" strokeLinejoin="round" />
+    </>
+  ),
+  sync: (
+    <>
+      <path d="M7 12 a7 7 0 0 1 12-3 M21 8 v3 h-3" {...S} />
+      <path d="M21 16 a7 7 0 0 1-12 3 M7 20 v-3 h3" {...S} />
+    </>
+  ),
+  typeBars: (
+    <>
+      <path d="M10 7 v14 M7 10 h3 M10 15 h3" {...S} />
+      <path d="M18 9 v11 M15 12 h3 M18 17 h3" {...S} />
+    </>
+  ),
+  typeCandles: (
+    <>
+      {candle(10, 6, 22, 10, 17, false)}
+      {candle(18, 8, 21, 11, 18, true)}
+    </>
+  ),
+  typeHollow: (
+    <>
+      {candle(10, 6, 22, 10, 17, false)}
+      {candle(18, 8, 21, 11, 18, false)}
+    </>
+  ),
+  typeVolumeCandles: (
+    <>
+      {candle(10, 6, 20, 9, 16, true)}
+      {candle(18, 7, 21, 10, 17, false)}
+      <line x1={5} y1={23} x2={23} y2={23} {...S} />
+    </>
+  ),
+  typeLine: <polyline points="5,18 10,12 14,15 19,7 23,11" {...S} />,
+  typeLineMarkers: (
+    <>
+      <polyline points="5,18 10,12 14,15 19,7 23,11" {...S} />
+      <circle cx={10} cy={12} r={1.6} fill="currentColor" stroke="none" />
+      <circle cx={19} cy={7} r={1.6} fill="currentColor" stroke="none" />
+    </>
+  ),
+  typeStepLine: <polyline points="5,18 10,18 10,12 15,12 15,15 20,15 20,8 23,8" {...S} />,
+  typeArea: (
+    <>
+      <path d="M5 18 L10 12 L14 15 L19 8 L23 11 V22 H5 Z" fill="currentColor" opacity={0.2} stroke="none" />
+      <polyline points="5,18 10,12 14,15 19,8 23,11" {...S} />
+    </>
+  ),
+  typeHlcArea: (
+    <>
+      <path d="M5 16 L11 11 L17 14 L23 9 V22 H5 Z" fill="currentColor" opacity={0.2} stroke="none" />
+      <polyline points="5,16 11,11 17,14 23,9" {...S} />
+    </>
+  ),
+  typeBaseline: (
+    <>
+      <line x1={5} y1={14} x2={23} y2={14} stroke="currentColor" strokeWidth={1} strokeDasharray="2 2" />
+      <polyline points="5,17 10,10 14,13 19,8 23,12" {...S} />
+    </>
+  ),
+  typeColumns: (
+    <>
+      <rect x={6} y={12} width={3.5} height={10} fill="currentColor" stroke="none" />
+      <rect x={12.5} y={8} width={3.5} height={14} fill="currentColor" stroke="none" />
+      <rect x={19} y={14} width={3.5} height={8} fill="currentColor" stroke="none" />
+    </>
+  ),
+  typeHighLow: (
+    <>
+      <line x1={9} y1={7} x2={9} y2={20} {...S} />
+      <line x1={14} y1={10} x2={14} y2={22} {...S} />
+      <line x1={19} y1={6} x2={19} y2={18} {...S} />
+    </>
+  ),
+  typeHeikinAshi: (
+    <>
+      {candle(10, 7, 21, 10, 17, true)}
+      {candle(18, 9, 22, 12, 19, true)}
+    </>
+  ),
+  chevron: <path d="M8 11 L14 17 L20 11" {...S} />,
+  chevronRight: <path d="M11 8 L17 14 L11 20" {...S} />,
+  close: <path d="M7 7 L21 21 M21 7 L7 21" {...S} />,
+  check: <path d="M6 14 L12 20 L22 8" {...S} />,
+  copy: (
+    <>
+      <rect x={5} y={5} width={12} height={12} rx={2} {...S} />
+      <rect x={11} y={11} width={12} height={12} rx={2} {...S} />
+    </>
+  ),
+  plus: <path d="M14 6 v16 M6 14 h16" {...S} />,
+  trash: (
+    <>
+      <path d="M6 8 h16 M10 8 V5 h8 V8 M8 8 l1 15 h10 l1-15" {...S} />
+    </>
+  ),
+  star: <path d="M14 4 l3 6.5 7 .8 -5.2 4.8 1.4 7-6.2-3.6 -6.2 3.6 1.4-7 -5.2-4.8 7-.8 Z" {...S} />,
+  starFill: <path d="M14 4 l3 6.5 7 .8 -5.2 4.8 1.4 7-6.2-3.6 -6.2 3.6 1.4-7 -5.2-4.8 7-.8 Z" fill="currentColor" stroke="none" />,
+  eye: (
+    <>
+      <path d="M4 14 C7 8 21 8 24 14 C21 20 7 20 4 14 Z" {...S} />
+      <circle cx={14} cy={14} r={3} {...S} />
+    </>
+  ),
+  eyeOff: (
+    <>
+      <path d="M4 14 C7 8 21 8 24 14 C22.5 17 20 18.6 17.5 19.4" {...S} />
+      <line x1={5} y1={6} x2={23} y2={22} {...S} />
+    </>
+  ),
+  lock: (
+    <>
+      <rect x={7} y={13} width={14} height={9} rx={2} {...S} />
+      <path d="M10 13 v-3 a4 4 0 0 1 8 0 v3" {...S} />
+    </>
+  ),
+  unlock: (
+    <>
+      <rect x={7} y={13} width={14} height={9} rx={2} {...S} />
+      <path d="M10 13 v-3 a4 4 0 0 1 8 0" {...S} />
+    </>
+  ),
+  calendar: (
+    <>
+      <rect x={5} y={7} width={18} height={16} rx={2} {...S} />
+      <path d="M5 11 h18 M10 5 v4 M18 5 v4" {...S} />
+    </>
+  ),
+  clock: (
+    <>
+      <circle cx={14} cy={14} r={9} {...S} />
+      <path d="M14 9 v5 l3.5 2" {...S} />
+    </>
+  ),
+  download: (
+    <>
+      <path d="M14 5 v11 M9 12 l5 5 5-5" {...S} />
+      <path d="M6 21 h16" {...S} />
+    </>
+  ),
+  clipboard: (
+    <>
+      <rect x={7} y={6} width={14} height={17} rx={2} {...S} />
+      <rect x={11} y={4} width={6} height={4} rx={1} {...S} />
+    </>
+  ),
+  refresh: (
+    <>
+      <path d="M22 9 a9 9 0 1 0 1 6" {...S} />
+      <path d="M22 5 v4 h-4" {...S} />
+    </>
+  ),
+  arrowUp: <path d="M14 21 V7 M8 13 l6-6 6 6" {...S} />,
+  arrowDown: <path d="M14 7 v14 M8 15 l6 6 6-6" {...S} />,
+  moon: <path d="M20 16 a8 8 0 1 1-8-11 6.5 6.5 0 0 0 8 11 Z" {...S} />,
+  keyboard: (
+    <>
+      <rect x={4} y={8} width={20} height={13} rx={2} {...S} />
+      <path d="M8 12 h0 M12 12 h0 M16 12 h0 M20 12 h0 M8 16 h0 M20 16 h0 M11 16 h6" {...S} />
+    </>
+  ),
+  install: (
+    <>
+      <rect x={8} y={4} width={12} height={20} rx={2.5} {...S} />
+      <path d="M14 9 v7 M11 13 l3 3 3-3" {...S} />
+    </>
+  ),
+  more: (
+    <>
+      <circle cx={7} cy={14} r={1.6} fill="currentColor" stroke="none" />
+      <circle cx={14} cy={14} r={1.6} fill="currentColor" stroke="none" />
+      <circle cx={21} cy={14} r={1.6} fill="currentColor" stroke="none" />
     </>
   ),
 }
 
 interface IconProps {
   name: IconName
-  /** 화면에 그려질 한 변 길이(px). */
   size?: number
   className?: string
 }
 
-export function Icon({ name, size = 18, className }: IconProps) {
+export function Icon({ name, size = 20, className }: IconProps) {
   return (
     <svg
-      className={className ? `icon ${className}` : 'icon'}
+      className={`icon${className ? ` ${className}` : ''}`}
       width={size}
       height={size}
-      viewBox="0 0 24 24"
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={1.6}
-      strokeLinecap="round"
-      strokeLinejoin="round"
+      viewBox="0 0 28 28"
       aria-hidden="true"
       focusable="false"
     >

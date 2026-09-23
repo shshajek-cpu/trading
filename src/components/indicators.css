@@ -1,0 +1,181 @@
+/* 지표 다이얼로그·설정·템플릿 메뉴. tokens.css 변수만 사용. */
+
+/* ── 지표 다이얼로그 ── */
+.ind-dialog {
+  display: flex;
+  height: 100%;
+  min-height: 0;
+}
+
+.ind-sidebar {
+  flex: none;
+  width: 160px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-right: 8px;
+  border-right: 1px solid var(--tv-border);
+  overflow-y: auto;
+}
+.ind-sidebar button {
+  height: 32px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: var(--tv-radius-sm);
+  background: none;
+  color: var(--tv-text);
+  font-size: var(--tv-fs-sm);
+  text-align: left;
+  cursor: pointer;
+}
+.ind-sidebar button:hover {
+  background: var(--tv-hover);
+}
+.ind-sidebar button.active {
+  background: var(--tv-active);
+  color: var(--tv-text-strong);
+}
+
+.ind-list {
+  flex: 1;
+  min-width: 0;
+  padding-left: 8px;
+  overflow-y: auto;
+}
+
+.ind-list-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 40px;
+  padding: 0 8px;
+  border-radius: var(--tv-radius-sm);
+  cursor: pointer;
+}
+.ind-list-row:hover {
+  background: var(--tv-hover);
+}
+
+.ind-star {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  border: 0;
+  background: none;
+  color: var(--tv-text-faint);
+  font-size: 15px;
+  cursor: pointer;
+}
+.ind-star.on {
+  color: var(--tv-warn);
+}
+
+.ind-name {
+  flex: 1;
+  color: var(--tv-text);
+}
+.ind-cat {
+  color: var(--tv-text-dim);
+  font-size: var(--tv-fs-xs);
+}
+
+.ind-empty {
+  padding: 40px 16px;
+  text-align: center;
+  color: var(--tv-text-dim);
+  font-size: var(--tv-fs-sm);
+}
+
+/* ── 지표 설정 다이얼로그 ── */
+.ind-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 0 20px 16px;
+}
+.ind-settings .tv-field {
+  height: 40px;
+}
+.ind-num {
+  width: 96px;
+  text-align: right;
+}
+
+/* ── 템플릿 메뉴 ── */
+.tpl-menu {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 200px;
+  padding: 4px;
+}
+.tpl-add {
+  height: 32px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--tv-radius-sm);
+  background: none;
+  color: var(--tv-accent-text);
+  font-size: var(--tv-fs-sm);
+  text-align: left;
+  cursor: pointer;
+}
+.tpl-add:hover {
+  background: var(--tv-hover);
+}
+.tpl-save-row {
+  display: flex;
+  gap: 6px;
+  padding: 4px;
+}
+.tpl-save-row .tv-input {
+  flex: 1;
+  min-width: 0;
+}
+.tpl-divider {
+  height: 1px;
+  margin: 4px 0;
+  background: var(--tv-border);
+}
+.tpl-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.tpl-apply {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: var(--tv-radius-sm);
+  background: none;
+  color: var(--tv-text);
+  font-size: var(--tv-fs-sm);
+  text-align: left;
+  cursor: pointer;
+}
+.tpl-apply:hover {
+  background: var(--tv-hover);
+}
+.tpl-apply em {
+  color: var(--tv-text-dim);
+  font-style: normal;
+  font-size: var(--tv-fs-xs);
+}
+.tpl-del {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  border: 0;
+  border-radius: var(--tv-radius-sm);
+  background: none;
+  color: var(--tv-text-dim);
+  font-size: 16px;
+  cursor: pointer;
+}
+.tpl-del:hover {
+  background: var(--tv-hover);
+  color: var(--tv-down);
+}

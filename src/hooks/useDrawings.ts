@@ -1,18 +1,35 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
-import { loadDrawings, saveDrawings, type Anchor, type Drawing } from '../lib/drawings'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import {
+  loadDrawings,
+  saveDrawings,
+  type Drawing,
+  type NewDrawing,
+} from '../lib/drawings'
 
 export interface UseDrawingsResult {
   drawings: Drawing[]
-  addDrawing: (symbol: string, price: number, color: string, alert: boolean) => void
-  /** 추세선 — 두 점을 이어 긋는다. 알림은 붙이지 않는다. */
-  addTrend: (symbol: string, from: Anchor, to: Anchor, color: string) => void
+  addDrawing: (d: NewDrawing) => string
+  updateDrawing: (
+    id: string,
+    patch: Partial<Omit<Drawing, 'id'>>,
+    opts?: { history?: boolean },
+  ) => void
   removeDrawing: (id: string) => void
-  updateDrawing: (id: string, patch: Partial<Drawing>) => void
-  clearSymbol: (symbol: string) => void
-  /** 실시간 가격을 흘려보내면 선을 통과한 순간 알림을 발동시킨다. */
+  removeAll: (symbol: string) => void
+  /** 실시간 가격을 흘려보내면 수평선을 통과한 순간 알림을 발동시킨다. */
   checkPrice: (symbol: string, price: number) => void
   undo: () => void
+  redo: () => void
   canUndo: boolean
+  canRedo: boolean
+}
+
+const HISTORY_DEPTH = 20
+
+let idCounter = 0
+function nextId(): string {
+  idCounter += 1
+  return `d${Date.now().toString(36)}${idCounter.toString(36)}`
 }
 
 export function useDrawings(
@@ -20,23 +37,11 @@ export function useDrawings(
 ): UseDrawingsResult {
   const [drawings, setDrawings] = useState<Drawing[]>(loadDrawings)
 
-  // 직전 상태들 — 추가/삭제/이동을 되돌린다. 가격 감시로 바뀐 것은 쌓지 않는다.
-  const [history, setHistory] = useState<Drawing[][]>([])
-
-  const pushHistory = useCallback(() => {
-    setDrawings((cur) => {
-      setHistory((h) => [...h.slice(-19), cur])
-      return cur
-    })
-  }, [])
-
-  const undo = useCallback(() => {
-    setHistory((h) => {
-      if (h.length === 0) return h
-      setDrawings(h[h.length - 1])
-      return h.slice(0, -1)
-    })
-  }, [])
+  // 실행 취소/다시 실행 스택. 가격 감시(checkPrice)와 드래그 도중 변화는 담지 않는다.
+  const undoStack = useRef<Drawing[][]>([])
+  const redoStack = useRef<Drawing[][]>([])
+  const [canUndo, setCanUndo] = useState(false)
+  const [canRedo, setCanRedo] = useState(false)
 
   const crossRef = useRef(onCross)
   crossRef.current = onCross
@@ -45,76 +50,105 @@ export function useDrawings(
     saveDrawings(drawings)
   }, [drawings])
 
-  const addDrawing = useCallback(
-    (symbol: string, price: number, color: string, alert: boolean) => {
-      if (!Number.isFinite(price) || price <= 0) return
-      pushHistory()
-      setDrawings((prev) => [
-        ...prev,
-        {
-          id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-          symbol,
-          kind: 'horizontal',
-          price,
-          color,
-          alert,
-          fired: false,
-          above: null,
-          createdAt: Date.now(),
-        },
-      ])
+  const syncFlags = useCallback(() => {
+    setCanUndo(undoStack.current.length > 0)
+    setCanRedo(redoStack.current.length > 0)
+  }, [])
+
+  // 되돌릴 수 있는 변경을 적용한다: 현재 상태를 스냅샷으로 밀어 넣고 redo 를 비운다.
+  const commit = useCallback(
+    (next: (prev: Drawing[]) => Drawing[]) => {
+      setDrawings((prev) => {
+        undoStack.current.push(prev)
+        if (undoStack.current.length > HISTORY_DEPTH) undoStack.current.shift()
+        redoStack.current = []
+        return next(prev)
+      })
+      syncFlags()
     },
-    [pushHistory],
+    [syncFlags],
   )
 
-  const addTrend = useCallback(
-    (symbol: string, from: Anchor, to: Anchor, color: string) => {
-      // 같은 자리를 두 번 찍으면 선이 아니라 점이다.
-      if (from.time === to.time && from.price === to.price) return
-      pushHistory()
-      setDrawings((prev) => [
-        ...prev,
-        {
-          id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-          symbol,
-          kind: 'trend',
-          price: from.price,
-          from,
-          to,
-          color,
-          alert: false,
-          fired: false,
-          above: null,
-          createdAt: Date.now(),
-        },
-      ])
+  const addDrawing = useCallback(
+    (d: NewDrawing): string => {
+      const id = nextId()
+      const drawing: Drawing = {
+        id,
+        symbol: d.symbol,
+        kind: d.kind,
+        points: d.points,
+        style: d.style,
+        locked: false,
+        hidden: false,
+        alert: d.alert ?? false,
+        fired: false,
+        above: null,
+        createdAt: Date.now(),
+      }
+      commit((prev) => [...prev, drawing])
+      return id
     },
-    [pushHistory],
+    [commit],
+  )
+
+  const updateDrawing = useCallback(
+    (id: string, patch: Partial<Omit<Drawing, 'id'>>, opts?: { history?: boolean }) => {
+      const apply = (prev: Drawing[]): Drawing[] => {
+        let changed = false
+        const next = prev.map((d) => {
+          if (d.id !== id) return d
+          changed = true
+          return { ...d, ...patch }
+        })
+        return changed ? next : prev
+      }
+      // 드래그 중간(history:false)은 스택에 담지 않고 바로 반영한다.
+      if (opts?.history === false) {
+        setDrawings(apply)
+      } else {
+        commit(apply)
+      }
+    },
+    [commit],
   )
 
   const removeDrawing = useCallback(
     (id: string) => {
-      pushHistory()
-      setDrawings((prev) => prev.filter((d) => d.id !== id))
+      commit((prev) => prev.filter((d) => d.id !== id))
     },
-    [pushHistory],
+    [commit],
   )
 
-  const updateDrawing = useCallback(
-    (id: string, patch: Partial<Drawing>) => {
-      pushHistory()
-      setDrawings((prev) => prev.map((d) => (d.id === id ? { ...d, ...patch } : d)))
-    },
-    [pushHistory],
-  )
-
-  const clearSymbol = useCallback(
+  const removeAll = useCallback(
     (symbol: string) => {
-      pushHistory()
-      setDrawings((prev) => prev.filter((d) => d.symbol !== symbol))
+      commit((prev) => prev.filter((d) => d.symbol !== symbol))
     },
-    [pushHistory],
+    [commit],
   )
+
+  const undo = useCallback(() => {
+    if (undoStack.current.length === 0) return
+    setDrawings((prev) => {
+      const snapshot = undoStack.current.pop()
+      if (snapshot === undefined) return prev
+      redoStack.current.push(prev)
+      if (redoStack.current.length > HISTORY_DEPTH) redoStack.current.shift()
+      return snapshot
+    })
+    syncFlags()
+  }, [syncFlags])
+
+  const redo = useCallback(() => {
+    if (redoStack.current.length === 0) return
+    setDrawings((prev) => {
+      const snapshot = redoStack.current.pop()
+      if (snapshot === undefined) return prev
+      undoStack.current.push(prev)
+      if (undoStack.current.length > HISTORY_DEPTH) undoStack.current.shift()
+      return snapshot
+    })
+    syncFlags()
+  }, [syncFlags])
 
   const checkPrice = useCallback((symbol: string, price: number) => {
     if (!Number.isFinite(price)) return
@@ -124,9 +158,11 @@ export function useDrawings(
 
       const next = prev.map((d) => {
         if (d.symbol !== symbol) return d
-        // 추세선은 기울어져 있어 가격 하나로 교차를 판정할 수 없다.
+        // 기울어진 선은 가격 하나로 교차를 판정할 수 없다 — 수평선만 감시한다.
         if (d.kind !== 'horizontal') return d
-        const nowAbove = price >= d.price
+        const linePrice = d.points[0]?.price
+        if (linePrice === undefined || !Number.isFinite(linePrice)) return d
+        const nowAbove = price >= linePrice
 
         // 첫 관측은 기준점만 잡는다 — 선을 그은 순간 바로 울리는 것을 막는다.
         if (d.above === null) {
@@ -154,15 +190,30 @@ export function useDrawings(
     })
   }, [])
 
-  return {
-    drawings,
-    addDrawing,
-    addTrend,
-    removeDrawing,
-    updateDrawing,
-    clearSymbol,
-    checkPrice,
-    undo,
-    canUndo: history.length > 0,
-  }
+  return useMemo(
+    () => ({
+      drawings,
+      addDrawing,
+      updateDrawing,
+      removeDrawing,
+      removeAll,
+      checkPrice,
+      undo,
+      redo,
+      canUndo,
+      canRedo,
+    }),
+    [
+      drawings,
+      addDrawing,
+      updateDrawing,
+      removeDrawing,
+      removeAll,
+      checkPrice,
+      undo,
+      redo,
+      canUndo,
+      canRedo,
+    ],
+  )
 }

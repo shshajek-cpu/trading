@@ -1,0 +1,137 @@
+/* 심볼 검색 대화상자. 색상·치수는 tokens.css 변수만 쓴다. */
+
+.ss-header {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.ss-search {
+  height: 44px;
+}
+
+.ss-search-icon {
+  color: var(--tv-text-dim);
+  flex: none;
+}
+
+.ss-clear {
+  flex: none;
+  color: var(--tv-text-dim);
+}
+
+.ss-tabs {
+  gap: 8px;
+}
+
+.ss-list {
+  height: 100%;
+  overflow-y: auto;
+  padding: 4px 0;
+}
+
+.ss-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  height: 44px;
+  padding: 0 20px;
+  border: 0;
+  background: transparent;
+  color: var(--tv-text);
+  font: var(--tv-fs-sm) / 1.2 var(--tv-font);
+  text-align: left;
+  cursor: pointer;
+}
+
+.ss-row.active {
+  background: var(--tv-hover);
+}
+
+.ss-sym {
+  flex: none;
+  min-width: 132px;
+  font-size: var(--tv-fs);
+  font-weight: 600;
+  color: var(--tv-text-strong);
+}
+
+.ss-hl {
+  color: var(--tv-accent-text);
+}
+
+.ss-desc {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  color: var(--tv-text-dim);
+}
+
+.ss-tag {
+  flex: none;
+  color: var(--tv-text-faint);
+  font-size: var(--tv-fs-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.ss-exch {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  width: 92px;
+  justify-content: flex-end;
+  color: var(--tv-text-dim);
+}
+
+.ss-exch-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 16px;
+  height: 16px;
+  border-radius: 3px;
+  background: var(--tv-accent);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.ss-check {
+  flex: none;
+  width: 18px;
+  display: inline-flex;
+  justify-content: center;
+  color: var(--tv-accent-text);
+}
+
+.ss-empty {
+  padding: 32px 20px;
+  text-align: center;
+  color: var(--tv-text-dim);
+}
+
+.ss-hint {
+  flex: 1;
+  color: var(--tv-text-dim);
+  font-size: var(--tv-fs-sm);
+}
+
+@media (width <= 900px) {
+  .ss-row {
+    padding: 0 16px;
+  }
+
+  .ss-desc,
+  .ss-tag {
+    display: none;
+  }
+
+  .ss-sym {
+    flex: 1;
+  }
+}

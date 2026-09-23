@@ -1,0 +1,351 @@
+/* Shared TradingView-style primitives: popover menus, dialogs, form controls, buttons.
+   Colors come from styles/tokens.css only. */
+
+/* ── Popover / menu ── */
+.tv-popover {
+  position: fixed;
+  z-index: 1000;
+  min-width: 180px;
+  padding: 6px 0;
+  overflow-y: auto;
+  background: var(--tv-elevated);
+  color: var(--tv-text);
+  border: 1px solid var(--tv-border);
+  border-radius: var(--tv-radius);
+  box-shadow: var(--tv-shadow);
+  font: var(--tv-fs) / 1.3 var(--tv-font);
+  overscroll-behavior: contain;
+}
+
+.tv-menu-section + .tv-menu-section {
+  border-top: 1px solid var(--tv-border);
+  margin-top: 6px;
+  padding-top: 6px;
+}
+
+.tv-menu-title {
+  padding: 6px 16px 4px;
+  font-size: var(--tv-fs-xs);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--tv-text-dim);
+}
+
+.tv-menu-divider {
+  height: 1px;
+  margin: 6px 0;
+  background: var(--tv-border);
+}
+
+.tv-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 32px;
+  margin: 0 4px;
+  padding: 0 12px;
+  border-radius: var(--tv-radius-sm);
+  cursor: pointer;
+  white-space: nowrap;
+  outline: none;
+}
+
+.tv-menu-item:hover,
+.tv-menu-item:focus-visible {
+  background: var(--tv-hover);
+}
+
+.tv-menu-item.active {
+  background: var(--tv-selected-bg);
+  color: var(--tv-selected-text);
+}
+
+.tv-menu-item.disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.tv-menu-icon {
+  display: inline-flex;
+  width: 28px;
+  justify-content: center;
+  flex: none;
+}
+
+.tv-menu-label {
+  flex: 1;
+}
+
+.tv-menu-shortcut {
+  color: var(--tv-text-dim);
+  font-size: var(--tv-fs-xs);
+}
+
+.tv-menu-item.active .tv-menu-shortcut {
+  color: inherit;
+  opacity: 0.7;
+}
+
+.tv-menu-trailing {
+  display: inline-flex;
+  align-items: center;
+}
+
+/* ── Dialog ── */
+.tv-dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 900;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--tv-backdrop);
+}
+
+.tv-dialog {
+  display: flex;
+  flex-direction: column;
+  max-width: calc(100vw - 32px);
+  max-height: calc(100vh - 64px);
+  background: var(--tv-elevated);
+  color: var(--tv-text);
+  border: 1px solid var(--tv-border);
+  border-radius: var(--tv-radius);
+  box-shadow: var(--tv-shadow);
+  font: var(--tv-fs) / 1.4 var(--tv-font);
+  overflow: hidden;
+}
+
+.tv-dialog-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 18px 20px 14px;
+}
+
+.tv-dialog-title {
+  flex: 1;
+  margin: 0;
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--tv-text-strong);
+}
+
+.tv-dialog-close {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: 0;
+  border-radius: var(--tv-radius-sm);
+  background: transparent;
+  color: var(--tv-text);
+  cursor: pointer;
+}
+
+.tv-dialog-close:hover {
+  background: var(--tv-hover);
+}
+
+.tv-dialog-header {
+  padding: 0 20px 12px;
+}
+
+.tv-dialog-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+.tv-dialog-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 14px 20px;
+  border-top: 1px solid var(--tv-border);
+}
+
+@media (width <= 900px) {
+  .tv-dialog-backdrop {
+    align-items: stretch;
+  }
+
+  .tv-dialog {
+    width: 100vw !important;
+    height: 100dvh !important;
+    max-width: none;
+    max-height: none;
+    border: 0;
+    border-radius: 0;
+    padding-top: var(--sat);
+    padding-bottom: var(--sab);
+  }
+}
+
+/* ── Form controls ── */
+.tv-input {
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--tv-border-strong);
+  border-radius: var(--tv-radius);
+  background: transparent;
+  color: var(--tv-text);
+  font: inherit;
+  outline: none;
+}
+
+.tv-input:focus {
+  border-color: var(--tv-accent);
+}
+
+.tv-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 40px;
+  padding: 0 12px;
+  border: 1px solid var(--tv-border-strong);
+  border-radius: var(--tv-radius);
+}
+
+.tv-search:focus-within {
+  border-color: var(--tv-accent);
+}
+
+.tv-search input {
+  flex: 1;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  color: var(--tv-text);
+  font: inherit;
+  font-size: 16px;
+  outline: none;
+}
+
+/* Pill tabs used by symbol search and indicator dialog category rows. */
+.tv-pills {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.tv-pill {
+  height: 28px;
+  padding: 0 12px;
+  border: 0;
+  border-radius: var(--tv-radius-pill);
+  background: var(--tv-hover);
+  color: var(--tv-text);
+  font: inherit;
+  font-size: var(--tv-fs-sm);
+  cursor: pointer;
+}
+
+.tv-pill:hover {
+  background: var(--tv-active);
+}
+
+.tv-pill.active {
+  background: var(--tv-selected-bg);
+  color: var(--tv-selected-text);
+}
+
+.tv-btn {
+  height: 34px;
+  padding: 0 16px;
+  border: 1px solid var(--tv-border-strong);
+  border-radius: var(--tv-radius);
+  background: transparent;
+  color: var(--tv-text);
+  font: inherit;
+  cursor: pointer;
+}
+
+.tv-btn:hover {
+  background: var(--tv-hover);
+}
+
+.tv-btn.primary {
+  border-color: var(--tv-accent);
+  background: var(--tv-accent);
+  color: #fff;
+}
+
+.tv-btn.primary:hover {
+  background: var(--tv-accent-hover);
+}
+
+.tv-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--tv-radius-sm);
+  background: transparent;
+  color: var(--tv-text);
+  cursor: pointer;
+}
+
+.tv-icon-btn:hover {
+  background: var(--tv-hover);
+}
+
+.tv-switch {
+  appearance: none;
+  position: relative;
+  width: 34px;
+  height: 18px;
+  margin: 0;
+  border-radius: 9px;
+  background: var(--tv-active);
+  cursor: pointer;
+  transition: background var(--tv-fast);
+}
+
+.tv-switch::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--tv-text-strong);
+  transition: transform var(--tv-fast);
+}
+
+.tv-switch:checked {
+  background: var(--tv-accent);
+}
+
+.tv-switch:checked::after {
+  transform: translateX(16px);
+  background: #fff;
+}
+
+.tv-field {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 40px;
+}
+
+.tv-field-label {
+  color: var(--tv-text);
+}
+
+.tv-color {
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 1px solid var(--tv-border-strong);
+  border-radius: var(--tv-radius-sm);
+  background: none;
+  cursor: pointer;
+}

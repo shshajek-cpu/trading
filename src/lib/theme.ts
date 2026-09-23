@@ -1,32 +1,80 @@
-/** UI 는 블랙&화이트 글래스, 시세 색상(캔들·등락)만 초록/빨강. */
+/** Colors that must be passed to canvas code (lightweight-charts cannot read CSS variables). */
+
+export type ThemeName = 'dark' | 'light'
+
+export interface ChartPalette {
+  background: string
+  text: string
+  textDim: string
+  grid: string
+  border: string
+  crosshair: string
+  crosshairLabel: string
+  up: string
+  down: string
+  accent: string
+}
+
+export const CHART_PALETTES: Record<ThemeName, ChartPalette> = {
+  dark: {
+    background: '#0f0f0f',
+    text: '#dbdbdb',
+    textDim: '#8c8c8c',
+    grid: 'rgba(242, 242, 242, 0.06)',
+    border: '#2e2e2e',
+    crosshair: '#9b9b9b',
+    crosshairLabel: '#3d3d3d',
+    up: '#089981',
+    down: '#f23645',
+    accent: '#2962ff',
+  },
+  light: {
+    background: '#ffffff',
+    text: '#0f0f0f',
+    textDim: '#6a6a6a',
+    grid: 'rgba(46, 46, 46, 0.06)',
+    border: '#ebebeb',
+    crosshair: '#9b9b9b',
+    crosshairLabel: '#131722',
+    up: '#089981',
+    down: '#f23645',
+    accent: '#2962ff',
+  },
+}
+
+/** Theme-independent market colors for UI code that is not canvas-bound. */
 export const COLORS = {
-  /** 상승 — 초록 */
-  up: '#26a69a',
-  /** 하락 — 빨강 */
-  down: '#ef5350',
-  background: '#0a0a0a',
-  panel: 'rgba(255, 255, 255, 0.04)',
-  border: 'rgba(255, 255, 255, 0.1)',
-  text: '#e8e8e8',
-  textDim: '#8a8a8a',
-  grid: '#161616',
-  accent: '#ffffff',
+  up: '#089981',
+  down: '#f23645',
+  accent: '#2962ff',
 } as const
 
-/** MA 라인을 새로 추가할 때 순서대로 집어주는 그레이스케일 팔레트. */
-export const MA_PALETTE = [
-  '#ffffff',
-  '#b4b4b4',
-  '#787878',
-  '#d8d8d8',
-  '#969696',
-  '#5a5a5a',
+/** TradingView's default study colors, used in order when a new line is added. */
+export const INDICATOR_PALETTE = [
+  '#2962ff',
+  '#ff6d00',
+  '#7e57c2',
+  '#089981',
+  '#f23645',
+  '#fbc02d',
+  '#00bcd4',
+  '#e91e63',
 ] as const
 
-/**
- * 차트 캔버스에 쓸 글꼴.
- * 차트는 CSS 로 글꼴을 못 바꾸므로(캔버스에 직접 그린다) 값을 문자열로 넘겨야 한다.
- * index.css 의 --font-sans 와 같은 순서를 유지한다.
- */
+/** Drawing-tool color swatches (TradingView default drawing color is #2962ff). */
+export const DRAWING_PALETTE = [
+  '#2962ff',
+  '#f23645',
+  '#089981',
+  '#ff9800',
+  '#9c27b0',
+  '#00bcd4',
+  '#fbc02d',
+  '#ffffff',
+  '#787b86',
+  '#000000',
+] as const
+
+/** Canvas font; keep in sync with --tv-font in styles/tokens.css. */
 export const CHART_FONT =
-  "'SUIT Variable', -apple-system, BlinkMacSystemFont, 'Segoe UI Variable Text', 'Segoe UI', 'Apple SD Gothic Neo', 'Malgun Gothic', Roboto, sans-serif"
+  "-apple-system, BlinkMacSystemFont, 'Trebuchet MS', Roboto, Ubuntu, 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif"

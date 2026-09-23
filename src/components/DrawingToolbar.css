@@ -1,0 +1,80 @@
+/* 왼쪽 그리기 툴바 — 색/치수는 tokens.css 변수만 사용. */
+.tv-drawbar {
+  display: flex;
+  flex-direction: column;
+  width: var(--tv-left-w);
+  height: 100%;
+  background: var(--tv-bg);
+  overflow: hidden;
+}
+
+.tv-drawbar-scroll {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 4px 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
+}
+
+.tv-drawbar-scroll::-webkit-scrollbar {
+  display: none;
+}
+
+.tv-drawbar-group {
+  position: relative;
+}
+
+.tv-drawbar-btn {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--tv-radius-sm);
+  background: transparent;
+  color: var(--tv-text);
+  cursor: pointer;
+  transition: background var(--tv-fast);
+}
+
+.tv-drawbar-btn:hover {
+  background: var(--tv-hover);
+}
+
+.tv-drawbar-btn.active {
+  background: var(--tv-row-active);
+  color: var(--tv-accent-text);
+}
+
+.tv-drawbar-arrow {
+  position: absolute;
+  right: 0;
+  bottom: 1px;
+  display: inline-flex;
+  color: var(--tv-text-dim);
+}
+
+.tv-drawbar-btn:hover .tv-drawbar-arrow,
+.tv-drawbar-btn.active .tv-drawbar-arrow {
+  color: inherit;
+}
+
+.tv-drawbar-sep {
+  width: 24px;
+  height: 1px;
+  margin: 4px 0;
+  background: var(--tv-border);
+}
+
+@media (width <= 900px) {
+  .tv-drawbar-btn {
+    width: var(--tv-btn);
+    height: var(--tv-btn);
+  }
+}

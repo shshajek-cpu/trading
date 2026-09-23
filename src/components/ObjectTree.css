@@ -1,0 +1,97 @@
+/* 객체 트리 위젯 — tokens.css 변수만 사용. */
+.tv-objtree {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow-y: auto;
+  color: var(--tv-text);
+  font: var(--tv-fs-sm) / 1.4 var(--tv-font);
+}
+
+.tv-objtree-head {
+  padding: 12px 14px 8px;
+  font-size: var(--tv-fs);
+  font-weight: 600;
+  color: var(--tv-text-strong);
+}
+
+.tv-objtree-empty {
+  padding: 24px 16px;
+  color: var(--tv-text-dim);
+  text-align: center;
+  line-height: 1.6;
+}
+
+.tv-objtree-section + .tv-objtree-section {
+  margin-top: 6px;
+  border-top: 1px solid var(--tv-border);
+}
+
+.tv-objtree-title {
+  padding: 8px 14px 4px;
+  font-size: var(--tv-fs-xs);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--tv-text-dim);
+}
+
+.tv-objtree-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 34px;
+  padding: 0 8px 0 14px;
+}
+
+.tv-objtree-row:hover {
+  background: var(--tv-hover);
+}
+
+.tv-objtree-icon {
+  display: inline-flex;
+  flex: none;
+  color: var(--tv-text-dim);
+}
+
+.tv-objtree-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.tv-objtree-act {
+  display: none;
+  align-items: center;
+  justify-content: center;
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--tv-radius-sm);
+  background: transparent;
+  color: var(--tv-text-dim);
+  cursor: pointer;
+}
+
+.tv-objtree-row:hover .tv-objtree-act,
+.tv-objtree-act.on {
+  display: inline-flex;
+}
+
+.tv-objtree-act:hover {
+  background: var(--tv-active);
+  color: var(--tv-text);
+}
+
+.tv-objtree-act.on {
+  color: var(--tv-accent-text);
+}
+
+/* 터치 기기에서는 액션 버튼을 항상 보여준다. */
+@media (hover: none) {
+  .tv-objtree-act {
+    display: inline-flex;
+  }
+}

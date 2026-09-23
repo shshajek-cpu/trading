@@ -1,555 +1,539 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
-  CandlestickSeries,
   CrosshairMode,
   HistogramSeries,
   LineSeries,
+  LineStyle,
+  PriceScaleMode,
   createChart,
   createSeriesMarkers,
+  createTextWatermark,
   type IChartApi,
   type IPriceLine,
   type ISeriesApi,
   type ISeriesMarkersPluginApi,
-  type LineData,
+  type ITextWatermarkPluginApi,
   type MouseEventParams,
   type Time,
   type UTCTimestamp,
 } from 'lightweight-charts'
-import type { Candle, Interval } from '../lib/binance'
-import {
-  ema,
-  macd,
-  rsi,
-  sma,
-  vwma,
-  volumeTiers,
-  VOLUME_TIER_COLORS,
-  type LinePoint,
-} from '../lib/indicators'
-import type { IndicatorSettings } from '../lib/indicatorConfig'
+import { fetchKlines, type Candle, type Interval } from '../lib/binance'
+import { INTERVAL_SECONDS } from '../lib/intervals'
 import type { PriceAlert } from '../hooks/usePriceAlerts'
+import type { Drawing, DrawingTool, MagnetMode, NewDrawing } from '../lib/drawings'
+import type { Pin } from '../lib/pins'
+import { SIDE_COLORS } from '../lib/pins'
+import { CHART_PALETTES, CHART_FONT, INDICATOR_PALETTE } from '../lib/theme'
+import type { ChartSettings } from '../lib/chartSettings'
+import type { ChartType, ScaleMode } from '../lib/chartTypes'
+import { registerChart, type ChartHandle } from '../lib/chartRegistry'
 import { loadPaneSizes, savePaneSizes } from '../lib/layoutConfig'
-import type { Drawing } from '../lib/drawings'
-import { CHART_FONT, COLORS } from '../lib/theme'
-import { SIDE_COLORS, type Pin } from '../lib/pins'
+import { DrawingOverlay } from '../chart/drawing/DrawingOverlay'
+import {
+  baselineBaseValue,
+  createMainSeries,
+  mainSeriesData,
+  mainSeriesPoint,
+  type MainSeries,
+  type MainSeriesColors,
+} from '../chart/series'
+import { makeTickFormatter, makeTimeFormatter, formatCountdown, formatPrice, priceFormatter } from '../chart/format'
+import { BandFillPrimitive } from '../chart/bandFill'
+import type { ComputedIndicator } from '../chart/compute'
 
-interface ChartProps {
-  candles: Candle[]
+/** 오실레이터 패널의 상단 y 좌표 — ChartCell 이 그 자리에 범례 줄을 놓는다. */
+export interface PaneInfo {
+  instanceId: string
+  top: number
+}
+export interface CompareInfo {
+  symbol: string
+  changePct: number
+  color: string
+}
+
+
+export interface ChartProps {
+  symbol: string
   interval: Interval
-  indicators: IndicatorSettings
+  candles: Candle[]
+  /** 심볼 가격 소수 자릿수(틱 사이즈). 가격 포맷·축·범례에 쓴다. */
+  pricePrecision: number
+  chartType: ChartType
+  scaleMode: ScaleMode
+  autoScale: boolean
+  onAutoScaleChange: (v: boolean) => void
+  compare: string[]
+  indicators: ComputedIndicator[]
+  settings: ChartSettings
   alerts: PriceAlert[]
   drawings: Drawing[]
-  /** 그리기 모드일 때 차트를 클릭하면 그 가격으로 호출된다. */
-  drawMode: boolean
-  onDrawPrice: (price: number) => void
-  /** 수평선을 끌어서 놓았을 때. */
-  onMoveDrawing: (id: string, price: number) => void
-  /** 왼쪽 끝에 닿으면 과거를 더 불러오기 위해 불린다. */
-  onReachStart?: () => void
-  /** 핀 모드일 때 클릭한 캔들의 시각·가격을 돌려준다. */
-  pinMode: boolean
-  onPinPoint: (time: number, price: number) => void
-  /** 이 차트(심볼·주기)에 찍힌 핀들. */
   pins: Pin[]
-  /** 크로스헤어가 올라간 봉. 안 올렸으면 null — 부모가 마지막 봉을 보여준다. */
-  onHoverCandle?: (candle: Candle | null) => void
-  /**
-   * 지표 패널(RSI·MACD)이 실제로 차지한 세로 구간.
-   * 조작 버튼을 고정 비율로 얹으면 패널 높이를 바꿀 때마다 어긋난다 — 잰 값을 그대로 쓴다.
-   */
-  onPaneLayout?: (layout: { rsi: number | null; macd: number | null; axisWidth: number }) => void
-}
-
-const INTERVAL_SECONDS: Record<Interval, number> = {
-  '1m': 60, '3m': 180, '5m': 300, '15m': 900, '30m': 1800,
-  '1h': 3600, '2h': 7200, '4h': 14400, '6h': 21600, '8h': 28800, '12h': 43200,
-  '1d': 86400, '3d': 259200, '1w': 604800, '1M': 2592000,
-}
-
-function formatRemain(totalSec: number): string {
-  const s = Math.max(0, totalSec)
-  const h = Math.floor(s / 3600)
-  const m = Math.floor((s % 3600) / 60)
-  const sec = s % 60
-  const mm = String(m).padStart(2, '0')
-  const ss = String(sec).padStart(2, '0')
-  return h > 0 ? `${h}:${mm}:${ss}` : `${mm}:${ss}`
+  cellIndex: number | null
+  /** 그리기 오버레이 배선. */
+  drawingTool: DrawingTool
+  magnet: MagnetMode
+  stayInDrawingMode: boolean
+  drawingsLocked: boolean
+  drawingsHidden: boolean
+  overlayEnabled: boolean
+  onCreateDrawing: (d: NewDrawing) => void
+  onUpdateDrawing: (id: string, patch: Partial<Omit<Drawing, 'id'>>, opts?: { history?: boolean }) => void
+  onRemoveDrawing: (id: string) => void
+  onToolDone: () => void
+  /** 왼쪽 끝에서 과거 더 불러오기. */
+  onReachStart?: () => void
+  /** 크로스헤어가 가리키는 봉 시각(없으면 null). */
+  onHoverTime?: (time: number | null) => void
+  /** 오실레이터 패널 위치 + 가격축 너비. */
+  onPanes?: (panes: PaneInfo[], axisWidth: number) => void
+  /** 리플레이 시작점 미리보기 세로선. */
+  replayPick?: boolean
+  onReplayPreview?: (time: number | null) => void
+  /** 핀/리플레이 클릭 캡처. */
+  captureClicks?: boolean
+  onChartClick?: (time: number, price: number) => void
+  /** 비교 심볼의 최근 변동률 + 선 색을 범례에 쓰라고 올려 준다. */
+  onCompareInfo?: (info: CompareInfo[]) => void
 }
 
 const asTime = (t: number) => t as UTCTimestamp
 
-function toLineData(points: LinePoint<number>[]): LineData<Time>[] {
-  return points.map((p) => ({ time: asTime(p.time), value: p.value }))
-}
-
-const RSI_PANE = 1
-
-/** MACD 패널 번호는 RSI 를 켰는지에 따라 밀린다. */
-function macdPane(rsiEnabled: boolean): number {
-  return rsiEnabled ? 2 : 1
+const SCALE_MODE_MAP: Record<ScaleMode, PriceScaleMode> = {
+  normal: PriceScaleMode.Normal,
+  log: PriceScaleMode.Logarithmic,
+  percent: PriceScaleMode.Percentage,
+  indexed: PriceScaleMode.IndexedTo100,
 }
 
 export function Chart({
-  candles,
+  symbol,
   interval,
+  candles,
+  pricePrecision,
+  chartType,
+  scaleMode,
+  autoScale,
+  onAutoScaleChange,
+  compare,
   indicators,
+  settings,
   alerts,
   drawings,
-  drawMode,
-  pinMode,
-  onPinPoint,
   pins,
-  onDrawPrice,
-  onMoveDrawing,
+  cellIndex,
+  drawingTool,
+  magnet,
+  stayInDrawingMode,
+  drawingsLocked,
+  drawingsHidden,
+  overlayEnabled,
+  onCreateDrawing,
+  onUpdateDrawing,
+  onRemoveDrawing,
+  onToolDone,
   onReachStart,
-  onHoverCandle,
-  onPaneLayout,
+  onHoverTime,
+  onPanes,
+  replayPick,
+  onReplayPreview,
+  captureClicks,
+  onChartClick,
+  onCompareInfo,
 }: ChartProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<IChartApi | null>(null)
-  const candleSeriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null)
-  const volumeSeriesRef = useRef<ISeriesApi<'Histogram'> | null>(null)
-  const maSeriesRef = useRef(new Map<string, ISeriesApi<'Line'>>())
-  const rsiSeriesRef = useRef<ISeriesApi<'Line'> | null>(null)
-  const macdSeriesRef = useRef<{
-    macd: ISeriesApi<'Line'>
-    signal: ISeriesApi<'Line'>
-    histogram: ISeriesApi<'Histogram'>
-  } | null>(null)
-  const priceLinesRef = useRef(new Map<string, IPriceLine>())
-  const drawLinesRef = useRef(new Map<string, IPriceLine>())
+  const [mainSeries, setMainSeries] = useState<MainSeries | null>(null)
+
+  const palette = useMemo(() => CHART_PALETTES[settings.theme], [settings.theme])
+  const colors: MainSeriesColors = useMemo(
+    () => ({ up: settings.upColor, down: settings.downColor, palette }),
+    [settings.upColor, settings.downColor, palette],
+  )
+
+  // ── 자주 바뀌는 콜백은 ref 로 잡아 이펙트 재실행을 막는다. ──
+  const cbRef = useRef({ onReachStart, onHoverTime, onPanes, onAutoScaleChange, onReplayPreview, onChartClick, onCompareInfo })
+  cbRef.current = { onReachStart, onHoverTime, onPanes, onAutoScaleChange, onReplayPreview, onChartClick, onCompareInfo }
+
+  const candlesRef = useRef<Candle[]>([])
+  candlesRef.current = candles
   const fittedRef = useRef(false)
   const firstTimeRef = useRef<number | null>(null)
-  const reachStartRef = useRef(onReachStart)
-  reachStartRef.current = onReachStart
-  const onDrawPriceRef = useRef(onDrawPrice)
-  onDrawPriceRef.current = onDrawPrice
-  const onPinPointRef = useRef(onPinPoint)
-  onPinPointRef.current = onPinPoint
+  const prevDataRef = useRef<Candle[]>([])
+  const lastSeriesRef = useRef<MainSeries | null>(null)
+
+  const indicatorSeriesRef = useRef(new Map<string, ISeriesApi<'Line'> | ISeriesApi<'Histogram'>>())
+  const indicatorLevelsRef = useRef(new Map<string, IPriceLine[]>())
+  const bandPrimsRef = useRef(new Map<string, BandFillPrimitive>())
+  const compositionRef = useRef<string>('')
+  const compareSeriesRef = useRef(new Map<string, ISeriesApi<'Line'>>())
+  const alertLinesRef = useRef(new Map<string, IPriceLine>())
   const markersRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null)
-  const onMoveDrawingRef = useRef(onMoveDrawing)
-  onMoveDrawingRef.current = onMoveDrawing
-  const handleLayerRef = useRef<HTMLDivElement>(null)
-  // 끌고 있는 동안에는 선을 임시 가격으로 보여준다.
-  const dragRef = useRef<{ id: string; price: number } | null>(null)
+  const watermarkRef = useRef<ITextWatermarkPluginApi<Time> | null>(null)
   const countdownRef = useRef<HTMLDivElement>(null)
-  const lastCandleRef = useRef<Candle | null>(null)
-  // 크로스헤어가 가리키는 봉의 거래량을 찾으려면 원본이 필요하다.
-  const candlesRef = useRef<Candle[]>([])
-  const onPaneLayoutRef = useRef(onPaneLayout)
-  onPaneLayoutRef.current = onPaneLayout
+  const replayLineRef = useRef<HTMLDivElement>(null)
 
-  // 패널 높이 비율을 구성별로 저장한다(예: "rsi+macd").
-  const paneConfig = `${indicators.rsi.enabled ? 'rsi' : ''}${indicators.macd.enabled ? '+macd' : ''}` || 'main'
+  const effectiveScale: ScaleMode = compare.length > 0 ? 'percent' : scaleMode
 
-  // 차트 인스턴스는 마운트 시 한 번만 만든다. autoSize 가 ResizeObserver 로 크기를 따라간다.
+  // ── 1) 차트 인스턴스: 마운트 시 한 번만. ─────────────────────────────
   useEffect(() => {
     const container = containerRef.current
     if (!container) return
-
-    const chart = createChart(container, {
-      layout: {
-        // 바탕의 광원 그라데이션이 비치도록 투명 배경을 쓴다.
-        background: { color: 'transparent' },
-        textColor: COLORS.text,
-        // 차트 눈금은 캔버스에 직접 그려서 CSS 가 닿지 않는다 — 여기서 따로 지정해야
-        // 축 숫자와 화면의 나머지 글자가 같은 글꼴로 보인다.
-        fontFamily: CHART_FONT,
-        panes: { separatorColor: COLORS.border, separatorHoverColor: COLORS.accent },
-        // 저작자 표시는 로고 대신 README 의 출처 표기 + 링크로 갈음(라이선스 허용 방식).
-        attributionLogo: false,
-      },
-      grid: {
-        vertLines: { color: COLORS.grid },
-        horzLines: { color: COLORS.grid },
-      },
-      rightPriceScale: { borderColor: COLORS.border },
-      timeScale: { borderColor: COLORS.border, timeVisible: true, secondsVisible: false },
-      crosshair: { mode: CrosshairMode.Normal },
-      handleScroll: {
-        mouseWheel: true,
-        pressedMouseMove: true,
-        horzTouchDrag: true,
-        vertTouchDrag: true,
-      },
-      kineticScroll: { mouse: false, touch: true },
-      autoSize: true,
-    })
+    const chart = createChartWithDefaults(container)
     chartRef.current = chart
-
-    candleSeriesRef.current = chart.addSeries(CandlestickSeries, {
-      upColor: COLORS.up,
-      downColor: COLORS.down,
-      borderUpColor: COLORS.up,
-      borderDownColor: COLORS.down,
-      wickUpColor: COLORS.up,
-      wickDownColor: COLORS.down,
-      // 내장 라벨 대신 가격+카운트다운을 한 덩어리 배지로 직접 그린다(점선은 유지).
-      lastValueVisible: false,
-    })
-
-    // 거래량은 메인 패널 하단에 겹쳐 그린다(별도 price scale).
-    volumeSeriesRef.current = chart.addSeries(HistogramSeries, {
-      priceFormat: { type: 'volume' },
-      priceScaleId: 'volume',
-      priceLineVisible: false,
-      lastValueVisible: false,
-    })
-    chart.priceScale('volume').applyOptions({
-      scaleMargins: { top: 0.8, bottom: 0 },
-    })
-
-    const maSeries = maSeriesRef.current
-    const priceLines = priceLinesRef.current
-
+    const indicatorSeries = indicatorSeriesRef.current
+    const indicatorLevels = indicatorLevelsRef.current
+    const compareSeries = compareSeriesRef.current
+    const alertLines = alertLinesRef.current
     return () => {
       chart.remove()
       chartRef.current = null
-      candleSeriesRef.current = null
-      volumeSeriesRef.current = null
-      rsiSeriesRef.current = null
-      macdSeriesRef.current = null
-      maSeries.clear()
-      priceLines.clear()
+      setMainSeries(null)
+      indicatorSeries.clear()
+      indicatorLevels.clear()
+      compareSeries.clear()
+      alertLines.clear()
+      markersRef.current = null
+      watermarkRef.current = null
       fittedRef.current = false
       firstTimeRef.current = null
+      prevDataRef.current = []
+      lastSeriesRef.current = null
     }
   }, [])
 
-  // 크로스헤어를 올린 봉을 부모에게 알린다(트레이딩뷰식 OHLC 표시).
-  useEffect(() => {
-    const chart = chartRef.current
-    const series = candleSeriesRef.current
-    if (!chart || !series || !onHoverCandle) return
-
-    const handler = (param: MouseEventParams) => {
-      if (param.time === undefined) {
-        onHoverCandle(null)
-        return
-      }
-      const bar = param.seriesData.get(series)
-      if (!bar || !('open' in bar)) {
-        onHoverCandle(null)
-        return
-      }
-      // 거래량은 시리즈에 없으므로 원본에서 같은 시각을 찾아 붙인다.
-      const time = Number(param.time)
-      const found = candlesRef.current.find((c) => c.time === time)
-      onHoverCandle({
-        time,
-        open: bar.open,
-        high: bar.high,
-        low: bar.low,
-        close: bar.close,
-        volume: found ? found.volume : 0,
-      })
-    }
-    chart.subscribeCrosshairMove(handler)
-    return () => {
-      chart.unsubscribeCrosshairMove(handler)
-      onHoverCandle(null)
-    }
-  }, [onHoverCandle])
-
-  // 왼쪽 끝에 가까워지면 과거를 더 달라고 알린다.
+  // ── 2) 메인 시리즈: 차트 종류/색이 바뀌면 통째로 갈아끼운다. ──────────
+  const createKey = `${chartType}|${settings.theme}|${settings.upColor}|${settings.downColor}`
   useEffect(() => {
     const chart = chartRef.current
     if (!chart) return
-    const timeScale = chart.timeScale()
-    const onRange = (range: { from: number; to: number } | null) => {
-      if (!range) return
-      // 앞쪽 20봉 안으로 들어오면 미리 부른다 — 끝에 닿고 나서면 늦다.
-      if (range.from < 20) reachStartRef.current?.()
+    const series = createMainSeries(chart, chartType, colors)
+    // 이 시리즈에 붙던 알림선·핀 마커는 옛 시리즈와 함께 사라졌으니 참조를 비운다.
+    alertLinesRef.current.clear()
+    markersRef.current = null
+    setMainSeries(series)
+    return () => {
+      try {
+        chart.removeSeries(series)
+      } catch {
+        /* 차트가 먼저 사라졌으면 무시 */
+      }
     }
-    timeScale.subscribeVisibleLogicalRangeChange(onRange)
-    return () => timeScale.unsubscribeVisibleLogicalRangeChange(onRange)
-  }, [])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [createKey])
 
-  // 캔들 + 거래량
+  // ── 3) 메인 데이터: 첫 로드/과거 붙임은 setData, 실시간 틱은 update(). ─
   useEffect(() => {
-    const candleSeries = candleSeriesRef.current
-    const volumeSeries = volumeSeriesRef.current
-    if (!candleSeries || !volumeSeries || candles.length === 0) return
+    const series = mainSeries
+    if (!series || candles.length === 0) return
+    const prev = prevDataRef.current
+    const seriesChanged = lastSeriesRef.current !== series
+    lastSeriesRef.current = series
 
-    // 과거가 앞에 붙었으면 그만큼 보이는 구간을 밀어 화면이 튀지 않게 한다.
-    const prependedCount = candles.findIndex((c) => c.time === firstTimeRef.current)
-    const prepended = firstTimeRef.current !== null && prependedCount > 0 ? prependedCount : 0
-    const keepRange = prepended
-      ? chartRef.current?.timeScale().getVisibleLogicalRange()
-      : null
-
-    candleSeries.setData(
-      candles.map((c) => ({
-        time: asTime(c.time),
-        open: c.open,
-        high: c.high,
-        low: c.low,
-        close: c.close,
-      })),
-    )
-    // 거래량이 갑자기 터진 봉만 형광색으로 눈에 띄게 한다.
-    const surge = indicators.volumeSurge
-    const tiers = surge.enabled
-      ? volumeTiers(candles.map((c) => c.volume), surge.window, surge)
-      : null
-    volumeSeries.setData(
-      candles.map((c, i) => {
-        const tier = tiers ? tiers[i] : 0
-        // 급증봉이 있을 땐 평범한 봉을 더 죽여 대비를 키운다.
-        const dim = tiers ? '45' : '80'
-        return {
-          time: asTime(c.time),
-          value: c.volume,
-          color:
-            tier > 0
-              ? VOLUME_TIER_COLORS[tier as 1 | 2 | 3]
-              : c.close >= c.open
-                ? `${COLORS.up}${dim}`
-                : `${COLORS.down}${dim}`,
-        }
-      }),
-    )
-
-    lastCandleRef.current = candles[candles.length - 1]
-    candlesRef.current = candles
-
-    if (keepRange) {
-      chartRef.current?.timeScale().setVisibleLogicalRange({
-        from: keepRange.from + prepended,
-        to: keepRange.to + prepended,
-      })
+    const full = () => {
+      series.setData(mainSeriesData(chartType, candles, colors) as never)
+      if (chartType === 'baseline') {
+        series.applyOptions({ baseValue: { type: 'price', price: baselineBaseValue(candles) } } as never)
+      }
     }
-    firstTimeRef.current = candles[0]?.time ?? null
 
-    // 최초 1회만 전체 구간을 맞춘다. 이후엔 사용자의 줌/스크롤을 건드리지 않는다.
+    if (seriesChanged) {
+      full()
+    } else if (chartType === 'heikinAshi') {
+      // HA 는 직전 봉에 의존하므로 통째로 다시 그린다(이 종류만 예외).
+      full()
+    } else if (
+      prev.length > 0 &&
+      candles.length === prev.length &&
+      candles[candles.length - 1].time === prev[prev.length - 1].time
+    ) {
+      series.update(mainSeriesPoint(chartType, candles[candles.length - 1], colors) as never)
+    } else if (
+      prev.length > 0 &&
+      candles.length === prev.length + 1 &&
+      candles[candles.length - 2].time === prev[prev.length - 1].time
+    ) {
+      series.update(mainSeriesPoint(chartType, candles[candles.length - 1], colors) as never)
+    } else {
+      // 과거가 앞에 붙었으면 보이는 구간을 밀어 화면이 튀지 않게 한다.
+      const prependedCount = candles.findIndex((c) => c.time === firstTimeRef.current)
+      const prepended = firstTimeRef.current !== null && prependedCount > 0 ? prependedCount : 0
+      const keepRange = prepended ? chartRef.current?.timeScale().getVisibleLogicalRange() : null
+      full()
+      if (keepRange) {
+        chartRef.current?.timeScale().setVisibleLogicalRange({
+          from: keepRange.from + prepended,
+          to: keepRange.to + prepended,
+        })
+      }
+    }
+
+    firstTimeRef.current = candles[0]?.time ?? null
+    prevDataRef.current = candles
     if (!fittedRef.current) {
       chartRef.current?.timeScale().fitContent()
       fittedRef.current = true
     }
-  }, [candles, indicators.volumeSurge])
+  }, [candles, mainSeries, chartType, colors])
 
-  // 패널 높이 — 저장된 비율을 복원하고, 사용자가 경계를 끌면 저장한다.
+  // ── 4) 스케일 모드 + 자동 스케일. ────────────────────────────────────
   useEffect(() => {
     const chart = chartRef.current
     if (!chart) return
+    chart.priceScale('right').applyOptions({ mode: SCALE_MODE_MAP[effectiveScale], autoScale })
+  }, [effectiveScale, autoScale, mainSeries])
 
-    // 시리즈가 붙어 패널이 생긴 뒤에 적용해야 하므로 한 틱 미룬다.
-    const restore = window.setTimeout(() => {
-      const panes = chart.panes()
-      const saved = loadPaneSizes(paneConfig)
-      if (saved && saved.length === panes.length) {
-        panes.forEach((pane, i) => pane.setStretchFactor(saved[i]))
-      } else if (panes.length > 1 && window.matchMedia('(width <= 900px)').matches) {
-        const mobileFactors =
-          panes.length === 3 ? [5.8, 1.45, 1.35] : panes.length === 2 ? [6.2, 1.8] : []
-        panes.forEach((pane, i) => pane.setStretchFactor(mobileFactors[i] ?? 1))
-      }
-    }, 0)
-
-    // 경계를 끌어 놓았을 때만 저장한다(드래그 중 저장 폭주 방지).
-    const container = containerRef.current
-    const onPointerUp = () => {
-      const sizes = chart.panes().map((p) => p.getStretchFactor())
-      if (sizes.length > 1) savePaneSizes(paneConfig, sizes)
-    }
-    container?.addEventListener('pointerup', onPointerUp)
-
-    return () => {
-      window.clearTimeout(restore)
-      container?.removeEventListener('pointerup', onPointerUp)
-    }
-  }, [paneConfig])
-
-  /**
-   * 지표 패널이 실제로 어디서 시작하는지 재서 부모에게 알린다.
-   * 패널은 위에서부터 [메인] → [RSI] → [MACD] 순으로 쌓이므로 높이를 누적하면 각 패널의 윗변이 나온다.
-   */
+  // ── 4b) 가격 포맷: 천단위 구분 + 심볼 정밀도(축·라벨·카운트다운 공통). ─
   useEffect(() => {
-    const report = () => {
-      const chart = chartRef.current
-      const cb = onPaneLayoutRef.current
-      if (!chart || !cb) return
-
-      const panes = chart.panes()
-      const axisWidth = chart.priceScale('right').width()
-      // 패널 사이 구분선(1px)까지 더해야 실제 화면 위치와 맞는다.
-      const SEPARATOR = 1
-      let top = 0
-      let rsiTop: number | null = null
-      let macdTop: number | null = null
-
-      panes.forEach((pane, i) => {
-        if (i > 0) {
-          const isRsi = indicators.rsi.enabled && i === RSI_PANE
-          const isMacd = i === macdPane(indicators.rsi.enabled)
-          if (isRsi) rsiTop = top
-          else if (indicators.macd.enabled && isMacd) macdTop = top
-        }
-        top += pane.getHeight() + SEPARATOR
-      })
-
-      cb({ rsi: rsiTop, macd: macdTop, axisWidth })
-    }
-
-    // 패널이 만들어지고 크기가 잡힌 뒤에 재야 한다.
-    const first = window.setTimeout(report, 60)
-    // 창 크기·패널 경계 변화도 따라가야 하므로 주기적으로 다시 잰다(값이 같으면 부모가 무시한다).
-    const timer = window.setInterval(report, 500)
-    return () => {
-      window.clearTimeout(first)
-      window.clearInterval(timer)
-    }
-  }, [indicators.rsi.enabled, indicators.macd.enabled, paneConfig])
-
-  // 현재가 배지(가격 + 봉 마감 카운트다운) — 한 덩어리로 매 초 갱신.
-  useEffect(() => {
-    const tick = () => {
-      const el = countdownRef.current
-      const chart = chartRef.current
-      const series = candleSeriesRef.current
-      const last = lastCandleRef.current
-      if (!el || !chart || !series || !last) return
-
-      const span = INTERVAL_SECONDS[interval]
-      let remain = last.time + span - Math.floor(Date.now() / 1000)
-      // 틱이 끊긴 동안 봉이 넘어가도 다음 마감까지 남은 시간으로 보정한다.
-      if (remain < 0) remain = ((remain % span) + span) % span
-
-      const y = series.priceToCoordinate(last.close)
-      if (y === null) {
-        el.style.display = 'none'
-        return
-      }
-      el.style.display = 'block'
-      // 가격 줄이 점선 높이(y)에 오도록 배지 상단을 반 줄 올린다.
-      el.style.top = `${Math.round(y) - 10}px`
-      el.style.width = `${chart.priceScale('right').width()}px`
-      el.style.background = last.close >= last.open ? COLORS.up : COLORS.down
-      el.textContent = ''
-      const priceRow = document.createElement('div')
-      priceRow.textContent = series.priceFormatter().format(last.close)
-      const cdRow = document.createElement('div')
-      cdRow.className = 'cd'
-      cdRow.textContent = formatRemain(remain)
-      el.append(priceRow, cdRow)
-    }
-
-    tick()
-    const timer = window.setInterval(tick, 1000)
-    return () => window.clearInterval(timer)
-  }, [interval])
-
-  // 이동평균선 — 설정이 바뀌면 없어진 것만 지우고 나머지는 갱신한다.
-  useEffect(() => {
-    const chart = chartRef.current
-    if (!chart) return
-    const store = maSeriesRef.current
-
-    const wanted = new Set(indicators.mas.filter((m) => m.visible).map((m) => m.id))
-    for (const [id, series] of store) {
-      if (!wanted.has(id)) {
-        chart.removeSeries(series)
-        store.delete(id)
-      }
-    }
-
-    for (const config of indicators.mas) {
-      if (!config.visible) continue
-      let series = store.get(config.id)
-      if (!series) {
-        series = chart.addSeries(LineSeries, {
-          color: config.color,
-          lineWidth: 1,
-          priceLineVisible: false,
-          lastValueVisible: false,
-        })
-        store.set(config.id, series)
-      } else {
-        series.applyOptions({ color: config.color })
-      }
-      const calc = config.type === 'ema' ? ema : config.type === 'vwma' ? vwma : sma
-      series.setData(toLineData(calc(candles, config.period)))
-    }
-  }, [candles, indicators.mas])
-
-  // RSI 패널
-  useEffect(() => {
-    const chart = chartRef.current
-    if (!chart) return
-
-    if (!indicators.rsi.enabled) {
-      if (rsiSeriesRef.current) {
-        chart.removeSeries(rsiSeriesRef.current)
-        rsiSeriesRef.current = null
-      }
-      return
-    }
-
-    if (!rsiSeriesRef.current) {
-      rsiSeriesRef.current = chart.addSeries(
-        LineSeries,
-        { color: '#c8c8c8', lineWidth: 1, priceLineVisible: false },
-        RSI_PANE,
-      )
-    }
-    rsiSeriesRef.current.setData(toLineData(rsi(candles, indicators.rsi.period)))
-  }, [candles, indicators.rsi.enabled, indicators.rsi.period])
-
-  // MACD 패널
-  useEffect(() => {
-    const chart = chartRef.current
-    if (!chart) return
-
-    if (!indicators.macd.enabled) {
-      if (macdSeriesRef.current) {
-        chart.removeSeries(macdSeriesRef.current.macd)
-        chart.removeSeries(macdSeriesRef.current.signal)
-        chart.removeSeries(macdSeriesRef.current.histogram)
-        macdSeriesRef.current = null
-      }
-      return
-    }
-
-    const pane = macdPane(indicators.rsi.enabled)
-    if (!macdSeriesRef.current) {
-      macdSeriesRef.current = {
-        histogram: chart.addSeries(HistogramSeries, { priceLineVisible: false }, pane),
-        macd: chart.addSeries(
-          LineSeries,
-          { color: COLORS.accent, lineWidth: 1, priceLineVisible: false },
-          pane,
-        ),
-        signal: chart.addSeries(
-          LineSeries,
-          { color: '#7a7a7a', lineWidth: 1, priceLineVisible: false },
-          pane,
-        ),
-      }
-    }
-
-    const { fast, slow, signal } = indicators.macd
-    const result = macd(candles, fast, slow, signal)
-    macdSeriesRef.current.macd.setData(toLineData(result.macd))
-    macdSeriesRef.current.signal.setData(toLineData(result.signal))
-    macdSeriesRef.current.histogram.setData(
-      result.histogram.map((p) => ({
-        time: asTime(p.time),
-        value: p.value,
-        color: p.value >= 0 ? `${COLORS.up}b0` : `${COLORS.down}b0`,
-      })),
-    )
-  }, [
-    candles,
-    indicators.macd,
-    indicators.rsi.enabled,
-  ])
-
-  // 알림 수평선 — 전달된 alerts 는 이미 현재 심볼로 걸러져 있다.
-  useEffect(() => {
-    const series = candleSeriesRef.current
+    const series = mainSeries
     if (!series) return
-    const store = priceLinesRef.current
+    series.applyOptions({
+      priceFormat: {
+        type: 'custom',
+        formatter: priceFormatter(pricePrecision),
+        minMove: Math.pow(10, -pricePrecision),
+      },
+    } as never)
+  }, [mainSeries, pricePrecision])
 
+  // ── 5) 캔버스 설정(그리드/크로스헤어색/워터마크/시간대/마지막가격라벨). ─
+  useEffect(() => {
+    const chart = chartRef.current
+    const series = mainSeries
+    if (!chart) return
+    const gridV = settings.grid === 'both' || settings.grid === 'vertical'
+    const gridH = settings.grid === 'both' || settings.grid === 'horizontal'
+    chart.applyOptions({
+      layout: {
+        textColor: palette.text,
+        background: { color: 'transparent' },
+        panes: { separatorColor: palette.border, separatorHoverColor: `${palette.accent}66` },
+      },
+      grid: {
+        vertLines: { color: palette.grid, visible: gridV },
+        horzLines: { color: palette.grid, visible: gridH },
+      },
+      rightPriceScale: { borderColor: palette.border },
+      timeScale: {
+        borderColor: palette.border,
+        tickMarkFormatter: makeTickFormatter(settings.timezone),
+      },
+      localization: { timeFormatter: makeTimeFormatter(settings.timezone, INTERVAL_SECONDS[interval] < 86400) },
+    })
+    series?.applyOptions({ lastValueVisible: settings.showLastPriceLabel })
+
+    // 워터마크(심볼).
+    if (settings.showWatermark) {
+      const pane = chart.panes()[0]
+      if (pane) {
+        if (!watermarkRef.current) {
+          watermarkRef.current = createTextWatermark(pane, {
+            horzAlign: 'center',
+            vertAlign: 'center',
+            lines: [{ text: symbol, color: `${palette.textDim}33`, fontSize: 44, fontFamily: CHART_FONT }],
+          })
+        } else {
+          watermarkRef.current.applyOptions({
+            lines: [{ text: symbol, color: `${palette.textDim}33`, fontSize: 44, fontFamily: CHART_FONT }],
+          })
+        }
+      }
+    } else if (watermarkRef.current) {
+      watermarkRef.current.detach()
+      watermarkRef.current = null
+    }
+  }, [settings.grid, settings.showWatermark, settings.showLastPriceLabel, settings.timezone, palette, symbol, interval, mainSeries])
+
+  // ── 6) 지표 시리즈: 구성이 바뀌면 다시 쌓고, 아니면 데이터만 갱신. ────
+  useEffect(() => {
+    const chart = chartRef.current
+    if (!chart || !mainSeries) return
+    const store = indicatorSeriesRef.current
+    const levels = indicatorLevelsRef.current
+
+    const oscillators = indicators.filter((c) => !c.overlay && !c.isVolume)
+    const composition = indicators
+      .map((c) => `${c.instanceId}:${c.overlay ? 'o' : c.isVolume ? 'v' : 'p'}`)
+      .join(',')
+
+    // 오실레이터 순서가 바뀌면 패널 번호가 밀리므로 전부 다시 쌓는다.
+    if (composition !== compositionRef.current) {
+      for (const s of store.values()) chart.removeSeries(s)
+      store.clear()
+      // 시리즈를 지우면 그 위 price line·프리미티브도 함께 사라지므로 맵만 비운다.
+      levels.clear()
+      bandPrimsRef.current.clear()
+      compositionRef.current = composition
+    }
+
+    const paneOf = (c: ComputedIndicator): number => {
+      if (c.overlay || c.isVolume) return 0
+      return 1 + oscillators.findIndex((o) => o.instanceId === c.instanceId)
+    }
+
+    for (const comp of indicators) {
+      const pane = paneOf(comp)
+      let firstSeries: ISeriesApi<'Line'> | ISeriesApi<'Histogram'> | null = null
+      for (const line of comp.lines) {
+        const key = `${comp.instanceId}:${line.key}`
+        let series = store.get(key)
+        if (!series) {
+          if (line.type === 'histogram') {
+            series = chart.addSeries(
+              HistogramSeries,
+              {
+                priceLineVisible: false,
+                lastValueVisible: false,
+                priceScaleId: line.priceScaleId,
+                priceFormat: line.priceScaleId === 'volume' ? { type: 'volume' } : undefined,
+              },
+              pane,
+            )
+            if (line.priceScaleId === 'volume') {
+              chart.priceScale('volume').applyOptions({ scaleMargins: { top: 0.8, bottom: 0 } })
+            }
+          } else {
+            series = chart.addSeries(
+              LineSeries,
+              {
+                color: line.color,
+                lineWidth: line.lineWidth ?? 1,
+                lineStyle: line.lineStyle ?? LineStyle.Solid,
+                priceLineVisible: false,
+                lastValueVisible: false,
+                pointMarkersVisible: line.pointMarkers ?? false,
+                lineVisible: line.lineVisible ?? true,
+              },
+              pane,
+            )
+          }
+          store.set(key, series)
+        } else if (line.type === 'line') {
+          series.applyOptions({ color: line.color, lineWidth: line.lineWidth ?? 1 } as never)
+        }
+        if (!firstSeries) firstSeries = series
+
+        if (line.type === 'histogram') {
+          series.setData(
+            line.points.map((p, i) => ({
+              time: asTime(p.time),
+              value: p.value,
+              color: line.colors ? line.colors[i] : line.color,
+            })) as never,
+          )
+        } else {
+          series.setData(line.points.map((p) => ({ time: asTime(p.time), value: p.value })) as never)
+        }
+      }
+
+      // 기준선(과매수/과매도 등) — 매번 지웠다 다시 그린다.
+      const prevLevels = levels.get(comp.instanceId)
+      if (prevLevels && firstSeries) for (const l of prevLevels) firstSeries.removePriceLine(l)
+      if (firstSeries && comp.levels.length > 0) {
+        levels.set(
+          comp.instanceId,
+          comp.levels.map((lv) =>
+            firstSeries.createPriceLine({
+              price: lv.price,
+              color: lv.color,
+              lineWidth: 1,
+              lineStyle: lv.lineStyle ?? LineStyle.Dashed,
+              axisLabelVisible: false,
+            }),
+          ),
+        )
+      }
+
+      // 밴드 채우기(예: RSI 70/30) — 첫 시리즈에 프리미티브로 붙인다.
+      const bands = bandPrimsRef.current
+      const existingBand = bands.get(comp.instanceId)
+      if (comp.band && firstSeries) {
+        if (existingBand) existingBand.setSpec(comp.band)
+        else {
+          const prim = new BandFillPrimitive(comp.band)
+          firstSeries.attachPrimitive(prim)
+          bands.set(comp.instanceId, prim)
+        }
+      } else if (existingBand && firstSeries) {
+        firstSeries.detachPrimitive(existingBand)
+        bands.delete(comp.instanceId)
+      }
+    }
+
+    // 사라진 지표 시리즈 제거.
+    const wanted = new Set<string>()
+    for (const comp of indicators) for (const line of comp.lines) wanted.add(`${comp.instanceId}:${line.key}`)
+    for (const [key, series] of store) {
+      if (!wanted.has(key)) {
+        chart.removeSeries(series)
+        store.delete(key)
+      }
+    }
+  }, [indicators, mainSeries])
+
+  // ── 7) 비교 심볼: 메인 패널의 라인 시리즈. 15초마다 새로 받는다. ──────
+  useEffect(() => {
+    const chart = chartRef.current
+    if (!chart || !mainSeries) return
+    const store = compareSeriesRef.current
+    let cancelled = false
+    const controllers = new Map<string, AbortController>()
+
+    const wanted = new Set(compare)
+    for (const [sym, series] of store) {
+      if (!wanted.has(sym)) {
+        chart.removeSeries(series)
+        store.delete(sym)
+      }
+    }
+
+    const load = async () => {
+      const info: CompareInfo[] = []
+      for (let i = 0; i < compare.length; i++) {
+        const sym = compare[i]
+        const color = INDICATOR_PALETTE[(i + 1) % INDICATOR_PALETTE.length]
+        controllers.get(sym)?.abort()
+        const controller = new AbortController()
+        controllers.set(sym, controller)
+        try {
+          // 메인 차트 초기 구간(1000봉)과 같은 길이를 받아야 퍼센트 기준점이 겹친다.
+          const data = await fetchKlines(sym, interval, 1000, controller.signal)
+          if (cancelled) return
+          let series = store.get(sym)
+          if (!series) {
+            series = chart.addSeries(LineSeries, {
+              color,
+              lineWidth: 2,
+              priceLineVisible: false,
+              lastValueVisible: true,
+            })
+            store.set(sym, series)
+          }
+          series.setData(data.map((c) => ({ time: asTime(c.time), value: c.close })))
+          const first = data[0]?.close ?? 0
+          const last = data[data.length - 1]?.close ?? 0
+          info.push({ symbol: sym, changePct: first > 0 ? ((last - first) / first) * 100 : 0, color })
+        } catch {
+          /* 실패는 다음 주기에 회복 */
+        }
+      }
+      if (!cancelled) cbRef.current.onCompareInfo?.(info)
+    }
+
+    void load()
+    const timer = window.setInterval(() => void load(), 15000)
+    return () => {
+      cancelled = true
+      window.clearInterval(timer)
+      for (const c of controllers.values()) c.abort()
+    }
+  }, [compare, interval, mainSeries])
+
+  // ── 8) 가격 알림 — 점선 + 벨 제목. alerts 는 심볼로 걸러져 온다. ───────
+  useEffect(() => {
+    const series = mainSeries
+    if (!series) return
+    const store = alertLinesRef.current
     const wanted = new Map(alerts.map((a) => [a.id, a]))
     for (const [id, line] of store) {
       if (!wanted.has(id)) {
@@ -557,177 +541,24 @@ export function Chart({
         store.delete(id)
       }
     }
-
     for (const alert of alerts) {
-      const existing = store.get(alert.id)
       const options = {
         price: alert.price,
-        color: alert.condition === 'above' ? COLORS.up : COLORS.down,
+        color: alert.condition === 'above' ? palette.up : palette.down,
         lineWidth: 1 as const,
-        lineStyle: 2,
+        lineStyle: LineStyle.Dashed,
         axisLabelVisible: true,
-        title: alert.condition === 'above' ? '▲' : '▼',
+        title: `🔔 ${alert.condition === 'above' ? '▲' : '▼'}`,
       }
+      const existing = store.get(alert.id)
       if (existing) existing.applyOptions(options)
       else store.set(alert.id, series.createPriceLine(options))
     }
-  }, [alerts])
+  }, [alerts, mainSeries, palette])
 
-  // 그린 수평선(지지/저항) — drawings 는 이미 현재 심볼로 걸러져 있다.
+  // ── 9) 핀 마커. ──────────────────────────────────────────────────────
   useEffect(() => {
-    const series = candleSeriesRef.current
-    if (!series) return
-    const store = drawLinesRef.current
-
-    const wanted = new Map(drawings.map((d) => [d.id, d]))
-    for (const [id, line] of store) {
-      if (!wanted.has(id)) {
-        series.removePriceLine(line)
-        store.delete(id)
-      }
-    }
-
-    for (const d of drawings) {
-      const drag = dragRef.current
-      const options = {
-        price: drag && drag.id === d.id ? drag.price : d.price,
-        color: d.color,
-        lineWidth: 1 as const,
-        lineStyle: 0,
-        axisLabelVisible: true,
-        title: d.alert ? (d.fired ? '🔔 발동' : '🔔') : '',
-      }
-      const existing = store.get(d.id)
-      if (existing) existing.applyOptions(options)
-      else store.set(d.id, series.createPriceLine(options))
-    }
-  }, [drawings])
-
-  // 수평선 드래그 — 선 위에 보이지 않는 잡이를 올려 끌어 옮길 수 있게 한다.
-  useEffect(() => {
-    const layer = handleLayerRef.current
-    const series = candleSeriesRef.current
-    const chart = chartRef.current
-    if (!layer || !series || !chart) return
-
-    layer.replaceChildren()
-    const handles = drawings.map((d) => {
-      const el = document.createElement('div')
-      el.className = 'draw-handle'
-      el.dataset.id = d.id
-      layer.append(el)
-      return { el, drawing: d }
-    })
-
-    // 차트를 움직이면 좌표가 바뀌므로 매 프레임 위치를 맞춘다.
-    let raf = 0
-    const sync = () => {
-      for (const { el, drawing } of handles) {
-        const drag = dragRef.current
-        const price = drag && drag.id === drawing.id ? drag.price : drawing.price
-        const y = series.priceToCoordinate(price)
-        if (y === null) {
-          el.style.display = 'none'
-        } else {
-          el.style.display = ''
-          el.style.transform = `translateY(${y}px)`
-        }
-      }
-      raf = requestAnimationFrame(sync)
-    }
-    raf = requestAnimationFrame(sync)
-
-    const onPointerDown = (e: PointerEvent) => {
-      const target = e.target as HTMLElement
-      const id = target.dataset.id
-      if (!id) return
-      const found = drawings.find((d) => d.id === id)
-      if (!found) return
-
-      e.preventDefault()
-      e.stopPropagation()
-      target.setPointerCapture(e.pointerId)
-      target.classList.add('dragging')
-      layer.classList.add('active')
-      dragRef.current = { id, price: found.price }
-      // 끌기 중에는 차트가 같이 스크롤되지 않도록 멈춰둔다.
-      chart.applyOptions({ handleScroll: false, handleScale: false })
-    }
-
-    const onPointerMove = (e: PointerEvent) => {
-      const drag = dragRef.current
-      if (!drag) return
-      e.preventDefault()
-      const rect = layer.getBoundingClientRect()
-      const price = series.coordinateToPrice(e.clientY - rect.top)
-      if (price === null) return
-      dragRef.current = { id: drag.id, price }
-      const line = drawLinesRef.current.get(drag.id)
-      line?.applyOptions({ price })
-    }
-
-    const onPointerUp = (e: PointerEvent) => {
-      const drag = dragRef.current
-      if (!drag) return
-      const target = e.target as HTMLElement
-      target.classList.remove('dragging')
-      layer.classList.remove('active')
-      chart.applyOptions({ handleScroll: true, handleScale: true })
-      dragRef.current = null
-      const rounded = Number(series.priceFormatter().format(drag.price).replace(/,/g, ''))
-      onMoveDrawingRef.current(drag.id, rounded)
-    }
-
-    layer.addEventListener('pointerdown', onPointerDown)
-    layer.addEventListener('pointermove', onPointerMove)
-    layer.addEventListener('pointerup', onPointerUp)
-    layer.addEventListener('pointercancel', onPointerUp)
-
-    return () => {
-      cancelAnimationFrame(raf)
-      layer.removeEventListener('pointerdown', onPointerDown)
-      layer.removeEventListener('pointermove', onPointerMove)
-      layer.removeEventListener('pointerup', onPointerUp)
-      layer.removeEventListener('pointercancel', onPointerUp)
-      layer.replaceChildren()
-    }
-  }, [drawings])
-
-  // 그리기 모드: 차트를 클릭한 지점의 가격을 돌려준다.
-  useEffect(() => {
-    const chart = chartRef.current
-    const series = candleSeriesRef.current
-    if (!chart || !series || !drawMode) return
-
-    const handler = (param: MouseEventParams<Time>) => {
-      if (!param.point) return
-      const price = series.coordinateToPrice(param.point.y)
-      // 축 표기와 같은 자릿수로 맞춰 넣는다 — 프로털러가 심볼별 정밀도를 안다.
-      if (price !== null) onDrawPriceRef.current(Number(series.priceFormatter().format(price).replace(/,/g, '')))
-    }
-    chart.subscribeClick(handler)
-    return () => chart.unsubscribeClick(handler)
-  }, [drawMode])
-
-  // 핀 모드: 클릭한 캔들의 시각과 가격을 넘긴다.
-  useEffect(() => {
-    const chart = chartRef.current
-    const series = candleSeriesRef.current
-    if (!chart || !series || !pinMode) return
-
-    const handler = (param: MouseEventParams<Time>) => {
-      if (!param.point || param.time === undefined) return
-      const price = series.coordinateToPrice(param.point.y)
-      if (price === null) return
-      onPinPointRef.current(Number(param.time), price)
-    }
-    chart.subscribeClick(handler)
-    return () => chart.unsubscribeClick(handler)
-  }, [pinMode])
-
-  // 찍힌 핀을 캔들 위 마커로 그린다.
-  useEffect(() => {
-    const series = candleSeriesRef.current
+    const series = mainSeries
     if (!series) return
     if (!markersRef.current) markersRef.current = createSeriesMarkers(series, [])
     markersRef.current.setMarkers(
@@ -738,20 +569,244 @@ export function Chart({
           position: pin.side === 'short' ? ('aboveBar' as const) : ('belowBar' as const),
           color: SIDE_COLORS[pin.side],
           shape:
-            pin.side === 'short' ? ('arrowDown' as const) : pin.side === 'long' ? ('arrowUp' as const) : ('circle' as const),
-          text: pin.side === 'skip' ? '' : undefined,
+            pin.side === 'short'
+              ? ('arrowDown' as const)
+              : pin.side === 'long'
+                ? ('arrowUp' as const)
+                : ('circle' as const),
         })),
     )
-  }, [pins])
+  }, [pins, mainSeries])
+
+  // ── 10) 크로스헤어 hover → 시각 보고 + 리플레이 미리보기 세로선. ───────
+  useEffect(() => {
+    const chart = chartRef.current
+    if (!chart) return
+    const handler = (param: MouseEventParams) => {
+      const time = param.time === undefined ? null : Number(param.time)
+      cbRef.current.onHoverTime?.(time)
+      const el = replayLineRef.current
+      if (el) {
+        if (replayPick && param.point) {
+          el.style.display = 'block'
+          el.style.left = `${param.point.x}px`
+          cbRef.current.onReplayPreview?.(time)
+        } else {
+          el.style.display = 'none'
+        }
+      }
+    }
+    chart.subscribeCrosshairMove(handler)
+    return () => chart.unsubscribeCrosshairMove(handler)
+  }, [replayPick])
+
+  // ── 11) 핀/리플레이 클릭 캡처(시각 + 가격). ──────────────────────────
+  useEffect(() => {
+    const chart = chartRef.current
+    const series = mainSeries
+    if (!chart || !series || !captureClicks) return
+    const handler = (param: MouseEventParams) => {
+      if (param.time === undefined || !param.point) return
+      const price = series.coordinateToPrice(param.point.y)
+      if (price === null) return
+      cbRef.current.onChartClick?.(Number(param.time), price)
+    }
+    chart.subscribeClick(handler)
+    return () => chart.unsubscribeClick(handler)
+  }, [captureClicks, mainSeries])
+
+  // ── 12) 왼쪽 끝 → 과거 더 불러오기. ──────────────────────────────────
+  useEffect(() => {
+    const chart = chartRef.current
+    if (!chart) return
+    const timeScale = chart.timeScale()
+    const onRange = (range: { from: number; to: number } | null) => {
+      if (range && range.from < 20) cbRef.current.onReachStart?.()
+    }
+    timeScale.subscribeVisibleLogicalRangeChange(onRange)
+    return () => timeScale.unsubscribeVisibleLogicalRangeChange(onRange)
+  }, [])
+
+  // ── 13) 현재가 + 마감 카운트다운 배지. ───────────────────────────────
+  useEffect(() => {
+    const tick = () => {
+      const el = countdownRef.current
+      const chart = chartRef.current
+      const series = mainSeries
+      const last = candlesRef.current[candlesRef.current.length - 1]
+      if (!el || !chart || !series || !last) return
+      if (!settings.showLastPriceLabel && !settings.showCountdown) {
+        el.style.display = 'none'
+        return
+      }
+      const span = INTERVAL_SECONDS[interval]
+      let remain = last.time + span - Math.floor(Date.now() / 1000)
+      if (remain < 0) remain = ((remain % span) + span) % span
+      const y = series.priceToCoordinate(last.close)
+      if (y === null) {
+        el.style.display = 'none'
+        return
+      }
+      el.style.display = 'block'
+      el.style.top = `${Math.round(y) - 10}px`
+      el.style.width = `${chart.priceScale('right').width()}px`
+      el.style.background = last.close >= last.open ? settings.upColor : settings.downColor
+      el.textContent = ''
+      if (settings.showLastPriceLabel) {
+        const priceRow = document.createElement('div')
+        priceRow.textContent = series.priceFormatter().format(last.close)
+        el.append(priceRow)
+      }
+      if (settings.showCountdown) {
+        const cdRow = document.createElement('div')
+        cdRow.className = 'cd'
+        cdRow.textContent = formatCountdown(remain)
+        el.append(cdRow)
+      }
+    }
+    tick()
+    const timer = window.setInterval(tick, 1000)
+    return () => window.clearInterval(timer)
+  }, [interval, mainSeries, settings.showCountdown, settings.showLastPriceLabel, settings.upColor, settings.downColor])
+
+  // ── 14) 오실레이터 패널 위치 + 자동스케일 상태 보고, 패널 크기 저장. ──
+  const oscKey = indicators.filter((c) => !c.overlay && !c.isVolume).map((c) => c.kind).join('+') || 'main'
+  useEffect(() => {
+    const chart = chartRef.current
+    if (!chart) return
+
+    const restore = window.setTimeout(() => {
+      const panes = chart.panes()
+      const saved = loadPaneSizes(oscKey)
+      if (saved && saved.length === panes.length) panes.forEach((p, i) => p.setStretchFactor(saved[i]))
+    }, 30)
+
+    const report = () => {
+      const c = chartRef.current
+      if (!c) return
+      const panes = c.panes()
+      const axisWidth = c.priceScale('right').width()
+      const oscillators = indicators.filter((x) => !x.overlay && !x.isVolume)
+      const SEPARATOR = 1
+      let top = panes[0]?.getHeight() ?? 0
+      top += SEPARATOR
+      const out: PaneInfo[] = []
+      for (let i = 1; i < panes.length; i++) {
+        const osc = oscillators[i - 1]
+        if (osc) out.push({ instanceId: osc.instanceId, top })
+        top += panes[i].getHeight() + SEPARATOR
+      }
+      cbRef.current.onPanes?.(out, axisWidth)
+
+      // 사용자가 가격축을 끌어 자동스케일이 꺼졌으면 부모에 알린다.
+      const auto = c.priceScale('right').options().autoScale
+      if (!auto && autoScale) cbRef.current.onAutoScaleChange?.(false)
+    }
+    const first = window.setTimeout(report, 80)
+    const timer = window.setInterval(report, 500)
+
+    const container = containerRef.current
+    const onPointerUp = () => {
+      const sizes = chart.panes().map((p) => p.getStretchFactor())
+      if (sizes.length > 1) savePaneSizes(oscKey, sizes)
+    }
+    container?.addEventListener('pointerup', onPointerUp)
+
+    return () => {
+      window.clearTimeout(restore)
+      window.clearTimeout(first)
+      window.clearInterval(timer)
+      container?.removeEventListener('pointerup', onPointerUp)
+    }
+  }, [oscKey, indicators, autoScale])
+
+  // ── 15) chartRegistry 등록. ──────────────────────────────────────────
+  useEffect(() => {
+    if (cellIndex === null) return
+    const handle: ChartHandle = {
+      takeSnapshot: () => {
+        const chart = chartRef.current
+        const shot = chart ? chart.takeScreenshot() : document.createElement('canvas')
+        const header = 34
+        const out = document.createElement('canvas')
+        out.width = shot.width
+        out.height = shot.height + header
+        const ctx = out.getContext('2d')
+        if (ctx) {
+          ctx.fillStyle = palette.background
+          ctx.fillRect(0, 0, out.width, header)
+          ctx.fillStyle = palette.text
+          ctx.font = `600 14px ${CHART_FONT}`
+          ctx.textBaseline = 'middle'
+          const last = candlesRef.current[candlesRef.current.length - 1]
+          const ohlc = last
+            ? `  O ${formatPrice(last.open)}  H ${formatPrice(last.high)}  L ${formatPrice(last.low)}  C ${formatPrice(last.close)}`
+            : ''
+          ctx.fillText(`${symbol} · ${interval}${ohlc}`, 10, header / 2)
+          ctx.drawImage(shot, 0, header)
+        }
+        return out
+      },
+      setVisibleRange: (from, to) => {
+        chartRef.current?.timeScale().setVisibleRange({ from: from as Time, to: to as Time })
+      },
+      resetView: () => {
+        chartRef.current?.priceScale('right').applyOptions({ autoScale: true })
+        cbRef.current.onAutoScaleChange?.(true)
+        const n = candlesRef.current.length
+        if (n > 0) chartRef.current?.timeScale().setVisibleLogicalRange({ from: Math.max(0, n - 150), to: n + 1 })
+      },
+      scrollToRealtime: () => chartRef.current?.timeScale().scrollToRealTime(),
+    }
+    registerChart(cellIndex, handle)
+    return () => registerChart(cellIndex, null)
+  }, [cellIndex, symbol, interval, palette])
 
   return (
-    <div
-      style={{ position: 'relative', width: '100%', height: '100%' }}
-      className={drawMode || pinMode ? 'draw-mode' : undefined}
-    >
+    <div style={{ position: 'relative', width: '100%', height: '100%' }}>
       <div ref={containerRef} style={{ width: '100%', height: '100%' }} />
-      <div ref={handleLayerRef} className="draw-handles" />
+      {chartRef.current && mainSeries && (
+        <DrawingOverlay
+          chart={chartRef.current}
+          series={mainSeries}
+          candles={candles}
+          interval={interval}
+          symbol={symbol}
+          drawings={drawings}
+          tool={drawingTool}
+          magnet={magnet}
+          stayInDrawingMode={stayInDrawingMode}
+          locked={drawingsLocked}
+          hidden={drawingsHidden}
+          enabled={overlayEnabled}
+          palette={palette}
+          onCreate={onCreateDrawing}
+          onUpdate={onUpdateDrawing}
+          onRemove={onRemoveDrawing}
+          onToolDone={onToolDone}
+        />
+      )}
+      <div ref={replayLineRef} className="replay-preview-line" style={{ display: 'none' }} />
       <div ref={countdownRef} className="candle-countdown" style={{ display: 'none' }} />
     </div>
   )
+}
+
+/** 차트 기본 옵션 — 오버레이가 크로스헤어/스크롤을 소유하므로 여기선 켜두기만 한다. */
+function createChartWithDefaults(container: HTMLElement): IChartApi {
+  return createChart(container, {
+    layout: {
+      background: { color: 'transparent' },
+      textColor: '#dbdbdb',
+      fontFamily: CHART_FONT,
+      // Lightweight Charts 라이선스(Apache-2.0 + NOTICE)는 공개 화면에 TradingView 표기와
+      // tradingview.com 링크를 요구한다. 내장 로고가 둘 다 충족한다(TradingView 화면과도 같은 자리).
+      attributionLogo: true,
+    },
+    timeScale: { timeVisible: true, secondsVisible: false },
+    crosshair: { mode: CrosshairMode.Normal },
+    handleScroll: { mouseWheel: true, pressedMouseMove: true, horzTouchDrag: true, vertTouchDrag: true },
+    kineticScroll: { mouse: false, touch: true },
+    autoSize: true,
+  })
 }

@@ -1,11 +1,19 @@
 import type { Interval } from './binance'
+import { isChartType, isScaleMode, type ChartType, type ScaleMode } from './chartTypes'
+import { isInterval } from './intervals'
 import { notifySettingsChanged } from './syncBus'
 
 export type LayoutMode = 1 | 2 | 4
 
+/** One chart cell. Slice C owns this shape; B/D consume it through ChartCell props. */
 export interface CellConfig {
   symbol: string
   interval: Interval
+  chartType: ChartType
+  scaleMode: ScaleMode
+  autoScale: boolean
+  /** Extra symbols overlaid for comparison (심볼 비교). */
+  compare: string[]
 }
 
 export interface LayoutState {
@@ -19,14 +27,18 @@ export interface LayoutState {
 
 const STORAGE_KEY = 'trading.layout.v1'
 
+function cell(symbol: string, interval: Interval): CellConfig {
+  return { symbol, interval, chartType: 'candles', scaleMode: 'normal', autoScale: true, compare: [] }
+}
+
 export const DEFAULT_LAYOUT: LayoutState = {
   layout: 1,
   active: 0,
   cells: [
-    { symbol: 'BTCUSDT', interval: '1m' },
-    { symbol: 'ETHUSDT', interval: '1m' },
-    { symbol: 'SOLUSDT', interval: '1m' },
-    { symbol: 'XRPUSDT', interval: '1m' },
+    cell('BTCUSDT', '1m'),
+    cell('ETHUSDT', '1m'),
+    cell('SOLUSDT', '1m'),
+    cell('XRPUSDT', '1m'),
   ],
   splitCol: 0.5,
   splitRow: 0.5,
@@ -44,10 +56,22 @@ export function clampSplit(value: number): number {
   return Math.min(0.8, Math.max(0.2, value))
 }
 
-function isCell(value: unknown): value is CellConfig {
-  if (typeof value !== 'object' || value === null) return false
+/**
+ * Tolerant cell parse: fills every missing/foreign field with a safe default so a
+ * v1 blob (only symbol + interval) or a partial sync payload never breaks the chart.
+ */
+function toCell(value: unknown, fallback: CellConfig): CellConfig | null {
+  if (typeof value !== 'object' || value === null) return null
   const c = value as Record<string, unknown>
-  return typeof c.symbol === 'string' && typeof c.interval === 'string'
+  if (typeof c.symbol !== 'string') return null
+  return {
+    symbol: c.symbol,
+    interval: isInterval(c.interval) ? c.interval : fallback.interval,
+    chartType: isChartType(c.chartType) ? c.chartType : 'candles',
+    scaleMode: isScaleMode(c.scaleMode) ? c.scaleMode : 'normal',
+    autoScale: typeof c.autoScale === 'boolean' ? c.autoScale : true,
+    compare: Array.isArray(c.compare) ? c.compare.filter((s): s is string => typeof s === 'string') : [],
+  }
 }
 
 export function loadLayout(): LayoutState {
@@ -56,9 +80,9 @@ export function loadLayout(): LayoutState {
     if (!raw) return DEFAULT_LAYOUT
     const parsed = JSON.parse(raw) as Partial<LayoutState>
     const layout = parsed.layout === 2 || parsed.layout === 4 ? parsed.layout : 1
-    const cells = Array.isArray(parsed.cells) ? parsed.cells.filter(isCell) : []
-    // 부족한 칸은 기본값으로 채워 항상 4칸을 유지한다.
-    const filled = DEFAULT_LAYOUT.cells.map((def, i) => cells[i] ?? def)
+    const stored = Array.isArray(parsed.cells) ? parsed.cells : []
+    // 부족하거나 깨진 칸은 기본값으로 채워 항상 4칸을 유지한다.
+    const cells = DEFAULT_LAYOUT.cells.map((def, i) => toCell(stored[i], def) ?? def)
     const active =
       typeof parsed.active === 'number' && parsed.active >= 0 && parsed.active < layout
         ? parsed.active
@@ -67,7 +91,7 @@ export function loadLayout(): LayoutState {
     return {
       layout,
       active,
-      cells: filled,
+      cells,
       splitCol: split(parsed.splitCol),
       splitRow: split(parsed.splitRow),
     }

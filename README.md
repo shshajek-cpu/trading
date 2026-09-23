@@ -1,85 +1,78 @@
 # Trading
 
-바이낸스 USDT-M 선물(BTC 등) 실시간 차트. 블랙 & 화이트 모노크롬 다크 테마에
-글래스모피즘 UI를 얹었고, 지표와 가격 도달 알림을 붙였다.
+바이낸스 USDT-M 선물 실시간 차트. TradingView(tradingview.com/chart)의 화면 배치·조작·색을
+따라 만든 웹 앱이다. 코드·아이콘은 모두 직접 작성했고, 차트 엔진은 TradingView의 오픈소스
+[Lightweight Charts™](https://github.com/tradingview/lightweight-charts)를 쓴다. 계정·주문 기능은 없다.
 
 ## 실행
 
 ```bash
 npm install
 npm run dev     # http://localhost:5173
-```
-
-```bash
 npm run build   # 타입체크 + 프로덕션 빌드
 npm run lint
 ```
 
+## 화면
+
+**데스크톱** — 상단 툴바 · 왼쪽 그리기 툴바 · 차트(1/2/4분할) · 하단 기간 바 · 오른쪽 위젯 바.
+**모바일(≤900px)** — 가로 스크롤 상단 툴바 · 왼쪽 그리기 툴바(메뉴에서 끄고 켬) · 차트 · 하단 기간 메뉴,
+☰ 메뉴에서 관심 목록·알림 등을 전체 화면으로 연다. 배치와 디자인 규칙은 [UI-GUIDE.md](UI-GUIDE.md).
+
 ## 기능
 
 **차트**
-- 캔들스틱 + 거래량 히스토그램(메인 패널 하단 오버레이)
-- 심볼 선택(검색 가능) / 인터벌 전환 `1m · 5m · 15m · 1h · 4h · 1d`
-- 현재가와 24시간 변동률 표시(상승 흰색 / 하락 회색)
-- 우상단 점으로 웹소켓 연결 상태 표시(밝음 연결 · 어두움 끊김)
-- 창 크기에 따라 자동 리사이즈
+- 차트 유형 13종: 바, 캔들, 할로우 캔들, 볼륨 캔들, 라인, 마커 라인, 스텝 라인, 에어리어, HLC 에어리어, 베이스라인, 컬럼, 하이-로우, 하이킨 아시
+- 주기 15종(1분~1개월), ☆ 즐겨찾기 주기는 툴바에 바로 표시. 숫자를 입력하면 주기 변경 상자가 뜬다(`5`, `60`, `1h`, `D`)
+- 가격 스케일 일반/로그/퍼센트/100 기준 + 자동 스케일, 심볼 비교(퍼센트 겹쳐 그리기)
+- 기간 버튼(1일·5일·1개월·3개월·6개월·YTD·1년·5년·전체), 시간대 선택, 봉 마감 카운트다운
+- 바 리플레이(시작점 선택 → 재생/한 봉씩/속도), 스냅샷(PNG 다운로드·클립보드), 전체 화면, 미니창(PiP)
+- 범례: 시고저종·등락, 지표별 값과 숨기기/설정/삭제
 
-**지표**
-- 이동평균(SMA/EMA) — 기간·색상 지정, 추가/삭제 자유. 기본 7 / 25 / 99
-- RSI, MACD — 각각 별도 패널. on/off 및 파라미터 조절 가능
-- 계산은 `src/lib/indicators.ts` 의 순수 함수. RSI 는 Wilder smoothing 을 쓴다
+**지표** — 거래량(급증 강조 옵션), SMA/EMA/WMA/VWMA, 볼린저 밴드, VWAP, 일목균형표, 파라볼릭 SAR,
+RSI, MACD, 스토캐스틱, 스토캐스틱 RSI, ATR, CCI, OBV, 윌리엄스 %R, MFI, ADX. 검색·즐겨찾기 가능한 지표
+창, 지표 템플릿 저장/적용.
 
-**화면 분할**
-- 1 / 2 / 4분할. 칸마다 심볼·인터벌 독립, 클릭한 칸이 활성(알림 추가 대상)
-- 레이아웃과 각 칸의 심볼/인터벌은 localStorage에 저장되어 복원된다
-- 모바일(≤900px)에서는 분할이 세로 스택으로 바뀜다
+**그리기** — 추세선·레이·정보 라인·연장 라인·추세 각도·수평선·수평 레이·수직선·교차선, 평행 채널,
+피보나치 되돌림, 사각형·타원·삼각형·브러시, 텍스트·화살표·화살표 표시, 롱/숏 포지션, 가격/날짜/날짜와
+가격 범위, 측정·확대 도구. 자석(약/강), 그리기 모드 유지, 전체 잠금/숨기기, 선택 도구바(색·굵기·스타일·
+잠금·복제·삭제), 실행 취소/다시 실행, 객체 트리. 수평선은 가격이 지나가면 알림을 울릴 수 있다.
 
-**PWA (모바일 앱)**
-- 홈 화면에 추가하면 standalone 앱처럼 실행된다 (manifest + service worker)
-- 앱 셸만 캐시하고 시세 API는 캐시하지 않는다 (NetworkOnly)
+**관심 목록·알림** — 심볼 검색(전체/무기한/분기물/주식·원자재), 관심 목록(정렬·끌어서 순서 변경),
+심볼 상세(24시간 통계·기간 성과), 가격 알림(교차/상향/하향/보다 큼/보다 작음 + 메시지). 알림은 브라우저
+알림 + 화면 토스트, 동기화 코드가 있으면 앱을 닫아도 웹 푸시로 온다.
 
-**PiP 미니창**
-- 툴바의 "미니창" 버튼 — 항상 위에 뜨는 작은 창에 활성 칸의 실제 캔들차트 + 현재가 표시
-- 다른 작업 중 시세를 곁눈질하는 용도. Document Picture-in-Picture 지원 브라우저(크롬·엣지) 전용
-
-**가격 알림**
-- 조건(이상/이하) + 가격으로 등록하면 차트에 수평선이 그려진다
-- 도달하면 브라우저 알림 + 화면 토스트. 한 번 발동하면 자동으로 비활성화된다
-- 목록은 localStorage 에 저장되어 새로고침해도 남는다
-- 알림 권한이 없거나 차단된 경우 토스트로만 안내한다
+**기타** — 다크/라이트 테마, 차트 설정(색·상태 줄·스케일·캔버스·시간대), 빠른 검색(Ctrl+K), 단축키
+(Alt+T/H/J/V/C/F, Ctrl+Z/Y, Alt+R/A/S, Shift+F), 핀·탐색·멀티 타임프레임, 동기화 코드로 기기 간 설정 공유, PWA 설치.
 
 ## 구조
 
 ```
 src/
-  components/   Chart, Toolbar, IndicatorPanel, AlertPanel, Toasts
-  hooks/        useBinanceKlines, useBinanceWebSocket, usePriceAlerts,
-                useNotifications, useSymbols, useTicker24h
-  lib/          binance(API·타입), indicators(지표 계산), indicatorConfig, theme
+  styles/tokens.css   TradingView 색·치수 토큰(다크/라이트)
+  components/         셸(TopToolbar, BottomBar, WidgetBar, MainMenuDrawer, 대화상자),
+                      ChartCell/Chart, 지표·심볼·알림 대화상자, widgets/, ui/(Popover, Dialog)
+  chart/              메인 시리즈·커스텀 시리즈·지표 계산 연결, drawing/(그리기 엔진)
+  hooks/              데이터(클라인·웹소켓·시세), 알림, 관심 목록, 그리기, 동기화, 단축키
+  lib/                바이낸스 API, 지표 수식, 설정 모델(지표·차트·레이아웃·그림)
+worker/, functions/   웹 푸시 알림 백엔드(Cloudflare)
 ```
-
-## 차트 엔진
-
-차트 렌더링은 TradingView 의 오픈소스 [lightweight-charts](https://github.com/tradingview/lightweight-charts)를 사용한다 (Apache-2.0).
-자세한 정보는 [https://www.tradingview.com/](https://www.tradingview.com/) 참고.
 
 ## 데이터 출처
 
-바이낸스 선물 퍼블릭 API를 브라우저에서 직접 호출한다. 별도 백엔드나 API 키가 없다.
+바이낸스 선물 퍼블릭 API를 브라우저에서 직접 호출한다. API 키가 없다.
 
-- 과거 캔들 `GET https://fapi.binance.com/fapi/v1/klines` (최대 1000개)
-- 심볼 목록 `GET /fapi/v1/exchangeInfo` — 거래중인 USDT 페어만
-- 시세 `GET /fapi/v1/ticker/24hr` — 10초 주기 폴링
+- 캔들 `GET /fapi/v1/klines`, 심볼 `GET /fapi/v1/exchangeInfo`, 시세 `GET /fapi/v1/ticker/24hr`
 - 실시간 `wss://fstream.binance.com/ws/{symbol}@kline_{interval}`
+- 코인 아이콘: [cryptocurrency-icons](https://github.com/spothq/cryptocurrency-icons)(CC0, jsDelivr), 없으면 머리글자 원
+
+## 라이선스 표기
+
+Lightweight Charts™는 Apache-2.0이며, 공개 화면에 TradingView 표기와 tradingview.com 링크가 필요하다.
+차트 왼쪽 아래 TradingView 로고(링크 포함)로 이를 충족한다.
 
 ## 주의
 
-- 브라우저에서 바이낸스로 직접 접속하므로 **지역에 따라 차단될 수 있다.** 이 경우 차트가
-  비거나 연결 상태 점이 빨간색으로 남는다.
-- 웹소켓이 끊기면 지수 백오프(1s → 최대 30s)로 재연결하고, 다시 붙으면 캔들을 재조회해
-  끊긴 동안의 공백을 메운다.
-- 알림은 화면에 떠 있는 모든 칸의 심볼을 감시한다. 웹소켓 틱과 10초 주기 시세 양쪽에서 검사한다. 웹소켓이 막힌 환경에서도
-  최대 10초 안에는 발동한다.
-- 기본 알림 감시는 페이지가 열려 있는 동안 동작한다. `앱 꺼도 알림 받기`를 켜면 서버가 최대 1분 주기로 대신 감시한다.
-- iPhone·iPad의 백그라운드 알림은 iOS·iPadOS 16.4 이상에서 홈 화면에 추가한 앱으로 열어야 동작한다.
-- 시세 조회용일 뿐 주문 기능은 없다. 투자 판단의 근거로 쓰기 전에 거래소 화면과 대조하라.
+- 지역에 따라 바이낸스 접속이 막힐 수 있다. 이 경우 차트가 비고 범례의 연결 점이 빨갛게 남는다.
+- 웹소켓이 끊기면 지수 백오프(1s → 30s)로 다시 붙고, 끊긴 동안의 공백은 캔들을 다시 받아 메운다.
+- 시세 조회용이다. 투자 판단 전에 거래소 화면과 대조하라.

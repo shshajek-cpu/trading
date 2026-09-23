@@ -1,0 +1,372 @@
+/* 차트 칸 + 트레이딩뷰식 범례 + 리플레이 컨트롤. 색·치수는 tokens.css 변수만 쓴다. */
+
+.chart-cell {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: var(--tv-bg);
+}
+
+.chart-cell.highlight {
+  box-shadow: inset 0 0 0 1px var(--tv-accent);
+}
+
+.cell-chart {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+}
+
+/* ── 범례(왼쪽 위) ── */
+.tv-legend {
+  position: absolute;
+  top: 8px;
+  left: 10px;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-width: calc(100% - 90px);
+  font-size: var(--tv-fs-sm);
+  line-height: 1.4;
+  pointer-events: none;
+}
+
+.tv-legend button,
+.tv-legend input {
+  pointer-events: auto;
+}
+
+.tv-legend-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.tv-legend-title {
+  color: var(--tv-text-strong);
+  font-weight: 600;
+}
+
+.tv-legend-meta {
+  color: var(--tv-text-dim);
+}
+
+.tv-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex: none;
+}
+.tv-dot.ok {
+  background: var(--tv-up);
+}
+.tv-dot.warn {
+  background: var(--tv-warn);
+}
+.tv-dot.bad {
+  background: var(--tv-down);
+}
+
+.tv-legend-ohlc {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  font-variant-numeric: tabular-nums;
+}
+.tv-legend-ohlc em {
+  color: var(--tv-text-dim);
+  font-style: normal;
+  margin-right: 3px;
+}
+.tv-legend-chg {
+  font-weight: 500;
+}
+.tv-legend-ohlc.compact {
+  flex-wrap: nowrap;
+  white-space: nowrap;
+}
+
+/* ── 지표 줄 ── */
+.tv-legend-inds {
+  display: flex;
+  align-items: flex-start;
+  gap: 4px;
+}
+
+.tv-legend-collapse {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border: 0;
+  border-radius: var(--tv-radius-sm);
+  background: none;
+  color: var(--tv-text-dim);
+  cursor: pointer;
+}
+.tv-legend-collapse:hover {
+  background: var(--tv-hover);
+  color: var(--tv-text);
+}
+.tv-legend-collapse .flip {
+  transform: rotate(180deg);
+  display: inline-flex;
+}
+
+.tv-legend-inds-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.tv-ind-row,
+.tv-osc-legend .tv-ind-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+  padding: 1px 2px;
+  border-radius: var(--tv-radius-sm);
+}
+.tv-ind-row:hover {
+  background: color-mix(in srgb, var(--tv-elevated) 70%, transparent);
+}
+
+.tv-ind-title {
+  color: var(--tv-text);
+  font-weight: 500;
+}
+.tv-ind-val {
+  font-variant-numeric: tabular-nums;
+}
+.tv-ind-val em {
+  color: var(--tv-text-dim);
+  font-style: normal;
+  margin-right: 2px;
+}
+.tv-ind-hidden {
+  color: var(--tv-text-faint);
+}
+
+.tv-ind-ctl {
+  display: inline-flex;
+  gap: 1px;
+  opacity: 0;
+  transition: opacity var(--tv-fast);
+}
+.tv-ind-row:hover .tv-ind-ctl {
+  opacity: 1;
+}
+.tv-ind-ctl button,
+.tv-ind-row.compare button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border: 0;
+  border-radius: var(--tv-radius-sm);
+  background: none;
+  color: var(--tv-text-dim);
+  cursor: pointer;
+}
+.tv-ind-ctl button:hover,
+.tv-ind-row.compare button:hover {
+  background: var(--tv-hover);
+  color: var(--tv-text);
+}
+.tv-ind-row.compare button {
+  opacity: 0;
+}
+.tv-ind-row.compare:hover button {
+  opacity: 1;
+}
+
+/* ── 오실레이터 패널 범례 ── */
+.tv-osc-legend {
+  position: absolute;
+  left: 10px;
+  z-index: 5;
+  font-size: var(--tv-fs-sm);
+  pointer-events: none;
+}
+.tv-osc-legend button {
+  pointer-events: auto;
+}
+
+/* ── 현재가 + 카운트다운 배지 ── */
+.candle-countdown {
+  position: absolute;
+  right: 0;
+  z-index: 4;
+  padding: 2px 4px;
+  color: #fff;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  border-radius: 2px;
+  pointer-events: none;
+}
+.candle-countdown .cd {
+  font-size: 10px;
+  opacity: 0.85;
+}
+
+/* ── 리플레이 ── */
+.replay-preview-line {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 1px;
+  background: var(--tv-accent);
+  z-index: 6;
+  pointer-events: none;
+}
+
+.replay-hint {
+  position: absolute;
+  top: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 7;
+  padding: 6px 14px;
+  background: var(--tv-accent);
+  color: #fff;
+  font-size: var(--tv-fs-sm);
+  border-radius: var(--tv-radius);
+  box-shadow: var(--tv-shadow);
+}
+
+.replay-controller {
+  position: absolute;
+  bottom: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 7;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 6px;
+  background: var(--tv-elevated);
+  border: 1px solid var(--tv-border);
+  border-radius: var(--tv-radius);
+  box-shadow: var(--tv-shadow);
+}
+.replay-controller button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 28px;
+  min-width: 28px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: var(--tv-radius-sm);
+  background: none;
+  color: var(--tv-text);
+  font-size: var(--tv-fs-sm);
+  cursor: pointer;
+}
+.replay-controller button:hover {
+  background: var(--tv-hover);
+}
+.replay-controller .replay-live {
+  color: var(--tv-accent-text);
+}
+.replay-speed {
+  position: relative;
+}
+.replay-speed-menu {
+  position: absolute;
+  bottom: 34px;
+  left: 0;
+  display: flex;
+  flex-direction: column;
+  min-width: 72px;
+  padding: 4px;
+  background: var(--tv-elevated);
+  border: 1px solid var(--tv-border);
+  border-radius: var(--tv-radius);
+  box-shadow: var(--tv-shadow);
+}
+.replay-speed-menu button {
+  justify-content: flex-start;
+  width: 100%;
+}
+.replay-speed-menu button.active {
+  background: var(--tv-selected-bg);
+  color: var(--tv-selected-text);
+}
+
+/* ── 로딩/오류 오버레이 ── */
+.loading-older {
+  position: absolute;
+  top: 8px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 6;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  background: var(--tv-elevated);
+  border-radius: var(--tv-radius);
+  color: var(--tv-text-dim);
+  font-size: var(--tv-fs-sm);
+}
+
+.overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 8;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  background: color-mix(in srgb, var(--tv-bg) 82%, transparent);
+  color: var(--tv-text-dim);
+  font-size: var(--tv-fs-sm);
+}
+.overlay.error p {
+  max-width: 320px;
+  text-align: center;
+  color: var(--tv-text);
+}
+.overlay .cta {
+  height: 34px;
+  padding: 0 16px;
+  border: 1px solid var(--tv-border-strong);
+  border-radius: var(--tv-radius-sm);
+  background: var(--tv-elevated);
+  color: var(--tv-text);
+  cursor: pointer;
+}
+.overlay .cta:hover {
+  background: var(--tv-hover);
+}
+
+.spinner {
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--tv-border-strong);
+  border-top-color: var(--tv-accent);
+  border-radius: 50%;
+  animation: chart-spin 0.7s linear infinite;
+}
+.spinner.lg {
+  width: 28px;
+  height: 28px;
+  border-width: 3px;
+}
+
+@keyframes chart-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
