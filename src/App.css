@@ -1178,6 +1178,13 @@
 }
 
 /* ══ Shortcuts help ════════════════════════════════════════════════ */
+.tv-shortcuts-note {
+  margin: 4px 20px 0;
+  color: var(--tv-text-dim);
+  font-size: var(--tv-fs-sm);
+  line-height: 1.5;
+}
+
 .tv-shortcuts-group h3 {
   margin: 14px 20px 0;
   font-size: var(--tv-fs-sm);
@@ -1193,21 +1200,69 @@
 
 .tv-shortcuts-list li {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 12px;
+  gap: 4px 12px;
   padding: 6px 0;
   border-bottom: 1px solid var(--tv-border);
 }
 
-.tv-shortcuts-list kbd {
-  min-width: 110px;
+.tv-shortcuts-list li > span {
+  flex: 1;
+}
+
+.tv-shortcuts-list kbd,
+.tv-kbd-btn {
+  min-width: 130px;
   padding: 3px 8px;
   border: 1px solid var(--tv-border-strong);
   border-radius: var(--tv-radius-sm);
   background: var(--tv-hover);
+  color: var(--tv-text);
   font-family: var(--tv-font-mono);
   font-size: var(--tv-fs-sm);
   text-align: center;
+}
+
+.tv-kbd-btn {
+  cursor: pointer;
+}
+
+.tv-kbd-btn:hover {
+  border-color: var(--tv-accent);
+}
+
+.tv-kbd-btn.custom {
+  color: var(--tv-accent-text);
+}
+
+.tv-kbd-btn.editing {
+  border-color: var(--tv-accent);
+  background: transparent;
+  color: var(--tv-accent-text);
+}
+
+.tv-shortcuts-reset {
+  padding: 2px 6px;
+  border: none;
+  background: none;
+  color: var(--tv-text-dim);
+  font-size: var(--tv-fs-xs);
+  cursor: pointer;
+}
+
+.tv-shortcuts-reset:hover {
+  color: var(--tv-text);
+}
+
+.tv-shortcuts-notice {
+  width: 100%;
+  color: var(--tv-text-dim);
+  font-size: var(--tv-fs-xs);
+}
+
+.tv-shortcuts-notice.error {
+  color: var(--tv-down);
 }
 
 /* ══ 날짜로 이동 ═══════════════════════════════════════════════════ */

@@ -83,11 +83,10 @@ export const DRAWING_LABELS: Record<DrawingKind, string> = {
   datePriceRange: '날짜와 가격 범위',
 }
 
-/** 왼쪽 툴바의 한 도구 항목. */
+/** 왼쪽 툴바의 한 도구 항목. 단축키 라벨은 lib/shortcuts 의 (바꿀 수 있는) 설정에서 온다. */
 export interface ToolItem {
   tool: DrawingKind | CursorTool
   label: string
-  shortcut?: string
 }
 
 /** 플라이아웃 안의 한 구획(예: 선, 채널). */
@@ -126,15 +125,15 @@ export const TOOL_GROUPS: ToolGroup[] = [
       {
         title: '선',
         items: [
-          { tool: 'trend', label: '추세선', shortcut: 'Alt+T' },
+          { tool: 'trend', label: '추세선' },
           { tool: 'ray', label: '레이' },
           { tool: 'infoLine', label: '정보 라인' },
           { tool: 'extended', label: '연장 라인' },
           { tool: 'trendAngle', label: '추세 각도' },
-          { tool: 'horizontal', label: '수평선', shortcut: 'Alt+H' },
-          { tool: 'horizontalRay', label: '수평 레이', shortcut: 'Alt+J' },
-          { tool: 'vertical', label: '수직선', shortcut: 'Alt+V' },
-          { tool: 'crossLine', label: '교차선', shortcut: 'Alt+C' },
+          { tool: 'horizontal', label: '수평선' },
+          { tool: 'horizontalRay', label: '수평 레이' },
+          { tool: 'vertical', label: '수직선' },
+          { tool: 'crossLine', label: '교차선' },
         ],
       },
       {
@@ -148,7 +147,7 @@ export const TOOL_GROUPS: ToolGroup[] = [
     label: '피보나치',
     sections: [
       {
-        items: [{ tool: 'fibRetracement', label: '피보나치 되돌림', shortcut: 'Alt+F' }],
+        items: [{ tool: 'fibRetracement', label: '피보나치 되돌림' }],
       },
     ],
   },
@@ -158,7 +157,7 @@ export const TOOL_GROUPS: ToolGroup[] = [
     sections: [
       {
         items: [
-          { tool: 'rectangle', label: '사각형', shortcut: 'Alt+Shift+R' },
+          { tool: 'rectangle', label: '사각형' },
           { tool: 'ellipse', label: '타원' },
           { tool: 'triangle', label: '삼각형' },
           { tool: 'brush', label: '브러시' },

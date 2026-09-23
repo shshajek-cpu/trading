@@ -22,6 +22,8 @@ export interface DrawingToolbarProps {
   onHiddenChange: (v: boolean) => void
   onRemoveDrawings: () => void
   onRemoveIndicators: () => void
+  /** 도구별 단축키 라벨(사용자가 바꾼 키 반영). */
+  toolShortcuts: Partial<Record<DrawingTool, string>>
   variant: 'desktop' | 'mobile'
 }
 
@@ -59,6 +61,7 @@ export function DrawingToolbar({
   onHiddenChange,
   onRemoveDrawings,
   onRemoveIndicators,
+  toolShortcuts,
   variant,
 }: DrawingToolbarProps) {
   const [lastUsed, setLastUsed] = useState<Record<string, DrawingTool>>(loadLastUsed)
@@ -165,7 +168,7 @@ export function DrawingToolbar({
                         key={item.tool}
                         icon={<ToolIcon name={item.tool as IconName} size={20} />}
                         label={item.label}
-                        shortcut={item.shortcut}
+                        shortcut={toolShortcuts[item.tool]}
                         active={tool === item.tool}
                         onSelect={() => pickTool(g.id, item.tool)}
                       />
