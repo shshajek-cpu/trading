@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { randomCode } from '../lib/syncCode'
 import type { SyncStatus } from '../hooks/useSync'
+import { Icon } from './Icon'
 
 interface SyncPanelProps {
   code: string
@@ -31,8 +32,6 @@ export function SyncPanel({ code, status, message, onSetCode, onPull, onPush }: 
 
   return (
     <section className="panel sync-panel">
-      <h2>기기 간 동기화</h2>
-
       {code ? (
         <>
           <div className="sync-code-row">
@@ -46,6 +45,7 @@ export function SyncPanel({ code, status, message, onSetCode, onPull, onPush }: 
                 })
               }}
             >
+              <Icon name={copied ? 'check' : 'copy'} size={15} />
               {copied ? '복사됨' : '복사'}
             </button>
           </div>
@@ -56,7 +56,8 @@ export function SyncPanel({ code, status, message, onSetCode, onPull, onPush }: 
 
           <div className="sync-actions">
             <button type="button" onClick={() => void onPush(code)} disabled={status === 'syncing'}>
-              ↑ 지금 올리기
+              <Icon name="arrowUp" size={15} />
+              지금 올리기
             </button>
             <button
               type="button"
@@ -68,7 +69,8 @@ export function SyncPanel({ code, status, message, onSetCode, onPull, onPush }: 
               }}
               disabled={status === 'syncing'}
             >
-              ↓ 내려받기
+              <Icon name="arrowDown" size={15} />
+              내려받기
             </button>
           </div>
 
@@ -77,7 +79,7 @@ export function SyncPanel({ code, status, message, onSetCode, onPull, onPush }: 
             {message && ` · ${message}`}
           </div>
 
-          <button type="button" className="sync-off" onClick={() => onSetCode('')}>
+          <button type="button" className="ghost-btn sync-off" onClick={() => onSetCode('')}>
             동기화 끄기
           </button>
         </>
@@ -86,11 +88,12 @@ export function SyncPanel({ code, status, message, onSetCode, onPull, onPush }: 
           <p className="hint">
             코드를 만들어 다른 기기에 입력하면 설정이 공유됩니다. 계정은 필요 없습니다.
           </p>
-          <button type="button" className="sync-new" onClick={() => connect(randomCode())}>
+          <button type="button" className="cta sync-new" onClick={() => connect(randomCode())}>
+            <Icon name="plus" size={16} />
             새 코드 만들기
           </button>
           <form
-            className="sync-join"
+            className="inline-form sync-join"
             onSubmit={(e) => {
               e.preventDefault()
               connect(draft)
@@ -100,6 +103,7 @@ export function SyncPanel({ code, status, message, onSetCode, onPull, onPush }: 
               type="text"
               value={draft}
               placeholder="기존 코드 입력"
+              aria-label="기존 코드 입력"
               autoComplete="off"
               autoCapitalize="none"
               spellCheck={false}

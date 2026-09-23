@@ -13,7 +13,6 @@ export function MtfPanel({ symbol, current, onApply }: MtfPanelProps) {
 
   return (
     <section className="panel mtf-panel">
-      <h2>다중 시간대</h2>
       <p className="hint">
         <b>{short}</b> 을(를) 네 칸에 띄우고 주기만 다르게 겁니다.
       </p>

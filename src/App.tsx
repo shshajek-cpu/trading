@@ -1,8 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import './App.css'
 import { ChartCell } from './components/ChartCell'
-import { Toolbar, type PopoverId } from './components/Toolbar'
+import { Toolbar } from './components/Toolbar'
+import { Icon } from './components/Icon'
+import { PanelHost } from './components/PanelHost'
 import { IndicatorPanel } from './components/IndicatorPanel'
 import { AlertPanel } from './components/AlertPanel'
 import { DrawingPanel } from './components/DrawingPanel'
@@ -13,6 +15,12 @@ import { useSymbols } from './hooks/useSymbols'
 import { usePipWindow } from './hooks/usePipWindow'
 import { useDrawings } from './hooks/useDrawings'
 import { useIsMobile } from './hooks/useIsMobile'
+import { useInstallPrompt } from './hooks/useInstallPrompt'
+import { MobileApp } from './components/mobile/MobileApp'
+import { AlertForm } from './components/mobile/AlertForm'
+import { PushBox } from './components/PushBox'
+import { useTicker24h } from './hooks/useTicker24h'
+import type { MobilePage } from './lib/mobileNav'
 import { useSync } from './hooks/useSync'
 import { usePushAlerts } from './hooks/usePushAlerts'
 import { useWatchlist } from './hooks/useWatchlist'
@@ -27,6 +35,7 @@ import type { FeatureSet } from './lib/features'
 import { SyncPanel } from './components/SyncPanel'
 import { DRAW_COLORS, type Drawing } from './lib/drawings'
 import type { Interval } from './lib/binance'
+import type { PanelId } from './lib/panels'
 import {
   loadIndicators,
   saveIndicators,
@@ -42,18 +51,6 @@ import {
 } from './lib/layoutConfig'
 
 const TOAST_MS = 6000
-
-/** 모바일 바텀시트는 한 번에 한 묶음만 보여준다 — 전부 쌓으면 지표가 화면 밖으로 밀린다. */
-type SheetSection = 'watchlist' | 'pins' | 'drawings' | 'indicators' | 'alerts' | 'sync'
-
-const SHEET_TABS: { id: SheetSection; label: string }[] = [
-  { id: 'indicators', label: '지표' },
-  { id: 'drawings', label: '선' },
-  { id: 'watchlist', label: '종목' },
-  { id: 'pins', label: '핀' },
-  { id: 'alerts', label: '알림' },
-  { id: 'sync', label: '동기화' },
-]
 
 function App() {
   const [layoutState, setLayoutState] = useState<LayoutState>(loadLayout)
@@ -124,17 +121,9 @@ function App() {
     [updateDrawing],
   )
 
-  // 모바일에서는 설정 패널을 기본으로 숨기고 시트로 올린다.
-  const [sheetOpen, setSheetOpen] = useState(false)
-  const [sheetSection, setSheetSection] = useState<SheetSection>('indicators')
-
-  const openSheet = useCallback((section: SheetSection) => {
-    setSheetSection(section)
-    setSheetOpen(true)
-  }, [])
-
-  // 상단바 팭오버 — 우측 사이드바를 없애고 이걸로 대체했다.
-  const [popover, setPopover] = useState<PopoverId | null>(null)
+  /** 열려 있는 설정 묶음. 데스크톱은 오른쪽 서랍, 모바일은 아래 시트로 같은 값을 쓴다. */
+  const [panel, setPanel] = useState<PanelId | null>(null)
+  const openPanel = useCallback((id: PanelId) => setPanel(id), [])
 
   // 칸 경계 끌기 — 방향별로 비율을 고친다.
   const gridRef = useRef<HTMLElement>(null)
@@ -178,6 +167,8 @@ function App() {
   const [liveFeatures, setLiveFeatures] = useState<FeatureSet | null>(null)
   const [drawColor, setDrawColor] = useState<string>(DRAW_COLORS[0])
   const [drawAlert, setDrawAlert] = useState(true)
+  /** 폰 앱 헤더가 크게 보여줄 현재가. 차트에서 올려 준다. */
+  const [mobilePrice, setMobilePrice] = useState<number | null>(null)
 
   // 알림과 수평선을 한 번에 검사한다.
   const handlePrice = useCallback(
@@ -196,6 +187,9 @@ function App() {
   const pinStore = usePins()
 
   const pip = usePipWindow()
+
+  // 홈 화면에 추가하면 주소창이 사라지고 알림도 받을 수 있다 — 한 번만 알려 준다.
+  const install = useInstallPrompt()
 
   const setLayout = useCallback((mode: LayoutMode) => {
     setLayoutState((prev) => ({
@@ -240,34 +234,32 @@ function App() {
   const effectiveLayout = isMobile ? 1 : layout
   const visibleCells = isMobile ? [cells[active] ?? cells[0]] : cells.slice(0, layout)
   const activeSymbol = cells[active]?.symbol ?? 'BTCUSDT'
+  const alertBadge =
+    alerts.filter((a) => a.active).length + drawings.filter((d) => d.alert).length
 
-  return (
-    <div className="app">
-      <Toolbar
-        layout={layout}
-        onLayoutChange={setLayout}
-        pipSupported={pip.supported}
-        pipOpen={pip.open}
-        onTogglePip={() => void pip.toggle()}
-        open={popover}
-        onOpenChange={setPopover}
-        alertCount={alerts.filter((a) => a.active).length + drawings.filter((d) => d.alert).length}
-      >
-        {popover === 'discover' && (
+  /** 열린 묶음의 내용. 데스크톱 서랍과 모바일 시트가 이걸 그대로 나눠 쓴다. */
+  const panelContent = useMemo(() => {
+    switch (panel) {
+      case 'discover':
+        return (
           <DiscoverPanel
             symbol={activeSymbol}
             interval={cells[active]?.interval ?? '1m'}
             liveFeatures={liveFeatures}
           />
-        )}
-        {popover === 'pins' && (
+        )
+      case 'pins':
+        return (
           <PinPanel
             pins={pinStore.pins}
             pinMode={pinMode}
             pinSide={pinSide}
             onPinModeChange={(on) => {
               setPinMode(on)
-              if (on) setDrawMode(false)
+              if (on) {
+                setDrawMode(false)
+                if (isMobile) setPanel(null)
+              }
             }}
             onPinSideChange={setPinSide}
             onRemove={pinStore.remove}
@@ -275,18 +267,20 @@ function App() {
             liveFeatures={liveFeatures}
             symbol={activeSymbol}
           />
-        )}
-        {popover === 'mtf' && (
+        )
+      case 'mtf':
+        return (
           <MtfPanel
             symbol={activeSymbol}
             current={cells.slice(0, 4).map((c) => c.interval)}
             onApply={(ivs) => {
               applyMtf(ivs)
-              setPopover(null)
+              setPanel(null)
             }}
           />
-        )}
-        {popover === 'watchlist' && (
+        )
+      case 'watchlist':
+        return (
           <Watchlist
             symbols={watchlist.symbols}
             rows={watchlist.rows}
@@ -294,16 +288,16 @@ function App() {
             current={activeSymbol}
             onPick={(s) => {
               setCellSymbol(active, s)
-              setPopover(null)
+              if (isMobile) setPanel(null)
             }}
             onAdd={watchlist.add}
             onRemove={watchlist.remove}
           />
-        )}
-        {popover === 'indicators' && (
-          <IndicatorPanel settings={indicators} onChange={setIndicators} />
-        )}
-        {popover === 'drawings' && (
+        )
+      case 'indicators':
+        return <IndicatorPanel settings={indicators} onChange={setIndicators} />
+      case 'drawings':
+        return (
           <DrawingPanel
             symbol={activeSymbol}
             drawings={drawings}
@@ -318,8 +312,9 @@ function App() {
             onUpdate={updateDrawing}
             onClear={() => clearSymbol(activeSymbol)}
           />
-        )}
-        {popover === 'alerts' && (
+        )
+      case 'alerts':
+        return (
           <AlertPanel
             symbol={activeSymbol}
             alerts={alerts}
@@ -328,10 +323,15 @@ function App() {
             onRemove={removeAlert}
             push={push}
             hasSyncCode={Boolean(sync.code)}
-            onCreateSyncCode={() => sync.setCode(randomCode())}
+            onCreateSyncCode={() => {
+              const code = randomCode()
+              sync.setCode(code)
+              return code
+            }}
           />
-        )}
-        {popover === 'sync' && (
+        )
+      case 'sync':
+        return (
           <SyncPanel
             code={sync.code}
             status={sync.status}
@@ -340,46 +340,314 @@ function App() {
             onPull={sync.pull}
             onPush={sync.push}
           />
-        )}
-      </Toolbar>
+        )
+      default:
+        return null
+    }
+  }, [
+    panel,
+    activeSymbol,
+    cells,
+    active,
+    liveFeatures,
+    pinStore,
+    pinMode,
+    pinSide,
+    isMobile,
+    applyMtf,
+    watchlist,
+    symbols,
+    setCellSymbol,
+    indicators,
+    drawings,
+    drawMode,
+    drawColor,
+    drawAlert,
+    addDrawing,
+    removeDrawing,
+    updateDrawing,
+    clearSymbol,
+    alerts,
+    permission,
+    addAlert,
+    removeAlert,
+    push,
+    sync,
+  ])
+
+  // ── 폰 앱 ──────────────────────────────────────────────────────────
+  // 데스크톱과 상태는 그대로 나눠 쓰고 화면 구조만 다르게 간다.
+  const mobileTicker = useTicker24h(activeSymbol)
+
+  /** 더보기에서 여는 상세 페이지의 내용. 기존 패널을 그대로 재사용한다. */
+  const renderMobilePage = useCallback(
+    (page: MobilePage) => {
+      switch (page) {
+        case 'indicators':
+          return <IndicatorPanel settings={indicators} onChange={setIndicators} />
+        case 'drawings':
+          return (
+            <DrawingPanel
+              symbol={activeSymbol}
+              drawings={drawings}
+              drawMode={drawMode}
+              drawColor={drawColor}
+              drawAlert={drawAlert}
+              onToggleMode={() => setDrawMode((v) => !v)}
+              onColorChange={setDrawColor}
+              onAlertChange={setDrawAlert}
+              onAdd={(price) => addDrawing(activeSymbol, price, drawColor, drawAlert)}
+              onRemove={removeDrawing}
+              onUpdate={updateDrawing}
+              onClear={() => clearSymbol(activeSymbol)}
+            />
+          )
+        case 'mtf':
+          return (
+            <MtfPanel
+              symbol={activeSymbol}
+              current={cells.slice(0, 4).map((c) => c.interval)}
+              onApply={applyMtf}
+            />
+          )
+        case 'pins':
+          return (
+            <PinPanel
+              pins={pinStore.pins}
+              pinMode={pinMode}
+              pinSide={pinSide}
+              onPinModeChange={(on) => {
+                setPinMode(on)
+                if (on) setDrawMode(false)
+              }}
+              onPinSideChange={setPinSide}
+              onRemove={pinStore.remove}
+              onClear={pinStore.clear}
+              liveFeatures={liveFeatures}
+              symbol={activeSymbol}
+            />
+          )
+        case 'discover':
+          return (
+            <DiscoverPanel
+              symbol={activeSymbol}
+              interval={cells[active]?.interval ?? '1m'}
+              liveFeatures={liveFeatures}
+            />
+          )
+        case 'sync':
+          return (
+            <SyncPanel
+              code={sync.code}
+              status={sync.status}
+              message={sync.message}
+              onSetCode={sync.setCode}
+              onPull={sync.pull}
+              onPush={sync.push}
+            />
+          )
+      }
+    },
+    [
+      indicators,
+      activeSymbol,
+      drawings,
+      drawMode,
+      drawColor,
+      drawAlert,
+      addDrawing,
+      removeDrawing,
+      updateDrawing,
+      clearSymbol,
+      cells,
+      active,
+      applyMtf,
+      pinStore,
+      pinMode,
+      pinSide,
+      liveFeatures,
+      sync,
+    ],
+  )
+
+  if (isMobile) {
+    const cell = cells[active] ?? cells[0]
+    return (
+      <>
+        <MobileApp
+          symbol={cell.symbol}
+          interval={cell.interval}
+          onIntervalChange={(iv) => setCellInterval(active, iv)}
+          onSymbolChange={(s) => setCellSymbol(active, s)}
+          ticker={mobileTicker}
+          livePrice={mobilePrice}
+          favorites={watchlist.symbols}
+          watchRows={watchlist.rows}
+          allSymbols={symbols}
+          onToggleFavorite={watchlist.toggle}
+          alerts={alerts}
+          drawings={drawings}
+          onRemoveAlert={removeAlert}
+          onRemoveDrawing={removeDrawing}
+          onToggleDrawingAlert={(id, on) => updateDrawing(id, { alert: on, fired: false })}
+          alertCount={alertBadge}
+          drawMode={drawMode}
+          onToggleDraw={() => setDrawMode((v) => !v)}
+          canUndo={canUndo}
+          onUndo={undo}
+          install={{
+            canShow: install.canShow,
+            ios: install.ios,
+            installable: install.installable,
+            install: () => void install.install(),
+          }}
+          alertsHeader={
+            <PushBox
+              push={push}
+              hasSyncCode={Boolean(sync.code)}
+              onCreateSyncCode={() => {
+                const code = randomCode()
+                sync.setCode(code)
+                return code
+              }}
+            />
+          }
+          renderAlertForm={(done) => (
+            <AlertForm
+              symbol={cell.symbol}
+              livePrice={mobilePrice}
+              onAdd={addAlert}
+              onDone={done}
+            />
+          )}
+          renderPage={renderMobilePage}
+          chart={
+            <ChartCell
+              key={`m-${cell.symbol}-${cell.interval}`}
+              symbol={cell.symbol}
+              interval={cell.interval}
+              symbols={symbols}
+              indicators={indicators}
+              alerts={alerts}
+              drawings={drawings}
+              drawMode={drawMode}
+              onDrawPrice={(price) => {
+                addDrawing(cell.symbol, price, drawColor, drawAlert)
+                setDrawMode(false)
+              }}
+              pinMode={pinMode}
+              pins={pinStore.pins.filter(
+                (pn) => pn.symbol === cell.symbol && pn.interval === cell.interval,
+              )}
+              onAddPin={({ time, price, features }) => {
+                pinStore.add({
+                  symbol: cell.symbol,
+                  interval: cell.interval,
+                  time,
+                  price,
+                  side: pinSide,
+                  features,
+                })
+              }}
+              onPinFail={(reason) => pushToast(reason)}
+              onLiveFeatures={setLiveFeatures}
+              onMoveDrawing={handleMoveDrawing}
+              active={false}
+              showMiniBar={false}
+              bare
+              onLivePrice={setMobilePrice}
+              onActivate={() => {}}
+              onSymbolChange={(s) => setCellSymbol(active, s)}
+              onIntervalChange={(iv) => setCellInterval(active, iv)}
+              onPrice={handlePrice}
+              onToggleIndicator={(which) =>
+                setIndicators((prev) => ({
+                  ...prev,
+                  [which]: { ...prev[which], enabled: !prev[which].enabled },
+                }))
+              }
+            />
+          }
+        />
+        <Toasts toasts={toasts} onDismiss={dismissToast} />
+      </>
+    )
+  }
+
+  return (
+    <div className={`app${panel ? ' panel-open' : ''}`}>
+      <Toolbar
+        layout={layout}
+        onLayoutChange={setLayout}
+        pipSupported={pip.supported}
+        pipOpen={pip.open}
+        onTogglePip={() => void pip.toggle()}
+      />
 
       <div className="body">
-        {/* 좌측 도구 레일 — 자주 쓰는 것을 바로 닿게 한다(데스크톱 전용). */}
-        <nav className="tool-rail">
+        {/* 좌측 도구 레일 — 그리기 도구만 남긴다(데스크톱 전용). */}
+        <nav className="tool-rail" aria-label="그리기 도구">
           <button
             type="button"
-            className={drawMode ? 'active' : undefined}
+            className={`icon-btn${drawMode ? ' active' : ''}`}
             title="수평선 그리기"
+            aria-label="수평선 그리기"
+            aria-pressed={drawMode}
             onClick={() => setDrawMode((v) => !v)}
           >
-            ─
+            <Icon name="pen" size={17} />
           </button>
+
+          <div className="rail-sep" />
+
           <div className="rail-swatches">
             {DRAW_COLORS.map((c) => (
               <button
                 key={c}
                 type="button"
                 className={`swatch${c === drawColor ? ' active' : ''}`}
-                style={{ background: c }}
+                style={{ '--swatch': c } as React.CSSProperties}
                 title={`선 색상 ${c}`}
+                aria-label={`선 색상 ${c}`}
+                aria-pressed={c === drawColor}
                 onClick={() => setDrawColor(c)}
               />
             ))}
           </div>
-          <button type="button" disabled={!canUndo} title="실행취소" onClick={undo}>
-            ↩
+
+          <div className="rail-sep" />
+
+          <button
+            type="button"
+            className="icon-btn"
+            disabled={!canUndo}
+            title="실행취소"
+            aria-label="실행취소"
+            onClick={undo}
+          >
+            <Icon name="undo" size={17} />
           </button>
           <button
             type="button"
+            className="icon-btn"
             title={`${activeSymbol} 선 모두 지우기`}
+            aria-label={`${activeSymbol} 선 모두 지우기`}
             onClick={() => clearSymbol(activeSymbol)}
           >
-            🗑
+            <Icon name="trash" size={17} />
           </button>
+
           <div className="rail-gap" />
+
           {layout > 1 && (
-            <button type="button" title="칸 크기 균등하게" onClick={resetSplit}>
-              ⧉
+            <button
+              type="button"
+              className="icon-btn"
+              title="칸 크기 균등하게"
+              aria-label="칸 크기 균등하게"
+              onClick={resetSplit}
+            >
+              <Icon name="equalize" size={17} />
             </button>
           )}
         </nav>
@@ -448,7 +716,7 @@ function App() {
                   [which]: { ...prev[which], enabled: !prev[which].enabled },
                 }))
               }
-              onOpenIndicatorSettings={() => openSheet('indicators')}
+              onOpenIndicatorSettings={() => openPanel('indicators')}
             />
           ))}
 
@@ -473,149 +741,14 @@ function App() {
           )}
         </main>
 
-        {/* 모바일: 시트가 열렸을 때 뒤배경을 눌러 닫는다 */}
-        {sheetOpen && (
-          <button
-            type="button"
-            className="sheet-backdrop"
-            aria-label="설정 닫기"
-            onClick={() => setSheetOpen(false)}
-          />
-        )}
-
-        <aside
-          className={`settings-panel${sheetOpen ? ' open' : ''}`}
+        <PanelHost
+          open={panel}
+          onOpenChange={setPanel}
+          alertCount={alertBadge}
+          mobile={isMobile}
         >
-          <button type="button" className="sheet-handle" onClick={() => setSheetOpen(false)}>
-            <span />
-          </button>
-          <div className="sheet-tabs">
-            {SHEET_TABS.map((t) => (
-              <button
-                key={t.id}
-                type="button"
-                className={t.id === sheetSection ? 'active' : undefined}
-                onClick={() => setSheetSection(t.id)}
-              >
-                {t.label}
-              </button>
-            ))}
-          </div>
-          {sheetSection === 'watchlist' && (
-          <Watchlist
-            symbols={watchlist.symbols}
-            rows={watchlist.rows}
-            allSymbols={symbols}
-            current={activeSymbol}
-            onPick={(s) => {
-              setCellSymbol(active, s)
-              setSheetOpen(false)
-            }}
-            onAdd={watchlist.add}
-            onRemove={watchlist.remove}
-          />
-          )}
-          {sheetSection === 'pins' && (
-          <PinPanel
-            pins={pinStore.pins}
-            pinMode={pinMode}
-            pinSide={pinSide}
-            onPinModeChange={(on) => {
-              setPinMode(on)
-              if (on) {
-                setDrawMode(false)
-                setSheetOpen(false)
-              }
-            }}
-            onPinSideChange={setPinSide}
-            onRemove={pinStore.remove}
-            onClear={pinStore.clear}
-            liveFeatures={liveFeatures}
-            symbol={activeSymbol}
-          />
-          )}
-          {sheetSection === 'drawings' && (
-          <DrawingPanel
-            symbol={activeSymbol}
-            drawings={drawings}
-            drawMode={drawMode}
-            drawColor={drawColor}
-            drawAlert={drawAlert}
-            onToggleMode={() => setDrawMode((v) => !v)}
-            onColorChange={setDrawColor}
-            onAlertChange={setDrawAlert}
-            onAdd={(price) => addDrawing(activeSymbol, price, drawColor, drawAlert)}
-            onRemove={removeDrawing}
-            onUpdate={updateDrawing}
-            onClear={() => clearSymbol(activeSymbol)}
-          />
-          )}
-          {sheetSection === 'indicators' && (
-            <IndicatorPanel settings={indicators} onChange={setIndicators} />
-          )}
-          {sheetSection === 'alerts' && (
-          <AlertPanel
-            symbol={activeSymbol}
-            alerts={alerts}
-            permission={permission}
-            onAdd={addAlert}
-            onRemove={removeAlert}
-            push={push}
-            hasSyncCode={Boolean(sync.code)}
-            onCreateSyncCode={() => sync.setCode(randomCode())}
-          />
-          )}
-          {sheetSection === 'sync' && (
-          <SyncPanel
-            code={sync.code}
-            status={sync.status}
-            message={sync.message}
-            onSetCode={sync.setCode}
-            onPull={sync.pull}
-            onPush={sync.push}
-          />
-          )}
-        </aside>
-      </div>
-
-      {/* 모바일: 분할을 쌓는 대신 탭으로 골라 본다 */}
-      {layout > 1 && (
-        <div className="cell-tabs">
-          {cells.slice(0, layout).map((c, i) => (
-            <button
-              key={i}
-              type="button"
-              className={i === active ? 'active' : undefined}
-              onClick={() => setActive(i)}
-            >
-              {c.symbol.replace('USDT', '')}
-            </button>
-          ))}
-        </div>
-      )}
-
-      {/* 모바일 전용 하단 버튼 — 데스크톱에서는 CSS 로 숨긴다 */}
-      <div className="mobile-bar">
-        <button
-          type="button"
-          className={drawMode ? 'active' : undefined}
-          onClick={() => {
-            setDrawMode((v) => !v)
-            setSheetOpen(false)
-          }}
-        >
-          ─ 수평선
-        </button>
-        <button
-          type="button"
-          className={sheetOpen ? 'active' : undefined}
-          onClick={() => (sheetOpen ? setSheetOpen(false) : openSheet('indicators'))}
-        >
-          〰 지표
-        </button>
-        <button type="button" disabled={!canUndo} onClick={undo} title="실행취소">
-          ↩
-        </button>
+          {panelContent}
+        </PanelHost>
       </div>
 
       <Toasts toasts={toasts} onDismiss={dismissToast} />

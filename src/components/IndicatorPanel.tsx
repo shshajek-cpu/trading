@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { VOLUME_TIER_COLORS, VOLUME_TIER_LABELS } from '../lib/indicators'
+import { Icon } from './Icon'
 import {
   nextMaColor,
   type IndicatorSettings,
@@ -10,6 +11,13 @@ interface IndicatorPanelProps {
   settings: IndicatorSettings
   onChange: (next: IndicatorSettings) => void
 }
+
+/** fast/slow/signal 은 영어 그대로면 뭘 뜻하는지 알기 어렵다. */
+const MACD_LABELS = {
+  fast: '빠른선',
+  slow: '느린선',
+  signal: '신호선',
+} as const
 
 export function IndicatorPanel({ settings, onChange }: IndicatorPanelProps) {
   const [newPeriod, setNewPeriod] = useState('50')
@@ -42,8 +50,6 @@ export function IndicatorPanel({ settings, onChange }: IndicatorPanelProps) {
 
   return (
     <section className="panel">
-      <h2>지표</h2>
-
       <div className="panel-group">
         <h3>이동평균</h3>
         <ul className="ma-list">
@@ -51,11 +57,14 @@ export function IndicatorPanel({ settings, onChange }: IndicatorPanelProps) {
             <li key={ma.id}>
               <input
                 type="checkbox"
+                className="switch"
+                aria-label={`${ma.type.toUpperCase()} ${ma.period} 보이기`}
                 checked={ma.visible}
                 onChange={(e) => updateMa(ma.id, { visible: e.target.checked })}
               />
               <input
                 type="color"
+                aria-label={`${ma.type.toUpperCase()} ${ma.period} 색상`}
                 value={ma.color}
                 onChange={(e) => updateMa(ma.id, { color: e.target.value })}
               />
@@ -64,24 +73,30 @@ export function IndicatorPanel({ settings, onChange }: IndicatorPanelProps) {
               </span>
               <button
                 type="button"
-                className="remove"
+                className="icon-btn remove"
+                aria-label={`${ma.type.toUpperCase()} ${ma.period} 지우기`}
                 onClick={() =>
                   onChange({ ...settings, mas: settings.mas.filter((m) => m.id !== ma.id) })
                 }
               >
-                ✕
+                <Icon name="close" size={15} />
               </button>
             </li>
           ))}
         </ul>
-        <div className="ma-add">
-          <select value={newType} onChange={(e) => setNewType(e.target.value as MaType)}>
+        <div className="inline-form ma-add">
+          <select
+            aria-label="이동평균 종류"
+            value={newType}
+            onChange={(e) => setNewType(e.target.value as MaType)}
+          >
             <option value="sma">SMA</option>
             <option value="ema">EMA</option>
             <option value="vwma">VWMA</option>
           </select>
           <input
             type="number"
+            aria-label="기간"
             min={1}
             max={1000}
             value={newPeriod}
@@ -93,86 +108,86 @@ export function IndicatorPanel({ settings, onChange }: IndicatorPanelProps) {
         </div>
       </div>
 
-      <div className="panel-group">
-        <h3>
-          <label>
-            <input
-              type="checkbox"
-              checked={settings.rsi.enabled}
-              onChange={(e) =>
-                onChange({ ...settings, rsi: { ...settings.rsi, enabled: e.target.checked } })
-              }
-            />
-            RSI
-          </label>
-        </h3>
-        <label className="field">
-          기간
+      <div className={`panel-group${settings.rsi.enabled ? ' on' : ''}`}>
+        <label className="group-head">
+          <span>RSI</span>
           <input
-            type="number"
-            min={2}
-            max={100}
-            value={settings.rsi.period}
-            onChange={(e) => {
-              const period = Number(e.target.value)
-              if (period >= 2 && period <= 100) {
-                onChange({ ...settings, rsi: { ...settings.rsi, period } })
-              }
-            }}
+            type="checkbox"
+            className="switch"
+            checked={settings.rsi.enabled}
+            onChange={(e) =>
+              onChange({ ...settings, rsi: { ...settings.rsi, enabled: e.target.checked } })
+            }
           />
         </label>
-      </div>
-
-      <div className="panel-group">
-        <h3>
-          <label>
-            <input
-              type="checkbox"
-              checked={settings.macd.enabled}
-              onChange={(e) =>
-                onChange({ ...settings, macd: { ...settings.macd, enabled: e.target.checked } })
-              }
-            />
-            MACD
-          </label>
-        </h3>
-        {(['fast', 'slow', 'signal'] as const).map((key) => (
-          <label className="field" key={key}>
-            {key}
+        {settings.rsi.enabled && (
+          <label className="field">
+            기간
             <input
               type="number"
-              min={1}
-              max={200}
-              value={settings.macd[key]}
+              min={2}
+              max={100}
+              value={settings.rsi.period}
               onChange={(e) => {
-                const value = Number(e.target.value)
-                if (value < 1 || value > 200) return
-                const next = { ...settings.macd, [key]: value }
-                // fast >= slow 이면 MACD 계산이 성립하지 않는다.
-                if (next.fast >= next.slow) return
-                onChange({ ...settings, macd: next })
+                const period = Number(e.target.value)
+                if (period >= 2 && period <= 100) {
+                  onChange({ ...settings, rsi: { ...settings.rsi, period } })
+                }
               }}
             />
           </label>
-        ))}
+        )}
       </div>
 
-      <div className="panel-group">
-        <h3>
-          <label>
-            <input
-              type="checkbox"
-              checked={settings.volumeSurge.enabled}
-              onChange={(e) =>
-                onChange({
-                  ...settings,
-                  volumeSurge: { ...settings.volumeSurge, enabled: e.target.checked },
-                })
-              }
-            />
-            거래량 급증
-          </label>
-        </h3>
+      <div className={`panel-group${settings.macd.enabled ? ' on' : ''}`}>
+        <label className="group-head">
+          <span>MACD</span>
+          <input
+            type="checkbox"
+            className="switch"
+            checked={settings.macd.enabled}
+            onChange={(e) =>
+              onChange({ ...settings, macd: { ...settings.macd, enabled: e.target.checked } })
+            }
+          />
+        </label>
+        {settings.macd.enabled &&
+          (['fast', 'slow', 'signal'] as const).map((key) => (
+            <label className="field" key={key}>
+              {MACD_LABELS[key]}
+              <input
+                type="number"
+                min={1}
+                max={200}
+                value={settings.macd[key]}
+                onChange={(e) => {
+                  const value = Number(e.target.value)
+                  if (value < 1 || value > 200) return
+                  const next = { ...settings.macd, [key]: value }
+                  // fast >= slow 이면 MACD 계산이 성립하지 않는다.
+                  if (next.fast >= next.slow) return
+                  onChange({ ...settings, macd: next })
+                }}
+              />
+            </label>
+          ))}
+      </div>
+
+      <div className={`panel-group${settings.volumeSurge.enabled ? ' on' : ''}`}>
+        <label className="group-head">
+          <span>거래량 급증</span>
+          <input
+            type="checkbox"
+            className="switch"
+            checked={settings.volumeSurge.enabled}
+            onChange={(e) =>
+              onChange({
+                ...settings,
+                volumeSurge: { ...settings.volumeSurge, enabled: e.target.checked },
+              })
+            }
+          />
+        </label>
         {settings.volumeSurge.enabled && (
           <>
             <div className="vol-legend">

@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { loadDrawings, saveDrawings, type Drawing } from '../lib/drawings'
+import { loadDrawings, saveDrawings, type Anchor, type Drawing } from '../lib/drawings'
 
 export interface UseDrawingsResult {
   drawings: Drawing[]
   addDrawing: (symbol: string, price: number, color: string, alert: boolean) => void
+  /** 추세선 — 두 점을 이어 긋는다. 알림은 붙이지 않는다. */
+  addTrend: (symbol: string, from: Anchor, to: Anchor, color: string) => void
   removeDrawing: (id: string) => void
   updateDrawing: (id: string, patch: Partial<Drawing>) => void
   clearSymbol: (symbol: string) => void
@@ -65,6 +67,31 @@ export function useDrawings(
     [pushHistory],
   )
 
+  const addTrend = useCallback(
+    (symbol: string, from: Anchor, to: Anchor, color: string) => {
+      // 같은 자리를 두 번 찍으면 선이 아니라 점이다.
+      if (from.time === to.time && from.price === to.price) return
+      pushHistory()
+      setDrawings((prev) => [
+        ...prev,
+        {
+          id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          symbol,
+          kind: 'trend',
+          price: from.price,
+          from,
+          to,
+          color,
+          alert: false,
+          fired: false,
+          above: null,
+          createdAt: Date.now(),
+        },
+      ])
+    },
+    [pushHistory],
+  )
+
   const removeDrawing = useCallback(
     (id: string) => {
       pushHistory()
@@ -97,6 +124,8 @@ export function useDrawings(
 
       const next = prev.map((d) => {
         if (d.symbol !== symbol) return d
+        // 추세선은 기울어져 있어 가격 하나로 교차를 판정할 수 없다.
+        if (d.kind !== 'horizontal') return d
         const nowAbove = price >= d.price
 
         // 첫 관측은 기준점만 잡는다 — 선을 그은 순간 바로 울리는 것을 막는다.
@@ -128,6 +157,7 @@ export function useDrawings(
   return {
     drawings,
     addDrawing,
+    addTrend,
     removeDrawing,
     updateDrawing,
     clearSymbol,

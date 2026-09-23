@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { Icon } from './Icon'
 
 export function SymbolPicker({
   symbol,
@@ -33,13 +34,16 @@ export function SymbolPicker({
       <button
         type="button"
         className="symbol-button"
+        aria-expanded={open}
+        aria-label={`종목 ${symbol}, 눌러서 변경`}
         onClick={() => {
           setOpen((v) => !v)
           setQuery('')
         }}
       >
-        {symbol}
-        <span className="caret">▾</span>
+        <span className="symbol-name">{symbol.replace('USDT', '')}</span>
+        <span className="symbol-quote">USDT</span>
+        <Icon name="chevron" size={13} className="caret" />
       </button>
       {open && (
         <div className="symbol-dropdown">
@@ -47,6 +51,7 @@ export function SymbolPicker({
             autoFocus
             className="symbol-search"
             placeholder="심볼 검색"
+            aria-label="심볼 검색"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
           />
@@ -61,7 +66,8 @@ export function SymbolPicker({
                     setOpen(false)
                   }}
                 >
-                  {s}
+                  <span>{s.replace('USDT', '')}</span>
+                  <em>USDT</em>
                 </button>
               </li>
             ))}

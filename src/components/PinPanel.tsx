@@ -50,9 +50,7 @@ export function PinPanel({
 
   return (
     <section className="panel pin-panel">
-      <h2>매매 핀</h2>
-
-      <div className="pin-tabs">
+      <div className="seg-tabs pin-tabs">
         <button
           type="button"
           className={tab === 'record' ? 'active' : undefined}
@@ -73,10 +71,10 @@ export function PinPanel({
         <>
           <button
             type="button"
-            className={`pin-toggle ${pinMode ? 'on' : ''}`}
+            className={`cta pin-toggle${pinMode ? ' on' : ''}`}
             onClick={() => onPinModeChange(!pinMode)}
           >
-            {pinMode ? '핀 찍는 중 — 차트를 클릭하세요' : '핀 찍기 시작'}
+            {pinMode ? '차트를 눌러 핀을 놓으세요' : '핀 찍기 시작'}
           </button>
 
           <div className="pin-sides">
@@ -115,7 +113,12 @@ export function PinPanel({
                   <em>{new Date(pin.time * 1000).toLocaleString('ko-KR', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</em>
                 </span>
                 <span className="pin-rsi">RSI {pin.features.rsi14.toFixed(0)}</span>
-                <button type="button" className="pin-del" onClick={() => onRemove(pin.id)}>
+                <button
+                  type="button"
+                  className="icon-btn pin-del"
+                  aria-label="핀 지우기"
+                  onClick={() => onRemove(pin.id)}
+                >
                   ×
                 </button>
               </li>
@@ -123,7 +126,7 @@ export function PinPanel({
           </ul>
 
           {pins.length > 0 && (
-            <button type="button" className="pin-clear" onClick={onClear}>
+            <button type="button" className="ghost-btn pin-clear" onClick={onClear}>
               전부 지우기
             </button>
           )}

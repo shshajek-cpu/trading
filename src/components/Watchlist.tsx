@@ -1,5 +1,6 @@
 import { useMemo, useState } from 'react'
 import type { WatchRow } from '../hooks/useWatchlist'
+import { Icon } from './Icon'
 
 interface WatchlistProps {
   symbols: string[]
@@ -38,13 +39,12 @@ export function Watchlist({
 
   return (
     <section className="panel watchlist">
-      <h2>관심 종목</h2>
-
       <div className="watch-add">
         <input
           type="text"
           value={query}
-          placeholder="종목 추가"
+          placeholder="종목 검색해 추가"
+          aria-label="종목 검색해 추가"
           autoComplete="off"
           spellCheck={false}
           onChange={(e) => setQuery(e.target.value)}
@@ -83,15 +83,17 @@ export function Watchlist({
               </button>
               <button
                 type="button"
-                className="watch-del"
+                className="icon-btn watch-del"
                 title={`${s} 제거`}
+                aria-label={`${s} 제거`}
                 onClick={() => onRemove(s)}
               >
-                ×
+                <Icon name="close" size={15} />
               </button>
             </li>
           )
         })}
+        {symbols.length === 0 && <li className="empty">관심 종목이 없습니다. 위에서 검색해 추가하세요.</li>}
       </ul>
     </section>
   )

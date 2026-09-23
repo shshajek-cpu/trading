@@ -1,7 +1,5 @@
-import { useEffect, useRef, useState } from 'react'
 import type { LayoutMode } from '../lib/layoutConfig'
-
-export type PopoverId = 'indicators' | 'alerts' | 'drawings' | 'sync' | 'watchlist' | 'mtf' | 'pins' | 'discover'
+import { Icon, type IconName } from './Icon'
 
 interface ToolbarProps {
   layout: LayoutMode
@@ -9,124 +7,61 @@ interface ToolbarProps {
   pipSupported: boolean
   pipOpen: boolean
   onTogglePip: () => void
-  /** 열린 팝오버. 상단바 버튼을 누르면 그 아래로 내려온다. */
-  open: PopoverId | null
-  onOpenChange: (id: PopoverId | null) => void
-  alertCount: number
-  children?: React.ReactNode
 }
 
-const LAYOUTS: { mode: LayoutMode; label: string; title: string }[] = [
-  { mode: 1, label: '▢', title: '1분할' },
-  { mode: 2, label: '◫', title: '2분할' },
-  { mode: 4, label: '⊞', title: '4분할' },
+const LAYOUTS: { mode: LayoutMode; icon: IconName; title: string }[] = [
+  { mode: 1, icon: 'layout1', title: '한 칸' },
+  { mode: 2, icon: 'layout2', title: '두 칸' },
+  { mode: 4, icon: 'layout4', title: '네 칸' },
 ]
 
+/** 화면 맨 위 유리 바. 앱 이름과 화면 분할, 미니창만 둔다 — 설정은 오른쪽 서랍이 맡는다. */
 export function Toolbar({
   layout,
   onLayoutChange,
   pipSupported,
   pipOpen,
   onTogglePip,
-  open,
-  onOpenChange,
-  alertCount,
-  children,
 }: ToolbarProps) {
-  const barRef = useRef<HTMLElement>(null)
-  const tabsRef = useRef<HTMLDivElement>(null)
-  // 팭오버를 누른 버튼 아래에 맞춘다.
-  const [left, setLeft] = useState(0)
-
-  // 바깥을 누르거나 Esc 를 누르면 닫는다.
-  useEffect(() => {
-    if (!open) return
-    const onDown = (e: PointerEvent) => {
-      if (!barRef.current?.contains(e.target as Node)) onOpenChange(null)
-    }
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onOpenChange(null)
-    }
-    document.addEventListener('pointerdown', onDown)
-    document.addEventListener('keydown', onKey)
-    return () => {
-      document.removeEventListener('pointerdown', onDown)
-      document.removeEventListener('keydown', onKey)
-    }
-  }, [open, onOpenChange])
-
-  const tab = (id: PopoverId, label: string, badge?: number) => (
-    <button
-      type="button"
-      className={open === id ? 'active' : undefined}
-      onClick={(e) => {
-        const bar = barRef.current
-        if (bar) {
-          const b = e.currentTarget.getBoundingClientRect()
-          const barLeft = bar.getBoundingClientRect().left
-          // 오른쪽 끝 버튼을 누르면 팝오버가 화면 밖으로 밀린다. 안쪽으로 당겨 붙인다.
-          const width = 320
-          const maxLeft = window.innerWidth - width - 12 - barLeft
-          setLeft(Math.max(0, Math.min(b.left - barLeft, maxLeft)))
-        }
-        onOpenChange(open === id ? null : id)
-      }}
-    >
-      {label}
-      {badge ? <span className="badge">{badge}</span> : null}
-    </button>
-  )
-
   return (
-    <header className="toolbar" ref={barRef}>
-      <span className="app-title">Trading</span>
+    <header className="topbar">
+      <div className="brand">
+        <span className="brand-mark" aria-hidden="true" />
+        <span className="brand-name">Trading</span>
+      </div>
 
-      <div className="layout-switch">
-        {LAYOUTS.map(({ mode, label, title }) => (
+      <div className="seg layout-switch" role="group" aria-label="화면 분할">
+        {LAYOUTS.map(({ mode, icon, title }) => (
           <button
             key={mode}
             type="button"
             title={title}
+            aria-label={title}
+            aria-pressed={mode === layout}
             className={mode === layout ? 'active' : undefined}
             onClick={() => onLayoutChange(mode)}
           >
-            {label}
+            <Icon name={icon} size={16} />
           </button>
         ))}
       </div>
 
-      <div className="toolbar-tabs" ref={tabsRef}>
-        {tab('watchlist', '☰ 종목')}
-        {tab('mtf', '⧉ 시간대')}
-        {tab('indicators', '〜 지표')}
-        {tab('drawings', '─ 선')}
-        {tab('pins', '📌 핀')}
-        {tab('discover', '🔍 탐색')}
-        {tab('alerts', '🔔 알림', alertCount)}
-        {tab('sync', '⇅ 동기화')}
-      </div>
-
-      <div className="toolbar-gap" />
+      <div className="topbar-gap" />
 
       <button
         type="button"
-        className={`pip-button${pipOpen ? ' active' : ''}`}
+        className={`chip pip-button${pipOpen ? ' active' : ''}`}
         disabled={!pipSupported}
         title={
           pipSupported
             ? '미니 시세창 (항상 위에 표시)'
-            : '이 브라우저는 Document Picture-in-Picture를 지원하지 않습니다'
+            : '이 브라우저는 미니창을 지원하지 않습니다'
         }
         onClick={onTogglePip}
       >
-        ⧉ 미니창
+        <Icon name="pip" size={16} />
+        <span>미니창</span>
       </button>
-
-      {open && (
-        <div className="popover" style={{ left }}>
-          {children}
-        </div>
-      )}
     </header>
   )
 }

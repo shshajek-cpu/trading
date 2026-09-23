@@ -1,21 +1,110 @@
-:root {
-  --bg: #0a0a0a;
-  --glass: rgb(255 255 255 / 4%);
-  --glass-strong: rgb(255 255 255 / 7%);
-  --text: #e8e8e8;
-  --text-dim: #8a8a8a;
-  --border: rgb(255 255 255 / 10%);
-  --border-strong: rgb(255 255 255 / 22%);
-  --accent: #fff;
-  --up: #f5f5f5;
-  --down: #5a5a5a;
-  --blur: blur(14px) saturate(1.1);
+/* ── SUIT — 본문 글꼴 ──
+   가변(Variable) 폰트라 파일 하나로 100~900 굵기를 모두 낸다.
+   굵기별 파일을 여러 개 받는 것보다 가볍고, 굵기를 중간값으로도 쓸 수 있다.
+   CDN 대신 앱에 함께 넣는다 — PWA 로 설치해 오프라인으로 열어도 글꼴이 깨지지 않아야 한다. */
+@font-face {
+  font-family: 'SUIT Variable';
+  src: url('/fonts/SUIT-Variable.woff2') format('woff2-variations');
+  font-weight: 100 900;
+  font-style: normal;
+  /* 폰트를 받는 동안 글자가 사라지지 않게 시스템 글꼴로 먼저 보여준다. */
+  font-display: swap;
+}
 
-  font: 14px/1.45 system-ui, 'Segoe UI', Roboto, sans-serif;
+:root {
+  /* 글꼴 — SUIT 를 먼저 쓰고, 못 받았을 때만 시스템 글꼴로 내려간다. */
+  --font-sans: 'SUIT Variable', -apple-system, BlinkMacSystemFont, 'Segoe UI Variable Text',
+    'Segoe UI', 'Apple SD Gothic Neo', 'Malgun Gothic', Roboto, sans-serif;
+  /* 숫자를 자리수 맞춰 보여줘야 하는 곳(코드·동기화 코드)용. */
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+
+  /* ── 바탕 ── */
+  --bg: #07070a;
+  --bg-deep: #040406;
+
+  /* ── 유리 층위 (숫자가 클수록 앞으로 떠 있다) ──
+     한 화면에 유리를 여러 겹 쌓을 때 밝기가 같으면 깊이가 사라진다. 단계로 나눈다. */
+  --glass-1: rgb(255 255 255 / 3.5%);
+  --glass-2: rgb(255 255 255 / 6%);
+  --glass-3: rgb(255 255 255 / 9%);
+  --glass-4: rgb(255 255 255 / 13%);
+
+  /* 뒤가 비쳐야 하지만 글자는 읽혀야 하는 판 — 어두운 바탕 + 흰 광택 */
+  --pane: rgb(16 17 22 / 72%);
+  --pane-solid: rgb(14 15 20 / 92%);
+
+  /* ── 글자 ── */
+  --text: #edeef2;
+  --text-dim: #9a9daa;
+  --text-faint: #6b6e7b;
+
+  /* ── 테두리 ── */
+  --border: rgb(255 255 255 / 9%);
+  --border-strong: rgb(255 255 255 / 20%);
+  --border-glow: rgb(255 255 255 / 34%);
+
+  /* ── 강조 ── */
+  --accent: #fff;
+  --up: #2ec7b0;
+  --down: #ff5c6c;
+  --warn: #e8b64c;
+
+  /* ── 유리 효과 ──
+     블러는 비싸다. 층위별로 세기를 다르게 두어 큰 판에만 강하게 건다. */
+  --blur-sm: blur(10px) saturate(140%);
+  --blur: blur(18px) saturate(150%);
+  --blur-lg: blur(28px) saturate(160%);
+
+  /* ── 그림자 ── 유리는 위쪽 하이라이트 + 아래쪽 드롭섀도로 두께를 만든다. */
+  --sheen: inset 0 1px 0 rgb(255 255 255 / 12%);
+  --sheen-soft: inset 0 1px 0 rgb(255 255 255 / 7%);
+  --shadow-sm: 0 2px 10px rgb(0 0 0 / 32%);
+  --shadow: 0 12px 32px rgb(0 0 0 / 46%);
+  --shadow-lg: 0 24px 64px rgb(0 0 0 / 58%);
+
+  /* ── 모서리 ── */
+  --r-xs: 8px;
+  --r-sm: 10px;
+  --r-md: 14px;
+  --r-lg: 18px;
+  --r-xl: 24px;
+
+  /* ── 움직임 ── */
+  --ease: cubic-bezier(0.32, 0.72, 0, 1);
+  --fast: 0.14s var(--ease);
+  --mid: 0.22s var(--ease);
+
+  /* ── 손가락 최소 표적 ── */
+  --tap: 44px;
+
+  /* ── 기기 안전 영역 ──
+     아이폰 노치·홈바처럼 화면이 가려지는 부분. 브라우저 탭 안에서는 0 이지만
+     홈 화면에 추가해 전체화면으로 열면 값이 생긴다. 한 곳에 모아두고 갖다 쓴다. */
+  --sat: env(safe-area-inset-top, 0px);
+  --sab: env(safe-area-inset-bottom, 0px);
+  --sal: env(safe-area-inset-left, 0px);
+  --sar: env(safe-area-inset-right, 0px);
+
+  font: 14px/1.5 var(--font-sans);
   color-scheme: dark;
   color: var(--text);
   background: var(--bg);
   -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizelegibility;
+
+  /* 눌렀을 때 파란 네모가 번쩍이면 웹페이지 티가 난다. 앱은 이런 게 없다. */
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* 저사양 기기나 '움직임 줄이기'를 켠 사용자에게는 전환을 없앤다. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
 }
 
 * {
@@ -31,14 +120,92 @@ body,
 body {
   margin: 0;
   color: var(--text);
+  overscroll-behavior: none;
 
-  /* 순흑 배경 위의 백색 광원 — 사이드바(오른쪽)에 걸치게 배치해 유리 질감을 살린다 */
+  /* ── 앱처럼 보이게 하는 잔손질 ──
+     웹페이지에서는 당연한 동작이 앱에서는 어색하다.
+     글자를 길게 눌러 선택되거나, 화면 끝에서 튕기거나, 두 번 눌러 확대되면
+     '앱'이 아니라 '브라우저에 띄운 사이트'로 느껴진다. */
+
+  /* 길게 눌러도 글자가 선택되지 않게. 값을 읽어야 하는 곳만 아래에서 되살린다. */
+  user-select: none;
+  -webkit-user-select: none;
+
+  /* iOS 에서 길게 누를 때 뜨는 '복사/공유' 말풍선을 막는다. */
+  -webkit-touch-callout: none;
+
+  /* 두 번 눌러 확대되는 것을 막는다 — 차트를 두 번 누를 일이 많다. */
+  touch-action: manipulation;
+
+  /* 유리는 뒤에 뭔가 비쳐야 유리로 보인다. 어두운 바탕 위 은은한 광원 몇 개를 깔아
+     블러가 물어갈 색을 만든다. 차가운 청록 ↔ 따뜻한 보라로 온도차를 준다. */
   background:
-    radial-gradient(1000px 700px at 100% 0%, rgb(255 255 255 / 14%), transparent 55%),
-    radial-gradient(700px 500px at 92% 100%, rgb(255 255 255 / 8%), transparent 50%),
-    radial-gradient(900px 600px at -10% 110%, rgb(255 255 255 / 6%), transparent 55%),
+    radial-gradient(900px 620px at 12% -6%, rgb(64 132 255 / 16%), transparent 62%),
+    radial-gradient(760px 560px at 92% 4%, rgb(46 199 176 / 12%), transparent 58%),
+    radial-gradient(880px 640px at 84% 104%, rgb(150 92 255 / 13%), transparent 60%),
+    radial-gradient(700px 520px at -8% 96%, rgb(255 92 108 / 8%), transparent 56%),
     var(--bg);
   background-attachment: fixed;
+}
+
+@media (width <= 900px) {
+  html,
+  body,
+  #root {
+    width: 100%;
+    max-width: 100%;
+    height: 100%;
+    overflow: hidden;
+    overscroll-behavior: none;
+  }
+
+  html {
+    position: fixed;
+    inset: 0;
+  }
+
+  body {
+    position: fixed;
+    inset: 0;
+    background: #11131d;
+    touch-action: none;
+  }
+
+  body::before {
+    display: none;
+  }
+}
+
+/* 광원 위에 미세한 결을 얹어 유리 뒤가 '평평한 그라데이션'으로 보이지 않게 한다. */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  opacity: 0.5;
+  background-image: radial-gradient(rgb(255 255 255 / 5%) 0.7px, transparent 0.7px);
+  background-size: 3px 3px;
+}
+
+#root {
+  position: relative;
+  z-index: 1;
+  /* 가로 방향 노치(가로 모드)까지 피한다. */
+  padding-left: var(--sal);
+  padding-right: var(--sar);
+}
+
+/* 값은 읽고 복사할 수 있어야 한다 — 가격·코드처럼 실제로 집어가는 것만 되살린다. */
+input,
+textarea,
+.sync-code,
+.ohlc-legend,
+.last-price,
+.row-value,
+.watch-price {
+  user-select: text;
+  -webkit-user-select: text;
 }
 
 button,
@@ -46,36 +213,96 @@ select,
 input {
   font: inherit;
   color: var(--text);
-  background: var(--glass);
+  background: var(--glass-2);
   border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 4px 10px;
-  backdrop-filter: var(--blur);
-  -webkit-backdrop-filter: var(--blur);
+  border-radius: var(--r-xs);
+  padding: 6px 11px;
+  box-shadow: var(--sheen-soft);
+  backdrop-filter: var(--blur-sm);
+  -webkit-backdrop-filter: var(--blur-sm);
 }
 
 button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
   cursor: pointer;
-  transition: border-color 0.15s, background 0.15s;
+  transition: border-color var(--fast), background var(--fast), color var(--fast),
+    transform var(--fast), box-shadow var(--fast);
 }
 
-button:hover {
+/* 마우스가 있는 기기에서만 hover 를 준다 — 폰에서는 눌린 상태가 눌어붙는다. */
+@media (hover: hover) {
+  button:hover:not(:disabled) {
+    border-color: var(--border-strong);
+    background: var(--glass-3);
+    box-shadow: var(--sheen), var(--shadow-sm);
+  }
+}
+
+button:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+button:disabled {
+  opacity: 0.36;
+  cursor: not-allowed;
+}
+
+/* 키보드로 옮겨 다닐 때만 초점 테두리를 보여준다. */
+:focus-visible {
+  outline: 2px solid rgb(255 255 255 / 62%);
+  outline-offset: 2px;
+}
+
+input:focus-visible,
+select:focus-visible {
+  outline-offset: 0;
   border-color: var(--border-strong);
-  background: var(--glass-strong);
+}
+
+input::placeholder {
+  color: var(--text-faint);
+}
+
+/* 아이콘은 획 굵기를 글자와 맞춰 같은 무게로 읽히게 한다. */
+.icon {
+  flex: 0 0 auto;
+  display: block;
+}
+
+/* 화면에는 안 보이지만 화면 낭독기에는 읽히는 글. */
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
 }
 
 ::selection {
-  background: rgb(255 255 255 / 25%);
+  background: rgb(255 255 255 / 24%);
 }
 
 ::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: 9px;
+  height: 9px;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: rgb(255 255 255 / 15%);
-  border-radius: 4px;
+  background: rgb(255 255 255 / 14%);
+  border: 2px solid transparent;
+  background-clip: padding-box;
+  border-radius: 6px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgb(255 255 255 / 26%);
+  background-clip: padding-box;
 }
 
 ::-webkit-scrollbar-track {

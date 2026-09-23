@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { DRAW_COLORS, type Drawing } from '../lib/drawings'
+import { Icon } from './Icon'
 
 interface DrawingPanelProps {
   symbol: string
@@ -44,41 +45,43 @@ export function DrawingPanel({
 
   return (
     <section className="panel">
-      <h2>그리기</h2>
-
       <div className="panel-group">
         <button
           type="button"
-          className={`draw-toggle${drawMode ? ' active' : ''}`}
+          className={`cta draw-toggle${drawMode ? ' active' : ''}`}
           onClick={onToggleMode}
         >
-          {drawMode ? '✓ 수평선 그리는 중 — 차트 클릭' : '＋ 수평선 그리기'}
+          <Icon name={drawMode ? 'check' : 'plus'} size={16} />
+          {drawMode ? '차트를 눌러 선을 놓으세요' : '수평선 그리기'}
         </button>
 
         <div className="draw-opts">
-          <div className="swatches">
+          <div className="swatches" role="group" aria-label="선 색상">
             {DRAW_COLORS.map((c) => (
               <button
                 key={c}
                 type="button"
                 className={`swatch${c === drawColor ? ' active' : ''}`}
-                style={{ background: c }}
+                style={{ '--swatch': c } as React.CSSProperties}
                 title={c}
+                aria-label={`선 색상 ${c}`}
+                aria-pressed={c === drawColor}
                 onClick={() => onColorChange(c)}
               />
             ))}
           </div>
-          <label className="field draw-alert-opt">
+          <label className="switch-row">
+            <span>선을 지날 때 알림</span>
             <input
               type="checkbox"
+              className="switch"
               checked={drawAlert}
               onChange={(e) => onAlertChange(e.target.checked)}
             />
-            선 통과 시 알림
           </label>
         </div>
 
-        <form className="alert-form" onSubmit={submit}>
+        <form className="inline-form" onSubmit={submit}>
           <input
             type="number"
             step="any"
@@ -91,22 +94,28 @@ export function DrawingPanel({
         </form>
       </div>
 
-      <ul className="alert-list">
+      <ul className="row-list">
         {mine.map((d) => (
           <li key={d.id} className={d.fired ? 'fired' : undefined}>
             <span className="draw-dot" style={{ background: d.color }} />
-            <span className="alert-price">{d.price}</span>
+            <span className="row-value">{d.price}</span>
             <button
               type="button"
-              className={`bell${d.alert ? ' on' : ''}`}
+              className={`icon-btn bell${d.alert ? ' on' : ''}`}
               title={d.alert ? '알림 켜짐 (눌러서 끄기)' : '알림 꺼짐 (눌러서 켜기)'}
+              aria-label={d.alert ? '알림 끄기' : '알림 켜기'}
               onClick={() => onUpdate(d.id, { alert: !d.alert, fired: false })}
             >
-              {d.alert ? '🔔' : '🔕'}
+              <Icon name={d.alert ? 'bell' : 'bellOff'} size={15} />
             </button>
-            {d.fired && <span className="alert-badge">발동됨</span>}
-            <button type="button" className="remove" onClick={() => onRemove(d.id)}>
-              ✕
+            {d.fired && <span className="tag">발동됨</span>}
+            <button
+              type="button"
+              className="icon-btn remove"
+              aria-label="선 지우기"
+              onClick={() => onRemove(d.id)}
+            >
+              <Icon name="close" size={15} />
             </button>
           </li>
         ))}
@@ -114,8 +123,9 @@ export function DrawingPanel({
       </ul>
 
       {mine.length > 0 && (
-        <button type="button" className="clear-all" onClick={onClear}>
-          {symbol} 선 모두 지우기
+        <button type="button" className="ghost-btn" onClick={onClear}>
+          <Icon name="trash" size={15} />
+          {symbol.replace('USDT', '')} 선 모두 지우기
         </button>
       )}
     </section>

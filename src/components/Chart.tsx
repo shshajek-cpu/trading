@@ -30,7 +30,7 @@ import type { IndicatorSettings } from '../lib/indicatorConfig'
 import type { PriceAlert } from '../hooks/usePriceAlerts'
 import { loadPaneSizes, savePaneSizes } from '../lib/layoutConfig'
 import type { Drawing } from '../lib/drawings'
-import { COLORS } from '../lib/theme'
+import { CHART_FONT, COLORS } from '../lib/theme'
 import { SIDE_COLORS, type Pin } from '../lib/pins'
 
 interface ChartProps {
@@ -53,6 +53,11 @@ interface ChartProps {
   pins: Pin[]
   /** 크로스헤어가 올라간 봉. 안 올렸으면 null — 부모가 마지막 봉을 보여준다. */
   onHoverCandle?: (candle: Candle | null) => void
+  /**
+   * 지표 패널(RSI·MACD)이 실제로 차지한 세로 구간.
+   * 조작 버튼을 고정 비율로 얹으면 패널 높이를 바꿀 때마다 어긋난다 — 잰 값을 그대로 쓴다.
+   */
+  onPaneLayout?: (layout: { rsi: number | null; macd: number | null; axisWidth: number }) => void
 }
 
 const INTERVAL_SECONDS: Record<Interval, number> = {
@@ -98,6 +103,7 @@ export function Chart({
   onMoveDrawing,
   onReachStart,
   onHoverCandle,
+  onPaneLayout,
 }: ChartProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<IChartApi | null>(null)
@@ -130,6 +136,8 @@ export function Chart({
   const lastCandleRef = useRef<Candle | null>(null)
   // 크로스헤어가 가리키는 봉의 거래량을 찾으려면 원본이 필요하다.
   const candlesRef = useRef<Candle[]>([])
+  const onPaneLayoutRef = useRef(onPaneLayout)
+  onPaneLayoutRef.current = onPaneLayout
 
   // 패널 높이 비율을 구성별로 저장한다(예: "rsi+macd").
   const paneConfig = `${indicators.rsi.enabled ? 'rsi' : ''}${indicators.macd.enabled ? '+macd' : ''}` || 'main'
@@ -144,6 +152,9 @@ export function Chart({
         // 바탕의 광원 그라데이션이 비치도록 투명 배경을 쓴다.
         background: { color: 'transparent' },
         textColor: COLORS.text,
+        // 차트 눈금은 캔버스에 직접 그려서 CSS 가 닿지 않는다 — 여기서 따로 지정해야
+        // 축 숫자와 화면의 나머지 글자가 같은 글꼴로 보인다.
+        fontFamily: CHART_FONT,
         panes: { separatorColor: COLORS.border, separatorHoverColor: COLORS.accent },
         // 저작자 표시는 로고 대신 README 의 출처 표기 + 링크로 갈음(라이선스 허용 방식).
         attributionLogo: false,
@@ -155,6 +166,13 @@ export function Chart({
       rightPriceScale: { borderColor: COLORS.border },
       timeScale: { borderColor: COLORS.border, timeVisible: true, secondsVisible: false },
       crosshair: { mode: CrosshairMode.Normal },
+      handleScroll: {
+        mouseWheel: true,
+        pressedMouseMove: true,
+        horzTouchDrag: true,
+        vertTouchDrag: true,
+      },
+      kineticScroll: { mouse: false, touch: true },
       autoSize: true,
     })
     chartRef.current = chart
@@ -321,6 +339,10 @@ export function Chart({
       const saved = loadPaneSizes(paneConfig)
       if (saved && saved.length === panes.length) {
         panes.forEach((pane, i) => pane.setStretchFactor(saved[i]))
+      } else if (panes.length > 1 && window.matchMedia('(width <= 900px)').matches) {
+        const mobileFactors =
+          panes.length === 3 ? [5.8, 1.45, 1.35] : panes.length === 2 ? [6.2, 1.8] : []
+        panes.forEach((pane, i) => pane.setStretchFactor(mobileFactors[i] ?? 1))
       }
     }, 0)
 
@@ -337,6 +359,47 @@ export function Chart({
       container?.removeEventListener('pointerup', onPointerUp)
     }
   }, [paneConfig])
+
+  /**
+   * 지표 패널이 실제로 어디서 시작하는지 재서 부모에게 알린다.
+   * 패널은 위에서부터 [메인] → [RSI] → [MACD] 순으로 쌓이므로 높이를 누적하면 각 패널의 윗변이 나온다.
+   */
+  useEffect(() => {
+    const report = () => {
+      const chart = chartRef.current
+      const cb = onPaneLayoutRef.current
+      if (!chart || !cb) return
+
+      const panes = chart.panes()
+      const axisWidth = chart.priceScale('right').width()
+      // 패널 사이 구분선(1px)까지 더해야 실제 화면 위치와 맞는다.
+      const SEPARATOR = 1
+      let top = 0
+      let rsiTop: number | null = null
+      let macdTop: number | null = null
+
+      panes.forEach((pane, i) => {
+        if (i > 0) {
+          const isRsi = indicators.rsi.enabled && i === RSI_PANE
+          const isMacd = i === macdPane(indicators.rsi.enabled)
+          if (isRsi) rsiTop = top
+          else if (indicators.macd.enabled && isMacd) macdTop = top
+        }
+        top += pane.getHeight() + SEPARATOR
+      })
+
+      cb({ rsi: rsiTop, macd: macdTop, axisWidth })
+    }
+
+    // 패널이 만들어지고 크기가 잡힌 뒤에 재야 한다.
+    const first = window.setTimeout(report, 60)
+    // 창 크기·패널 경계 변화도 따라가야 하므로 주기적으로 다시 잰다(값이 같으면 부모가 무시한다).
+    const timer = window.setInterval(report, 500)
+    return () => {
+      window.clearTimeout(first)
+      window.clearInterval(timer)
+    }
+  }, [indicators.rsi.enabled, indicators.macd.enabled, paneConfig])
 
   // 현재가 배지(가격 + 봉 마감 카운트다운) — 한 덩어리로 매 초 갱신.
   useEffect(() => {

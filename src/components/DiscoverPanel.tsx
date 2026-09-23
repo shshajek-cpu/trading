@@ -69,7 +69,6 @@ export function DiscoverPanel({ symbol, interval, liveFeatures }: DiscoverPanelP
 
   return (
     <section className="panel discover-panel">
-      <h2>자동 탐색</h2>
       <p className="hint">
         과거를 훑어 <b>실제로 통했던 자리</b>의 공통점을 찾습니다. 사람이 고르지 않으므로 결과를
         알고 찍는 편향이 없습니다.
@@ -125,7 +124,7 @@ export function DiscoverPanel({ symbol, interval, liveFeatures }: DiscoverPanelP
         </label>
       </div>
 
-      <button type="button" className="disc-run" disabled={busy} onClick={() => void run()}>
+      <button type="button" className="cta disc-run" disabled={busy} onClick={() => void run()}>
         {busy ? '훑는 중…' : `${symbol.replace('USDT', '')} ${interval} 훑어보기`}
       </button>
 

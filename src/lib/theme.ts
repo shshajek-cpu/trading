@@ -22,3 +22,11 @@ export const MA_PALETTE = [
   '#969696',
   '#5a5a5a',
 ] as const
+
+/**
+ * 차트 캔버스에 쓸 글꼴.
+ * 차트는 CSS 로 글꼴을 못 바꾸므로(캔버스에 직접 그린다) 값을 문자열로 넘겨야 한다.
+ * index.css 의 --font-sans 와 같은 순서를 유지한다.
+ */
+export const CHART_FONT =
+  "'SUIT Variable', -apple-system, BlinkMacSystemFont, 'Segoe UI Variable Text', 'Segoe UI', 'Apple SD Gothic Neo', 'Malgun Gothic', Roboto, sans-serif"
