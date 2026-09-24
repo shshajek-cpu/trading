@@ -84,6 +84,17 @@ export interface PaperPosition {
   realized: number
   /** 마지막으로 알던 마크가 — 체결·되짚기 때 적어 둔다. 시세가 아직 없을 때(재시작·다른 종목 교차 계산) 평가에 쓴다. */
   lastMark?: number
+  /**
+   * 포지션 기록용 누계(연 뒤 전체): 진입 수량·금액, 종료 수량·금액, 가장 컸던 수량, 수수료·펀딩 합.
+   * 이 필드가 생기기 전에 연 포지션에는 없을 수 있다 — 기록을 만들 때 지금 값으로 메운다.
+   */
+  openQty?: number
+  openValue?: number
+  closedQty?: number
+  closedValue?: number
+  maxQty?: number
+  feeSum?: number
+  fundingSum?: number
 }
 
 export type FillReason = 'order' | 'market' | 'tp' | 'sl' | 'liquidation'
@@ -129,6 +140,33 @@ export interface PaperOrderRecord extends Omit<PaperOrder, 'type'> {
   avgPrice?: number
 }
 
+/** 끝난 포지션 한 건(거래소의 "포지션 기록"). */
+export interface PaperPositionRecord {
+  id: string
+  symbol: string
+  side: PosSide
+  marginMode: MarginMode
+  leverage: number
+  /** 진입 평균가(이 포지션에 들어간 모든 진입의 평균). */
+  entry: number
+  /** 종료 평균가(부분 종료 포함 모든 종료의 평균). 강제 청산이면 청산가. */
+  exit: number
+  /** 가장 컸을 때의 수량. */
+  maxQty: number
+  /** 닫은 수량 합. */
+  closedQty: number
+  /** 가격 손익 합(수수료·펀딩 제외). */
+  pnl: number
+  fees: number
+  /** 받으면 +, 내면 −. */
+  funding: number
+  /** 순손익 = 가격 손익 − 수수료 + 펀딩. */
+  realized: number
+  status: 'closed' | 'liquidated'
+  openedAt: number
+  closedAt: number
+}
+
 export interface SymbolSettings {
   leverage: number
   marginMode: MarginMode
@@ -145,6 +183,8 @@ export interface PaperAccount {
   fills: PaperFill[]
   orderHistory: PaperOrderRecord[]
   funding: PaperFunding[]
+  /** 끝난 포지션 기록. 이 필드가 생기기 전 계좌에는 없을 수 있다(normalizeAccount 가 채운다). */
+  positionHistory: PaperPositionRecord[]
   /** 종목별 레버리지·마진 모드. 없으면 DEFAULT_SETTINGS. */
   settings: Record<string, SymbolSettings>
   /** 수수료율(0.0002 = 0.02%). */

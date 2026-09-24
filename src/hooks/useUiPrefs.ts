@@ -13,8 +13,9 @@ export interface UiPrefs {
   drawingsLocked: boolean
   drawingsHidden: boolean
   favoriteIntervals: Interval[]
-  /** 차트 아래 모의거래 패널을 접어 두었는가(기기마다). */
-  tradePanelCollapsed: boolean
+  /** 차트 아래 모의거래 패널을 펼쳐 두었는가, 펼친 높이(px) — 기기마다. 거래소처럼 펼친 채 시작한다. */
+  tradePanelOpen: boolean
+  tradePanelHeight: number
 }
 
 const STORAGE_KEY = 'trading.uiPrefs.v1'
@@ -25,7 +26,8 @@ const DEFAULTS: UiPrefs = {
   drawingsLocked: false,
   drawingsHidden: false,
   favoriteIntervals: DEFAULT_FAVORITE_INTERVALS,
-  tradePanelCollapsed: true,
+  tradePanelOpen: true,
+  tradePanelHeight: 260,
 }
 
 function load(): UiPrefs {
@@ -42,7 +44,9 @@ function load(): UiPrefs {
       drawingsLocked: typeof parsed.drawingsLocked === 'boolean' ? parsed.drawingsLocked : false,
       drawingsHidden: typeof parsed.drawingsHidden === 'boolean' ? parsed.drawingsHidden : false,
       favoriteIntervals: favs.length > 0 ? favs : DEFAULTS.favoriteIntervals,
-      tradePanelCollapsed: typeof parsed.tradePanelCollapsed === 'boolean' ? parsed.tradePanelCollapsed : true,
+      tradePanelOpen: typeof parsed.tradePanelOpen === 'boolean' ? parsed.tradePanelOpen : true,
+      tradePanelHeight:
+        typeof parsed.tradePanelHeight === 'number' && parsed.tradePanelHeight >= 120 ? parsed.tradePanelHeight : 260,
     }
   } catch {
     return DEFAULTS

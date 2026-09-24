@@ -10,6 +10,7 @@
 import { useEffect, useRef, useState } from 'react'
 import {
   createAccount,
+  normalizeAccount,
   symbolsInUse,
   onTrade,
   onMark,
@@ -159,7 +160,7 @@ export function usePaperTrading(opts: UsePaperTradingOptions): PaperApi {
   const initial = initialRef.current
 
   const [account, setAccount] = useState<PaperAccount>(
-    () => initial?.account ?? createAccount(DEFAULT_START_BALANCE, Date.now()),
+    () => (initial?.account ? normalizeAccount(initial.account) : createAccount(DEFAULT_START_BALANCE, Date.now())),
   )
   const accountRef = useRef(account)
 
@@ -365,7 +366,8 @@ export function usePaperTrading(opts: UsePaperTradingOptions): PaperApi {
   }
 
   /** 서버 상태를 그대로 받아들이고 그 시점부터 되짚는다(대기 명령 없음). */
-  async function adopt(state: PaperAccount, version: number): Promise<void> {
+  async function adopt(serverState: PaperAccount, version: number): Promise<void> {
+    const state = normalizeAccount(serverState)
     accountRef.current = state
     versionRef.current = version
     savedCheckedAtRef.current = state.checkedAt
@@ -376,7 +378,8 @@ export function usePaperTrading(opts: UsePaperTradingOptions): PaperApi {
   }
 
   /** 충돌: 서버 상태를 받아 되짚은 뒤 대기 명령을 순서대로 다시 적용하고 저장한다. */
-  async function handleConflict(state: PaperAccount, version: number): Promise<void> {
+  async function handleConflict(serverState: PaperAccount, version: number): Promise<void> {
+    const state = normalizeAccount(serverState)
     accountRef.current = state
     versionRef.current = version
     setAccount(state)

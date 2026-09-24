@@ -1351,8 +1351,10 @@ function App() {
           activeSymbol={activeSymbol}
           onSelectSymbol={(s) => setCellField(active, { symbol: s })}
           variant="desktop"
-          collapsed={prefs.tradePanelCollapsed}
-          onCollapsedChange={(v) => patchPrefs({ tradePanelCollapsed: v })}
+          collapsed={!prefs.tradePanelOpen}
+          onCollapsedChange={(v) => patchPrefs({ tradePanelOpen: !v })}
+          height={prefs.tradePanelHeight}
+          onHeightChange={(h) => patchPrefs({ tradePanelHeight: h })}
         />
       </div>
 

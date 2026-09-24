@@ -588,6 +588,7 @@
 
 /* ══ 거래 패널(TradingPanel) ══════════════════════════════════════ */
 .tp {
+  position: relative;
   display: flex;
   flex-direction: column;
   min-height: 0;
@@ -596,8 +597,22 @@
   font-size: var(--tv-fs-sm);
 }
 
-.tp-desktop {
-  height: 100%;
+/* 위쪽 경계(차트와의 거터)를 끌어 높이를 바꾼다. */
+.tp-resize {
+  position: absolute;
+  top: calc(-1 * var(--tv-gap) - 2px);
+  left: 0;
+  right: 0;
+  height: calc(var(--tv-gap) + 6px);
+  z-index: 3;
+  cursor: ns-resize;
+  touch-action: none;
+}
+
+.tp-resize:hover,
+.tp-resize:active {
+  background: var(--tv-accent);
+  opacity: 0.5;
 }
 
 /* 헤더는 항상 32px 로 보인다. */
@@ -668,8 +683,66 @@
   overflow: auto;
 }
 
-.tp-desktop .tp-body {
-  max-height: 188px;
+/* 데스크톱: 왼쪽 표 + 오른쪽 자산 칸(거래소 아래 창 배치). */
+.tp-main {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+.tp-main .tp-body {
+  min-width: 0;
+}
+
+.tp-assets {
+  flex: none;
+  width: 260px;
+  overflow: auto;
+  border-left: 1px solid var(--tv-border);
+}
+
+.tp-assets-title {
+  margin: 0;
+  padding: 8px 12px 0;
+  font-size: var(--tv-fs-sm);
+  font-weight: 600;
+  color: var(--tv-text-strong);
+}
+
+.tp-assets .tp-account {
+  padding: 8px 12px 12px;
+}
+
+.tp-assets .tp-acc-grid {
+  grid-template-columns: 1fr;
+  gap: 5px;
+}
+
+.tp-assets .tp-acc-actions {
+  margin-top: 12px;
+}
+
+.tp-assets .tp-acc-actions .tv-btn {
+  flex: 1;
+}
+
+.tp-assets-equity {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: 10px;
+  color: var(--tv-text-dim);
+}
+
+.tp-assets-equity b {
+  font-size: 18px;
+  color: var(--tv-text-strong);
+  font-variant-numeric: tabular-nums;
+}
+
+.tp-assets-equity em {
+  font-style: normal;
+  font-size: var(--tv-fs-xs);
 }
 
 .tp-empty {

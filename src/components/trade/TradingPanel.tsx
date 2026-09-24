@@ -1,10 +1,13 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useRef, useState } from 'react'
+import type { PointerEvent as ReactPointerEvent } from 'react'
 import { usePaper, usePaperLive } from '../../lib/paper/context'
 import type {
   FillReason,
   OrderEnd,
   PaperOrder,
   PaperPosition,
+  PosSide,
+  PaperPositionRecord,
   TriggerBy,
 } from '../../lib/paper/types'
 import { displaySymbol, type SymbolInfo } from '../../lib/symbols'
@@ -27,7 +30,22 @@ import { ResetDialog, FeesDialog } from './AccountDialog'
 import { tip } from '../../lib/tooltip'
 import './trade.css'
 
-type PanelTab = 'positions' | 'orders' | 'orderHistory' | 'fills' | 'funding' | 'account'
+/** 거래소 아래 창과 같은 순서. 자산은 데스크톱에선 오른쪽 칸, 폰에선 탭이다. */
+type PanelTab = 'positions' | 'positionHistory' | 'orders' | 'orderHistory' | 'fills' | 'ledger' | 'assets'
+
+/** 자금 내역 한 줄 — 체결·펀딩에서 뽑는다(따로 저장하지 않는다). */
+interface LedgerRow {
+  key: string
+  at: number
+  symbol: string
+  kind: '실현 손익' | '수수료' | '펀딩' | '강제 청산'
+  amount: number
+  detail: string
+}
+
+const MIN_HEIGHT = 120
+/** 기록이 없을 때 쓰는 같은 빈 배열(렌더마다 새 배열이면 메모가 매번 다시 돈다). */
+const NO_HISTORY: PaperPositionRecord[] = []
 
 const REASON_LABEL: Record<FillReason, string> = {
   order: '지정가',
@@ -62,6 +80,9 @@ interface TradingPanelProps {
   variant: 'desktop' | 'mobile'
   collapsed?: boolean
   onCollapsedChange?: (v: boolean) => void
+  /** 데스크톱: 펼쳤을 때 높이(px). 위쪽 경계를 끌어 바꾼다. */
+  height?: number
+  onHeightChange?: (h: number) => void
 }
 
 export function TradingPanel({
@@ -71,6 +92,8 @@ export function TradingPanel({
   variant,
   collapsed,
   onCollapsedChange,
+  height = 260,
+  onHeightChange,
 }: TradingPanelProps) {
   const paper = usePaper()
   const account = paper.account
@@ -94,17 +117,60 @@ export function TradingPanel({
   const tickOf = (sym: string) => paper.rules(sym)?.tickSize || symbols.find((s) => s.symbol === sym)?.tickSize || 0.01
   const stepOf = (sym: string) => paper.rules(sym)?.stepSize || symbols.find((s) => s.symbol === sym)?.stepSize || 0.001
 
-  // 계좌 파생 값.
+  const history = account.positionHistory ?? NO_HISTORY
+
+  // 계좌 파생 값. 승률은 끝난 포지션 기준(순손익 > 0).
   const acct = useMemo(() => {
     const feeSum = account.fills.reduce((a, f) => a + f.fee, 0)
     const fundSum = account.funding.reduce((a, f) => a + f.amount, 0)
-    const closed = account.fills.filter((f) => f.action === 'close')
-    const wins = closed.filter((f) => f.pnl > 0).length
-    const winRate = closed.length > 0 ? (wins / closed.length) * 100 : null
+    const wins = history.filter((r) => r.realized > 0).length
+    const winRate = history.length > 0 ? (wins / history.length) * 100 : null
     const pnl = summary.equity - account.startBalance
     const pnlPct = account.startBalance > 0 ? (pnl / account.startBalance) * 100 : 0
-    return { feeSum, fundSum, winRate, closedCount: closed.length, pnl, pnlPct }
-  }, [account.fills, account.funding, account.startBalance, summary.equity])
+    return { feeSum, fundSum, winRate, closedCount: history.length, pnl, pnlPct }
+  }, [account.fills, account.funding, account.startBalance, summary.equity, history])
+
+  // 자금 내역 — 잔고를 바꾼 것(실현 손익·수수료·펀딩·강제 청산)을 최신순으로.
+  const ledger = useMemo(() => {
+    const rows: LedgerRow[] = []
+    for (const f of account.fills) {
+      const what = `${SIDE_LABEL[f.side]} ${ACTION_LABEL[f.action]} ${fmtQty(f.qty, stepOf(f.symbol))} @ ${fmtPrice(f.price, tickOf(f.symbol))}`
+      if (f.action === 'close' && f.pnl !== 0) {
+        rows.push({ key: `${f.id}:pnl`, at: f.at, symbol: f.symbol, kind: f.reason === 'liquidation' ? '강제 청산' : '실현 손익', amount: f.pnl, detail: what })
+      }
+      if (f.fee !== 0) rows.push({ key: `${f.id}:fee`, at: f.at, symbol: f.symbol, kind: '수수료', amount: -f.fee, detail: what })
+    }
+    for (const f of account.funding) {
+      rows.push({ key: f.id, at: f.at, symbol: f.symbol, kind: '펀딩', amount: f.amount, detail: `${SIDE_LABEL[f.side]} ${fmtQty(f.qty, stepOf(f.symbol))} · 비율 ${(f.rate * 100).toFixed(4)}%` })
+    }
+    return rows.sort((a, b) => b.at - a.at)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [account.fills, account.funding])
+
+  // 높이 조절(위쪽 경계 끌기). 끄는 동안은 여기서만 바꾸고, 놓을 때 한 번 저장한다.
+  const [dragHeight, setDragHeight] = useState<number | null>(null)
+  const resizeRef = useRef<{ startY: number; startH: number; pointerId: number } | null>(null)
+  const shownHeight = dragHeight ?? height
+  const clampHeight = (h: number) => Math.round(Math.min(window.innerHeight * 0.7, Math.max(MIN_HEIGHT, h)))
+  const onResizeDown = (e: ReactPointerEvent<HTMLDivElement>) => {
+    if (e.button !== 0) return
+    e.preventDefault()
+    e.currentTarget.setPointerCapture(e.pointerId)
+    resizeRef.current = { startY: e.clientY, startH: shownHeight, pointerId: e.pointerId }
+  }
+  const onResizeMove = (e: ReactPointerEvent<HTMLDivElement>) => {
+    const r = resizeRef.current
+    if (!r || r.pointerId !== e.pointerId) return
+    setDragHeight(clampHeight(r.startH + (r.startY - e.clientY)))
+  }
+  const onResizeUp = (e: ReactPointerEvent<HTMLDivElement>) => {
+    const r = resizeRef.current
+    if (!r || r.pointerId !== e.pointerId) return
+    resizeRef.current = null
+    const next = clampHeight(r.startH + (r.startY - e.clientY))
+    setDragHeight(null)
+    onHeightChange?.(next)
+  }
 
   async function report(action: () => Promise<string | null>) {
     const err = await action()
@@ -131,11 +197,12 @@ export function TradingPanel({
 
   const TABS: { id: PanelTab; label: string; count?: number }[] = [
     { id: 'positions', label: '포지션', count: account.positions.length },
+    { id: 'positionHistory', label: '포지션 기록' },
     { id: 'orders', label: '미체결', count: account.orders.length },
     { id: 'orderHistory', label: '주문 내역' },
     { id: 'fills', label: '체결 내역' },
-    { id: 'funding', label: '펀딩' },
-    { id: 'account', label: '계좌' },
+    { id: 'ledger', label: '자금 내역' },
+    ...(isMobile ? [{ id: 'assets' as const, label: '자산' }] : []),
   ]
 
   // ── 포지션 ────────────────────────────────────────────────
@@ -551,24 +618,139 @@ export function TradingPanel({
     )
   }
 
-  // ── 펀딩 ──────────────────────────────────────────────────
-  const renderFunding = () => {
-    const rows = [...account.funding].reverse()
-    if (rows.length === 0) return <p className="tp-empty">펀딩 기록이 없습니다.</p>
+  // ── 포지션 기록(끝난 포지션) ──────────────────────────────
+  const renderPositionHistory = () => {
+    const rows = [...history].reverse()
+    if (rows.length === 0) return <p className="tp-empty">끝난 포지션이 없습니다.</p>
+    const roeOf = (entry: number, qty: number, lev: number, realized: number) => {
+      const initial = (entry * qty) / lev
+      return initial > 0 ? (realized / initial) * 100 : 0
+    }
+    const sideBadge = (side: PosSide) => <span className={`op-badge ${side === 'long' ? 'up' : 'down'}`}>{SIDE_LABEL[side]}</span>
     if (isMobile) {
       return (
         <div className="tp-cards">
-          {rows.map((f) => (
-            <div key={f.id} className="tp-card tp-card-line">
+          {rows.map((r) => {
+            const tick = tickOf(r.symbol)
+            return (
+              <div key={r.id} className="tp-card">
+                <div className="tp-card-head">
+                  <span className="tp-card-sym">{displaySymbol(r.symbol, symbols)}</span>
+                  {sideBadge(r.side)}
+                  <span className="tp-lev">
+                    {r.leverage}x {r.marginMode === 'isolated' ? '격리' : '교차'}
+                  </span>
+                  {r.status === 'liquidated' && <span className="tp-status tp-status-rejected">강제 청산</span>}
+                </div>
+                <div className="tp-card-grid">
+                  <div>
+                    <span>진입 평균</span>
+                    <b>{fmtPrice(r.entry, tick)}</b>
+                  </div>
+                  <div>
+                    <span>종료 평균</span>
+                    <b>{fmtPrice(r.exit, tick)}</b>
+                  </div>
+                  <div>
+                    <span>최대 수량</span>
+                    <b>{fmtQty(r.maxQty, stepOf(r.symbol))}</b>
+                  </div>
+                  <div>
+                    <span>순손익</span>
+                    <b className={pnlClass(r.realized)}>
+                      {fmtSigned(r.realized)} ({fmtPct(roeOf(r.entry, r.maxQty, r.leverage, r.realized))})
+                    </b>
+                  </div>
+                  <div>
+                    <span>수수료</span>
+                    <b>{fmtUsdt(r.fees)}</b>
+                  </div>
+                  <div>
+                    <span>펀딩</span>
+                    <b className={pnlClass(r.funding)}>{fmtSigned(r.funding)}</b>
+                  </div>
+                </div>
+                <div className="tp-card-line-sub">
+                  <span>{fmtTime(r.openedAt)} → {fmtTime(r.closedAt)}</span>
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      )
+    }
+    return (
+      <table className="tp-table">
+        <thead>
+          <tr>
+            <th className="tp-l">종목</th>
+            <th>진입 평균가</th>
+            <th>종료 평균가</th>
+            <th>최대 수량</th>
+            <th>가격 손익</th>
+            <th>수수료</th>
+            <th>펀딩</th>
+            <th>순손익</th>
+            <th>연 시각</th>
+            <th>닫은 시각</th>
+            <th>상태</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r) => {
+            const tick = tickOf(r.symbol)
+            return (
+              <tr key={r.id}>
+                <td className="tp-l">
+                  <button type="button" className="tp-sym-link" onClick={() => onSelectSymbol(r.symbol)}>
+                    {displaySymbol(r.symbol, symbols)}
+                  </button>
+                  {sideBadge(r.side)}
+                  <span className="tp-lev">
+                    {r.leverage}x {r.marginMode === 'isolated' ? '격리' : '교차'}
+                  </span>
+                </td>
+                <td>{fmtPrice(r.entry, tick)}</td>
+                <td>{fmtPrice(r.exit, tick)}</td>
+                <td>{fmtQty(r.maxQty, stepOf(r.symbol))}</td>
+                <td className={pnlClass(r.pnl)}>{fmtSigned(r.pnl)}</td>
+                <td>{fmtUsdt(r.fees)}</td>
+                <td className={pnlClass(r.funding)}>{fmtSigned(r.funding)}</td>
+                <td className={pnlClass(r.realized)}>
+                  {fmtSigned(r.realized)}
+                  <em className="tp-roe">{fmtPct(roeOf(r.entry, r.maxQty, r.leverage, r.realized))}</em>
+                </td>
+                <td className="tp-time">{fmtTime(r.openedAt)}</td>
+                <td className="tp-time">{fmtTime(r.closedAt)}</td>
+                <td>
+                  <span className={`tp-status ${r.status === 'liquidated' ? 'tp-status-rejected' : 'tp-status-filled'}`}>
+                    {r.status === 'liquidated' ? '강제 청산' : '종료'}
+                  </span>
+                </td>
+              </tr>
+            )
+          })}
+        </tbody>
+      </table>
+    )
+  }
+
+  // ── 자금 내역(실현 손익·수수료·펀딩·강제 청산) ────────────
+  const renderLedger = () => {
+    if (ledger.length === 0) return <p className="tp-empty">자금 내역이 없습니다.</p>
+    if (isMobile) {
+      return (
+        <div className="tp-cards">
+          {ledger.map((r) => (
+            <div key={r.key} className="tp-card tp-card-line">
               <div className="tp-card-head">
-                <span className="tp-card-sym">{displaySymbol(f.symbol, symbols)}</span>
-                <span className={f.side === 'long' ? 'up' : 'down'}>{SIDE_LABEL[f.side]}</span>
-                <span className={pnlClass(f.amount)}>{fmtSigned(f.amount)}</span>
+                <span className="tp-card-sym">{displaySymbol(r.symbol, symbols)}</span>
+                <span className="tp-status">{r.kind}</span>
+                <span className={pnlClass(r.amount)}>{fmtSigned(r.amount)}</span>
               </div>
               <div className="tp-card-line-sub">
-                <span>{fmtTime(f.at)}</span>
-                <span>{fmtQty(f.qty, stepOf(f.symbol))}</span>
-                <span>{(f.rate * 100).toFixed(4)}%</span>
+                <span>{fmtTime(r.at)}</span>
+                <span>{r.detail}</span>
               </div>
             </div>
           ))}
@@ -581,23 +763,19 @@ export function TradingPanel({
           <tr>
             <th className="tp-l">시간</th>
             <th>종목</th>
-            <th>방향</th>
-            <th>수량</th>
-            <th>비율</th>
-            <th>금액</th>
+            <th>구분</th>
+            <th>금액 (USDT)</th>
+            <th className="tp-l">내용</th>
           </tr>
         </thead>
         <tbody>
-          {rows.map((f) => (
-            <tr key={f.id}>
-              <td className="tp-l tp-time">{fmtTime(f.at)}</td>
-              <td>{displaySymbol(f.symbol, symbols)}</td>
-              <td>
-                <span className={f.side === 'long' ? 'up' : 'down'}>{SIDE_LABEL[f.side]}</span>
-              </td>
-              <td>{fmtQty(f.qty, stepOf(f.symbol))}</td>
-              <td>{(f.rate * 100).toFixed(4)}%</td>
-              <td className={pnlClass(f.amount)}>{fmtSigned(f.amount)}</td>
+          {ledger.map((r) => (
+            <tr key={r.key}>
+              <td className="tp-l tp-time">{fmtTime(r.at)}</td>
+              <td>{displaySymbol(r.symbol, symbols)}</td>
+              <td>{r.kind}</td>
+              <td className={pnlClass(r.amount)}>{fmtSigned(r.amount)}</td>
+              <td className="tp-l tp-time">{r.detail}</td>
             </tr>
           ))}
         </tbody>
@@ -605,14 +783,17 @@ export function TradingPanel({
     )
   }
 
-  // ── 계좌 ──────────────────────────────────────────────────
-  const renderAccount = () => (
+  // ── 자산(데스크톱: 오른쪽 칸, 폰: 탭) ──────────────────────
+  const renderAssets = () => (
     <div className="tp-account">
+      <div className="tp-assets-equity">
+        <span>총자산 (USDT)</span>
+        <b>{fmtUsdt(summary.equity)}</b>
+        <em className={pnlClass(acct.pnl)}>
+          시작 대비 {fmtSigned(acct.pnl)} ({fmtPct(acct.pnlPct)})
+        </em>
+      </div>
       <div className="tp-acc-grid">
-        <div>
-          <span>총자산</span>
-          <b>{fmtUsdt(summary.equity)}</b>
-        </div>
         <div>
           <span>지갑 잔고</span>
           <b>{fmtUsdt(summary.balance)}</b>
@@ -638,16 +819,6 @@ export function TradingPanel({
           <b>{summary.marginRatio == null ? '—' : `${summary.marginRatio.toFixed(1)}%`}</b>
         </div>
         <div>
-          <span>시작 잔고</span>
-          <b>{fmtUsdt(account.startBalance)}</b>
-        </div>
-        <div>
-          <span>누적 손익</span>
-          <b className={pnlClass(acct.pnl)}>
-            {fmtSigned(acct.pnl)} ({fmtPct(acct.pnlPct)})
-          </b>
-        </div>
-        <div>
           <span>누적 수수료</span>
           <b>{fmtUsdt(acct.feeSum)}</b>
         </div>
@@ -658,6 +829,10 @@ export function TradingPanel({
         <div>
           <span>승률</span>
           <b>{acct.winRate == null ? '—' : `${acct.winRate.toFixed(1)}% (${acct.closedCount}건)`}</b>
+        </div>
+        <div>
+          <span>시작 잔고</span>
+          <b>{fmtUsdt(account.startBalance)}</b>
         </div>
       </div>
       <div className="tp-acc-actions">
@@ -675,21 +850,37 @@ export function TradingPanel({
     switch (tab) {
       case 'positions':
         return renderPositions()
+      case 'positionHistory':
+        return renderPositionHistory()
       case 'orders':
         return renderOrders()
       case 'orderHistory':
         return renderOrderHistory()
       case 'fills':
         return renderFills()
-      case 'funding':
-        return renderFunding()
-      case 'account':
-        return renderAccount()
+      case 'ledger':
+        return renderLedger()
+      case 'assets':
+        return renderAssets()
     }
   })()
 
   return (
-    <section className={`tp tp-${variant}${isCollapsed ? ' tp-collapsed' : ''}`}>
+    <section
+      className={`tp tp-${variant}${isCollapsed ? ' tp-collapsed' : ''}`}
+      style={!isMobile && !isCollapsed ? { height: shownHeight } : undefined}
+    >
+      {!isMobile && !isCollapsed && (
+        // eslint-disable-next-line jsx-a11y/no-static-element-interactions
+        <div
+          className="tp-resize"
+          {...tip('높이 조절', '끌어서 거래 패널 높이를 바꿉니다')}
+          onPointerDown={onResizeDown}
+          onPointerMove={onResizeMove}
+          onPointerUp={onResizeUp}
+          onPointerCancel={onResizeUp}
+        />
+      )}
       <header className="tp-head">
         <div className="tp-tabs">
           {TABS.map((t) => (
@@ -736,7 +927,18 @@ export function TradingPanel({
         </div>
       </header>
 
-      {!isCollapsed && <div className="tp-body">{body}</div>}
+      {!isCollapsed &&
+        (isMobile ? (
+          <div className="tp-body">{body}</div>
+        ) : (
+          <div className="tp-main">
+            <div className="tp-body">{body}</div>
+            <aside className="tp-assets" aria-label="자산">
+              <h3 className="tp-assets-title">자산</h3>
+              {renderAssets()}
+            </aside>
+          </div>
+        ))}
 
       {/* 종료 지정가 팝오버 */}
       {closeAnchor && (

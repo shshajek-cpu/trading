@@ -30,6 +30,7 @@ import {
   type PaperOrder,
   type PaperOrderRecord,
   type PaperPosition,
+  type PaperPositionRecord,
   type PosSide,
   type PositionView,
   type RiskTier,
@@ -97,6 +98,7 @@ export function createAccount(startBalance: number, now: number): PaperAccount {
     fills: [],
     orderHistory: [],
     funding: [],
+    positionHistory: [],
     settings: {},
     fees: { ...DEFAULT_FEES },
     checkedAt: now,
@@ -122,6 +124,11 @@ export function symbolsInUse(acct: PaperAccount): string[] {
   for (const p of acct.positions) set.add(p.symbol)
   for (const o of acct.orders) set.add(o.symbol)
   return [...set]
+}
+
+/** 밖에서 들어온 계좌(로컬 사본·서버)를 지금 모양으로 맞춘다 — 포지션 기록이 생기기 전 계좌에는 그 배열이 없다. */
+export function normalizeAccount(acct: PaperAccount): PaperAccount {
+  return Array.isArray(acct.positionHistory) ? acct : { ...acct, positionHistory: [] }
 }
 
 export function markChecked(acct: PaperAccount, at: number): PaperAccount {
@@ -209,6 +216,7 @@ function draft(acct: PaperAccount): PaperAccount {
     fills: [...acct.fills],
     orderHistory: [...acct.orderHistory],
     funding: [...acct.funding],
+    positionHistory: [...(acct.positionHistory ?? [])],
     settings: { ...acct.settings },
   }
 }
@@ -217,6 +225,7 @@ function finish(d: PaperAccount, events: EngineEvent[]): EngineResult {
   d.fills = capList(d.fills)
   d.orderHistory = capList(d.orderHistory)
   d.funding = capList(d.funding)
+  d.positionHistory = capList(d.positionHistory)
   return { account: d, events }
 }
 
@@ -266,6 +275,7 @@ function applyFill(d: PaperAccount, s: FillSpec, events: EngineEvent[]): PaperFi
       }
       d.positions.push(pos)
     }
+    ensureStats(pos)
     const fee = qty * s.price * feeRate
     const total = pos.qty + qty
     pos.entry = (pos.entry * pos.qty + s.price * qty) / total
@@ -274,6 +284,10 @@ function applyFill(d: PaperAccount, s: FillSpec, events: EngineEvent[]): PaperFi
     pos.realized -= fee
     pos.updatedAt = s.at
     pos.lastMark = s.mark ?? s.price
+    pos.openQty! += qty
+    pos.openValue! += qty * s.price
+    pos.feeSum! += fee
+    pos.maxQty = Math.max(pos.maxQty!, total)
     if (s.tp !== undefined) pos.tp = { price: s.tp, by: s.tpSlBy ?? 'last' }
     if (s.sl !== undefined) pos.sl = { price: s.sl, by: s.tpSlBy ?? 'last' }
     d.balance -= fee
@@ -286,7 +300,9 @@ function applyFill(d: PaperAccount, s: FillSpec, events: EngineEvent[]): PaperFi
   const fee = qty * s.price * feeRate
   pnl = (s.price - pos.entry) * qty * dir
   d.balance += pnl - fee
+  ensureStats(pos)
   if (qty >= pos.qty - EPS) {
+    recordClosed(d, pos, s.at, 'closed', { qty, price: s.price, pnl, fee })
     removePosition(d, pos, s.at, '포지션이 모두 종료되어 취소', events)
   } else {
     if (pos.marginMode === 'isolated') pos.isoMargin -= pos.isoMargin * (qty / pos.qty)
@@ -294,8 +310,60 @@ function applyFill(d: PaperAccount, s: FillSpec, events: EngineEvent[]): PaperFi
     pos.realized += pnl - fee
     pos.updatedAt = s.at
     pos.lastMark = s.mark ?? s.price
+    pos.closedQty! += qty
+    pos.closedValue! += qty * s.price
+    pos.feeSum! += fee
   }
   return pushFill(d, s, qty, pnl, fee, events)
+}
+
+/** 기록용 누계가 없으면(누계가 생기기 전에 연 포지션) 지금 상태로 채운다 — 그 전의 부분 종료·수수료는 알 수 없다. */
+function ensureStats(pos: PaperPosition): void {
+  if (pos.openQty === undefined) {
+    pos.openQty = pos.qty
+    pos.openValue = pos.qty * pos.entry
+  }
+  pos.closedQty ??= 0
+  pos.closedValue ??= 0
+  pos.maxQty ??= pos.qty
+  pos.feeSum ??= 0
+  pos.fundingSum ??= 0
+}
+
+/** 포지션이 끝났다 — 마지막 체결까지 더해 포지션 기록을 남긴다. */
+function recordClosed(
+  d: PaperAccount,
+  pos: PaperPosition,
+  at: number,
+  status: 'closed' | 'liquidated',
+  last: { qty: number; price: number; pnl: number; fee: number },
+): PaperPositionRecord {
+  ensureStats(pos)
+  const closedQty = pos.closedQty! + last.qty
+  const closedValue = pos.closedValue! + last.qty * last.price
+  const fees = pos.feeSum! + last.fee
+  const funding = pos.fundingSum!
+  const realized = pos.realized + last.pnl - last.fee
+  const record: PaperPositionRecord = {
+    id: newId(),
+    symbol: pos.symbol,
+    side: pos.side,
+    marginMode: pos.marginMode,
+    leverage: pos.leverage,
+    entry: pos.openQty! > 0 ? pos.openValue! / pos.openQty! : pos.entry,
+    exit: closedQty > 0 ? closedValue / closedQty : last.price,
+    maxQty: Math.max(pos.maxQty!, pos.qty),
+    closedQty,
+    pnl: realized + fees - funding,
+    fees,
+    funding,
+    realized,
+    status,
+    openedAt: pos.openedAt,
+    closedAt: at,
+  }
+  d.positionHistory.push(record)
+  return record
 }
 
 function pushFill(d: PaperAccount, s: FillSpec, qty: number, pnl: number, fee: number, events: EngineEvent[]): PaperFill {
@@ -842,6 +910,7 @@ function closeAllAt(d: PaperAccount, pos: PaperPosition, price: number, reason: 
 function liquidateIsolated(d: PaperAccount, pos: PaperPosition, price: number, at: number, events: EngineEvent[]): void {
   const loss = Math.max(0, pos.isoMargin)
   d.balance -= loss
+  recordClosed(d, pos, at, 'liquidated', { qty: pos.qty, price, pnl: -loss, fee: 0 })
   removePosition(d, pos, at, '강제 청산으로 취소', events)
   pushFill(
     d,
@@ -862,11 +931,13 @@ function liquidateCross(d: PaperAccount, priceOf: (p: PaperPosition) => number, 
   if (cross.length === 0) return
   for (const o of d.orders.filter((x) => x.marginMode === 'cross')) endOrder(d, o, 'canceled', at, events, '강제 청산으로 취소')
   const fills: PaperFill[] = []
+  const records: PaperPositionRecord[] = []
   for (const pos of cross) {
     const price = priceOf(pos)
     const pnl = (price - pos.entry) * pos.qty * dirOf(pos.side)
     const fee = pos.qty * price * d.fees.taker
     d.balance += pnl - fee
+    records.push(recordClosed(d, pos, at, 'liquidated', { qty: pos.qty, price, pnl, fee }))
     removePosition(d, pos, at, '강제 청산으로 취소', events)
     fills.push(
       pushFill(
@@ -882,8 +953,16 @@ function liquidateCross(d: PaperAccount, priceOf: (p: PaperPosition) => number, 
   const isoTotal = d.positions.reduce((s, p) => s + (p.marginMode === 'isolated' ? p.isoMargin : 0), 0)
   const left = d.balance - isoTotal
   const last = fills[fills.length - 1]
-  if (left > 0) last.fee += left
-  else if (left < 0) last.pnl -= left
+  const lastRecord = records[records.length - 1]
+  // 남은 교차 자산은 청산 수수료로, 모자란 손실은 보험 기금 몫으로 — 체결과 포지션 기록에 같게 반영한다.
+  if (left > 0) {
+    last.fee += left
+    lastRecord.fees += left
+  } else if (left < 0) {
+    last.pnl -= left
+    lastRecord.pnl -= left
+  }
+  lastRecord.realized -= left
   d.balance = isoTotal
 }
 
@@ -1082,6 +1161,8 @@ export function applyFunding(acct: PaperAccount, symbol: string, events: Funding
       p.realized += amount
       if (p.marginMode === 'isolated') p.isoMargin += amount
       p.fundingAt = ev.time
+      ensureStats(p)
+      p.fundingSum! += amount
       const funding = { id: newId(), symbol, side: p.side, qty: p.qty, rate: ev.rate, mark: ev.mark, amount, at: ev.time }
       d.funding.push(funding)
       out.push({ kind: 'funding', funding })
