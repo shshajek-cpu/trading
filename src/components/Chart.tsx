@@ -13,6 +13,7 @@ import {
   type ISeriesApi,
   type ISeriesMarkersPluginApi,
   type ITextWatermarkPluginApi,
+  type Logical,
   type LogicalRange,
   type MouseEventParams,
   type Time,
@@ -21,7 +22,7 @@ import {
 import { fetchKlines, type Candle, type Interval } from '../lib/binance'
 import { INTERVAL_SECONDS } from '../lib/intervals'
 import type { PriceAlert } from '../hooks/usePriceAlerts'
-import type { Drawing, DrawingTool, MagnetMode, NewDrawing } from '../lib/drawings'
+import { isPointerTool, type Drawing, type DrawingTool, type MagnetMode, type NewDrawing } from '../lib/drawings'
 import type { Pin } from '../lib/pins'
 import { SIDE_COLORS } from '../lib/pins'
 import { CHART_PALETTES, CHART_FONT, INDICATOR_PALETTE } from '../lib/theme'
@@ -33,6 +34,7 @@ import { loadPaneSizes, savePaneSizes } from '../lib/layoutConfig'
 import { DrawingOverlay } from '../chart/drawing/DrawingOverlay'
 import { TradeOverlay } from '../chart/trade/TradeOverlay'
 import { Coords } from '../chart/drawing/coords'
+import { distToSegment, type Pt } from '../chart/drawing/geometry'
 import {
   baselineBaseValue,
   createMainSeries,
@@ -116,6 +118,8 @@ export interface ChartProps {
   syncCrosshair?: boolean
   /** 밖(객체 트리)에서 고른 그림 — DrawingOverlay 의 selectRequest 로 넘긴다. */
   drawingSelectRequest?: { id: string; nonce: number } | null
+  /** 차트에서 지표 선·막대를 두 번 누르면 — 그 지표(설정 단위 id)의 설정 창을 연다. */
+  onEditIndicator?: (instanceId: string) => void
 }
 
 const asTime = (t: number) => t as UTCTimestamp
@@ -124,6 +128,8 @@ const asTime = (t: number) => t as UTCTimestamp
 const OLDER_CHUNK_BARS = 500
 /** 기간·날짜 목표를 좇아 과거를 더 불러오는 최대 횟수 — 1분봉 약 2주. 그 너머는 요청만 쌓인다. */
 const MAX_BACKFILL_CHUNKS = 40
+/** 지표 선을 두 번 누를 때 선 굵기 밖으로 더 봐 주는 거리(px). */
+const LINE_HIT_SLOP = 4
 
 /** 시각 오름차순 봉 목록에서 time 을 품는 봉(time 이하인 마지막 봉). 첫 봉보다 앞이면 null. */
 function barAtOrBefore(candles: Candle[], time: number): Candle | null {
@@ -190,6 +196,7 @@ export function Chart({
   onNotice,
   syncCrosshair,
   drawingSelectRequest,
+  onEditIndicator,
 }: ChartProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<IChartApi | null>(null)
@@ -202,8 +209,11 @@ export function Chart({
   )
 
   // ── 자주 바뀌는 콜백은 ref 로 잡아 이펙트 재실행을 막는다. ──
-  const cbRef = useRef({ onReachStart, onHoverTime, onPanes, onAutoScaleChange, onReplayPreview, onChartClick, onCompareInfo, onNotice })
-  cbRef.current = { onReachStart, onHoverTime, onPanes, onAutoScaleChange, onReplayPreview, onChartClick, onCompareInfo, onNotice }
+  const cbRef = useRef({ onReachStart, onHoverTime, onPanes, onAutoScaleChange, onReplayPreview, onChartClick, onCompareInfo, onNotice, onEditIndicator })
+  cbRef.current = { onReachStart, onHoverTime, onPanes, onAutoScaleChange, onReplayPreview, onChartClick, onCompareInfo, onNotice, onEditIndicator }
+  // 지표 두 번 누르기·패널 보고가 참조하지만 매초 바뀌어 이펙트를 재구독시키면 안 되므로 ref 로 잡는다.
+  const indicatorsRef = useRef(indicators)
+  indicatorsRef.current = indicators
 
   const candlesRef = useRef<Candle[]>([])
   candlesRef.current = candles
@@ -890,6 +900,64 @@ export function Chart({
     return () => chart.unsubscribeClick(handler)
   }, [captureClicks, mainSeries])
 
+  // ── 11b) 지표 선·막대를 두 번 누르면 그 지표 설정 창을 연다(TradingView 처럼). ──
+  // 그림 위를 누르면 그리기 오버레이가 pointerdown 을 막아 여기까지 오지 않는다. 그리는 중·지우개·핀/리플레이
+  // 시작점 고르기처럼 누르는 동작이 따로 있을 때는 끈다.
+  const pointerTool = isPointerTool(drawingTool)
+  useEffect(() => {
+    const chart = chartRef.current
+    if (!chart || !mainSeries || !pointerTool || captureClicks || replayPick) return
+
+    // 누른 칸에서 가장 가까운 지표 선(선 굵기/2 + 여유 안). 차트의 기본 판정은 캔들 몸통(거리 0)을 겹친
+    // 선보다 앞세우므로, 캔들 위를 지나는 이평선도 잡히게 선은 직접 잰다.
+    const nearestLine = (param: MouseEventParams): ISeriesApi<'Line'> | null => {
+      const { point, logical, paneIndex } = param
+      if (!point || logical === undefined) return null
+      const ts = chart.timeScale()
+      const center = Math.round(logical)
+      let best: { series: ISeriesApi<'Line'>; dist: number } | null = null
+      for (const series of indicatorSeriesRef.current.values()) {
+        if (series.seriesType() !== 'Line') continue
+        const line = series as ISeriesApi<'Line'>
+        if (paneIndex !== undefined && line.getPane().paneIndex() !== paneIndex) continue
+        const reach = line.options().lineWidth / 2 + LINE_HIT_SLOP
+        let prev: Pt | null = null
+        for (let i = center - 2; i <= center + 2; i++) {
+          const d = line.dataByIndex(i)
+          const x = d && 'value' in d ? ts.logicalToCoordinate(i as Logical) : null
+          const y = d && 'value' in d ? line.priceToCoordinate(d.value) : null
+          if (x === null || y === null) {
+            prev = null
+            continue
+          }
+          const pt = { x, y }
+          if (prev) {
+            const dist = distToSegment(point, prev, pt)
+            if (dist <= reach && (!best || dist < best.dist)) best = { series: line, dist }
+          }
+          prev = pt
+        }
+      }
+      return best?.series ?? null
+    }
+
+    const handler = (param: MouseEventParams) => {
+      // 선이 먼저, 없으면 차트가 짚은 시리즈(거래량 막대 등).
+      const target = nearestLine(param) ?? param.hoveredInfo?.series
+      if (!target) return
+      for (const [key, series] of indicatorSeriesRef.current) {
+        if (series !== target) continue
+        // 키는 `${지표(또는 부분) id}:${선 key}` — 세트 지표의 부분이면 원래 지표 id 로 연다.
+        const partId = key.slice(0, key.lastIndexOf(':'))
+        const comp = indicatorsRef.current.find((c) => c.instanceId === partId)
+        cbRef.current.onEditIndicator?.(comp?.parentId ?? partId)
+        return
+      }
+    }
+    chart.subscribeDblClick(handler)
+    return () => chart.unsubscribeDblClick(handler)
+  }, [mainSeries, pointerTool, captureClicks, replayPick])
+
   // ── 12) 왼쪽 끝 → 과거 더 불러오기. ──────────────────────────────────
   useEffect(() => {
     const chart = chartRef.current
@@ -951,9 +1019,6 @@ export function Chart({
   // 저장된 크기 복원도 이때만 한다. indicators(매초 재계산)에 매달면 복원 타이머가 초당 한 번씩
   // 되살아나 사용자가 끌어 놓은 패널 크기를 30ms 뒤 원래대로 되돌린다 — 그래서 여기서 제외한다.
   const oscKey = indicators.filter((c) => !c.overlay && !c.isVolume).map((c) => c.kind).join('+') || 'main'
-  // report 가 참조하지만 매초 바뀌어 이펙트를 재구독시키면 안 되는 값은 ref 로 잡는다.
-  const indicatorsRef = useRef(indicators)
-  indicatorsRef.current = indicators
 
   // 14a) 패널 구성이 바뀔 때만 저장된 크기를 되돌린다. panes 는 타이머 안에서 지연 조회한다.
   useEffect(() => {

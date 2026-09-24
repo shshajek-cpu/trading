@@ -16,6 +16,11 @@ export type CursorTool = 'cross' | 'dot' | 'arrow' | 'eraser'
 /** 왼쪽 툴바에서 고를 수 있는 모든 도구. */
 export type DrawingTool = CursorTool | DrawingKind | 'measure' | 'zoom'
 
+/** 눌러도 아무것도 만들거나 지우지 않는 기본 커서(십자선·점·화살표). 지우개는 누른 그림을 지우므로 빠진다. */
+export function isPointerTool(tool: DrawingTool): boolean {
+  return tool === 'cross' || tool === 'dot' || tool === 'arrow'
+}
+
 /** 자석(스냅) 강도. */
 export type MagnetMode = 'off' | 'weak' | 'strong'
 

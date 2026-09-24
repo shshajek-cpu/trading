@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   TOOL_GROUPS,
+  isPointerTool,
   type DrawingTool,
   type MagnetMode,
   type ToolGroup,
@@ -41,9 +42,6 @@ function loadLastUsed(): Record<string, DrawingTool> {
   }
   return {}
 }
-
-/** 끌 것이 없는 기본 커서들 — 그 밖의 도구(그리기·지우개)는 한 번 더 누르면 꺼진다. */
-const POINTERS: readonly DrawingTool[] = ['cross', 'dot', 'arrow']
 
 const MAGNET_LABEL: Record<MagnetMode, string> = {
   off: '끄기',
@@ -142,8 +140,8 @@ export function DrawingToolbar({
                   'right',
                 )}
                 aria-label={g.label}
-                // 켜 둔 도구를 한 번 더 누르면 끄고 십자선으로 돌아간다.
-                onClick={() => (active && !POINTERS.includes(tool) ? onToolChange('cross') : pickTool(g.id, rep))}
+                // 켜 둔 도구를 한 번 더 누르면 끄고 십자선으로 돌아간다(끌 것이 없는 기본 커서는 제외).
+                onClick={() => (active && !isPointerTool(tool) ? onToolChange('cross') : pickTool(g.id, rep))}
               >
                 <ToolIcon name={rep as IconName} />
                 {multi && (

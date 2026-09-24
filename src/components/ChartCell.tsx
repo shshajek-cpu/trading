@@ -550,7 +550,7 @@ export function ChartCell({
             {onEditIndicator && (
               <button
                 type="button"
-                {...tip('설정', '기간·기준값·색 같은 이 지표의 설정을 바꿉니다. 이름을 두 번 눌러도 열립니다.')}
+                {...tip('설정', '기간·기준값·색 같은 이 지표의 설정을 바꿉니다. 이름이나 차트의 선을 두 번 눌러도 열립니다.')}
                 aria-label="설정"
                 onClick={() => onEditIndicator(inst.id)}
               >
@@ -626,6 +626,7 @@ export function ChartCell({
           onNotice={onNotice}
           syncCrosshair={syncCrosshair}
           drawingSelectRequest={drawingSelectRequest}
+          onEditIndicator={legendControls ? onEditIndicator : undefined}
         />
 
         {/* 트레이딩뷰식 범례(왼쪽 위). */}
