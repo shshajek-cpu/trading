@@ -2,7 +2,7 @@ import { useRef, useState } from 'react'
 import type { Interval } from '../lib/binance'
 import type { ChartType } from '../lib/chartTypes'
 import { INTERVAL_INFO, INTERVALS } from '../lib/intervals'
-import type { LayoutMode } from '../lib/layoutConfig'
+import type { LayoutMode, LayoutSync, LayoutSyncKey } from '../lib/layoutConfig'
 import type { IndicatorInstance } from '../lib/indicatorConfig'
 import { IndicatorTemplatesMenu } from './IndicatorTemplatesMenu'
 import { ChartTypeMenu } from './menus/ChartTypeMenu'
@@ -38,8 +38,9 @@ export interface TopToolbarProps {
   layout: LayoutMode
   onLayoutChange: (mode: LayoutMode) => void
   onEqualize: () => void
-  syncChartType: boolean
-  onSyncChartTypeChange: (on: boolean) => void
+  /** 레이아웃 메뉴 "모든 칸에 같이 적용"(심볼·차트 종류·십자선). */
+  layoutSync: LayoutSync
+  onLayoutSyncChange: (key: LayoutSyncKey, on: boolean) => void
   onSave: () => void
   saved: boolean
   onQuickSearch: () => void
@@ -82,8 +83,8 @@ export function TopToolbar(props: TopToolbarProps) {
     layout,
     onLayoutChange,
     onEqualize,
-    syncChartType,
-    onSyncChartTypeChange,
+    layoutSync,
+    onLayoutSyncChange,
     onSave,
     saved,
     onQuickSearch,
@@ -288,8 +289,8 @@ export function TopToolbar(props: TopToolbarProps) {
         value={layout}
         onChange={onLayoutChange}
         onEqualize={onEqualize}
-        syncChartType={syncChartType}
-        onSyncChartTypeChange={onSyncChartTypeChange}
+        sync={layoutSync}
+        onSyncChange={onLayoutSyncChange}
       />
 
       <button

@@ -1,10 +1,11 @@
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   formatCombo,
   loadShortcutOverrides,
   resolveBindings,
   saveShortcutOverrides,
   SHORTCUT_DEFS,
+  SHORTCUTS_STORAGE_KEY,
   type ShortcutId,
   type ShortcutOverrides,
 } from '../lib/shortcuts'
@@ -42,6 +43,15 @@ export function useShortcutBindings(): ShortcutBindings {
     const clean = normalize(next)
     saveShortcutOverrides(clean)
     setOverrides(clean)
+  }, [])
+
+  // 다른 탭에서 바꾼 단축키를 받아 온다. 안 받으면 이 탭이 옛 설정을 통째로 저장해 그쪽 변경을 되돌린다.
+  useEffect(() => {
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === SHORTCUTS_STORAGE_KEY) setOverrides(loadShortcutOverrides())
+    }
+    window.addEventListener('storage', onStorage)
+    return () => window.removeEventListener('storage', onStorage)
   }, [])
 
   const bindings = useMemo(() => resolveBindings(overrides), [overrides])

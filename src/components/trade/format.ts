@@ -25,6 +25,13 @@ export function fmtPct(v: number, digits = 2): string {
   return `${n > 0 ? '+' : n < 0 ? '−' : ''}${Math.abs(n).toFixed(digits)}%`
 }
 
+const ratioFmt = new Intl.NumberFormat('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 1 })
+
+/** 증거금률 — 안전할수록 수만 % 까지 커지니 천 단위 쉼표를 넣는다. 교차 포지션이 없으면 —. */
+export function fmtMarginRatio(v: number | null): string {
+  return v == null || !Number.isFinite(v) ? '—' : `${ratioFmt.format(v)}%`
+}
+
 /** 틱 크기에 맞춘 가격 문자열(천 단위 쉼표). */
 export function fmtPrice(v: number, tick: number): string {
   const d = stepDecimals(tick)

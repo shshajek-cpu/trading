@@ -27,6 +27,18 @@ export interface LayoutState {
   splitRow: number
   /** 차트 종류를 바꾸면 모든 칸에 같이 적용한다. */
   syncChartType: boolean
+  /** 심볼을 바꾸면 모든 칸에 같이 적용한다(한 종목을 여러 주기로 볼 때). */
+  syncSymbol: boolean
+  /** 한 칸의 십자선 시각을 다른 칸에도 세로선으로 보여 준다. */
+  syncCrosshair: boolean
+}
+
+/** 레이아웃 메뉴 "모든 칸에 같이 적용" 항목. */
+export type LayoutSyncKey = 'chartType' | 'symbol' | 'crosshair'
+export type LayoutSync = Record<LayoutSyncKey, boolean>
+
+export function layoutSync(state: LayoutState): LayoutSync {
+  return { chartType: state.syncChartType, symbol: state.syncSymbol, crosshair: state.syncCrosshair }
 }
 
 const STORAGE_KEY = 'trading.layout.v1'
@@ -47,6 +59,8 @@ export const DEFAULT_LAYOUT: LayoutState = {
   splitCol: 0.5,
   splitRow: 0.5,
   syncChartType: true,
+  syncSymbol: false,
+  syncCrosshair: false,
 }
 
 /** 다중 시간대 프리셋. 한 종목을 여러 주기로 동시에 본다. */
@@ -69,14 +83,16 @@ function toCell(value: unknown, fallback: CellConfig): CellConfig | null {
   if (typeof value !== 'object' || value === null) return null
   const c = value as Record<string, unknown>
   if (typeof c.symbol !== 'string') return null
+  const compare = Array.isArray(c.compare) ? c.compare.filter((s): s is string => typeof s === 'string') : []
   return {
     symbol: c.symbol,
     interval: isInterval(c.interval) ? c.interval : fallback.interval,
     chartType: isChartType(c.chartType) ? c.chartType : 'candles',
-    scaleMode: isScaleMode(c.scaleMode) ? c.scaleMode : 'normal',
+    // 비교 중인 칸은 차트가 늘 % 눈금으로 그린다 — 옛 저장값(일반 눈금)을 맞춰 두어야 눈금 버튼이 실제와 같다.
+    scaleMode: compare.length > 0 ? 'percent' : isScaleMode(c.scaleMode) ? c.scaleMode : 'normal',
     autoScale: typeof c.autoScale === 'boolean' ? c.autoScale : true,
     invertScale: c.invertScale === true,
-    compare: Array.isArray(c.compare) ? c.compare.filter((s): s is string => typeof s === 'string') : [],
+    compare,
   }
 }
 
@@ -101,6 +117,8 @@ export function loadLayout(): LayoutState {
       splitCol: split(parsed.splitCol),
       splitRow: split(parsed.splitRow),
       syncChartType: typeof parsed.syncChartType === 'boolean' ? parsed.syncChartType : true,
+      syncSymbol: parsed.syncSymbol === true,
+      syncCrosshair: parsed.syncCrosshair === true,
     }
   } catch {
     return DEFAULT_LAYOUT

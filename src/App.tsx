@@ -15,7 +15,7 @@ import { TooltipLayer } from './components/ui/TooltipLayer'
 import { tip } from './lib/tooltip'
 import { QuickSearchDialog } from './components/QuickSearchDialog'
 import { QuickIntervalBox } from './components/QuickIntervalBox'
-import { Toasts, type Toast } from './components/Toasts'
+import { Toasts, type ToastItem } from './components/Toasts'
 import { Icon, type IconName } from './components/Icon'
 import { ShortcutsDialog } from './components/ShortcutsDialog'
 import { ContextMenu, type MenuEntry } from './components/ContextMenu'
@@ -61,7 +61,9 @@ import { useDrawings } from './hooks/useDrawings'
 import { useIsMobile } from './hooks/useIsMobile'
 import { useInstallPrompt } from './hooks/useInstallPrompt'
 import { useSync } from './hooks/useSync'
-import { usePushAlerts } from './hooks/usePushAlerts'
+import { usePushAlerts, type LineWatch } from './hooks/usePushAlerts'
+import { useMiniTickers } from './hooks/useMiniTickers'
+import { useBackClose } from './hooks/useBackClose'
 import { useWatchlist } from './hooks/useWatchlist'
 import { usePins } from './hooks/usePins'
 import { useUiPrefs } from './hooks/useUiPrefs'
@@ -74,17 +76,21 @@ import { PaperContext } from './lib/paper/context'
 import {
   clampSplit,
   DEFAULT_LAYOUT,
+  layoutSync,
   loadLayout,
   saveLayout,
   type CellConfig,
   type LayoutMode,
   type LayoutState,
+  type LayoutSyncKey,
 } from './lib/layoutConfig'
 import {
+  createIndicator,
   loadIndicators,
   saveIndicators,
   indicatorTitle,
   type IndicatorInstance,
+  type IndicatorKind,
 } from './lib/indicatorConfig'
 import {
   legendShown,
@@ -97,7 +103,6 @@ import { describeSymbol, displaySymbol, priceDecimals } from './lib/symbols'
 import { defaultStyle, type Drawing, type DrawingTool, type MagnetMode, type NewDrawing } from './lib/drawings'
 import type { PinSide } from './lib/pins'
 import type { FeatureSet } from './lib/features'
-import { randomCode } from './lib/syncCode'
 import { getChart } from './lib/chartRegistry'
 import { SCALE_MODES, type ChartType, type ScaleMode } from './lib/chartTypes'
 import type { Interval } from './lib/binance'
@@ -106,6 +111,27 @@ import { INTERVAL_SECONDS } from './lib/intervals'
 import { TOOL_SHORTCUTS, type ShortcutId } from './lib/shortcuts'
 
 const TOAST_MS = 6000
+/** 최대화 중 가린 칸. 언마운트하지 않아야 되돌렸을 때 보던 위치·불러온 옛 봉·리플레이가 그대로 남는다. */
+const HIDDEN_CELL: React.CSSProperties = { display: 'none' }
+const COMPARE_SCALE_MSG = '비교 중에는 퍼센트 눈금만 쓸 수 있습니다'
+/** 바이낸스 선물 심볼 모양 — 주소(?symbol=)·알림 클릭으로 들어온 값을 거른다. */
+const SYMBOL_RE = /^[A-Z0-9]{2,30}$/
+
+/** 지운 지표를 원래 순서 자리로 되돌린다. 그사이 바꾼 설정·새로 더한 지표는 그대로 둔다. */
+function restoreIndicators(
+  cur: IndicatorInstance[],
+  before: IndicatorInstance[],
+  removed: IndicatorInstance[],
+): IndicatorInstance[] {
+  const now = new Map(cur.map((i) => [i.id, i]))
+  const back = new Set(removed.filter((i) => !now.has(i.id)).map((i) => i.id))
+  if (back.size === 0) return cur
+  const known = new Set(before.map((i) => i.id))
+  return [
+    ...before.filter((i) => now.has(i.id) || back.has(i.id)).map((i) => now.get(i.id) ?? i),
+    ...cur.filter((i) => !known.has(i.id)),
+  ]
+}
 
 function App() {
   // ── persisted core state ──────────────────────────────────────────
@@ -115,18 +141,70 @@ function App() {
   const { prefs, patch: patchPrefs, toggleFavorite } = useUiPrefs()
   const shortcutKeys = useShortcutBindings()
 
-  useEffect(() => saveLayout(layoutState), [layoutState])
-  useEffect(() => saveIndicators(indicators), [indicators])
+  // 다른 탭이 저장한 값을 받아 온 상태는 도로 저장하지 않는다 — 같은 값을 또 쓰고 동기화 올리기만 한 번 더 예약된다.
+  const adopted = useRef(new WeakSet<object>())
   useEffect(() => {
-    saveChartSettings(settings)
-    document.documentElement.dataset.theme = settings.theme
+    if (!adopted.current.has(layoutState)) saveLayout(layoutState)
+  }, [layoutState])
+  useEffect(() => {
+    if (!adopted.current.has(indicators)) saveIndicators(indicators)
+  }, [indicators])
+  useEffect(() => {
+    if (!adopted.current.has(settings)) saveChartSettings(settings)
+    const root = document.documentElement
+    root.dataset.theme = settings.theme
+    // 폰 상태 표시줄·주소창 색을 앱 배경에 맞춘다(첫 화면은 index.html 이 저장된 테마로 먼저 맞춘다).
+    const bg = getComputedStyle(root).getPropertyValue('--tv-bg').trim()
+    if (bg) document.querySelector('meta[name="theme-color"]')?.setAttribute('content', bg)
+    // iOS 는 앱을 켤 때만 읽는다 — 다음 실행부터 라이트는 검은 글자 막대, 다크는 앱 위에 흰 글자.
+    document
+      .querySelector('meta[name="apple-mobile-web-app-status-bar-style"]')
+      ?.setAttribute('content', settings.theme === 'light' ? 'default' : 'black-translucent')
   }, [settings])
+
+  // 다른 탭(설치 앱 + 브라우저 탭 등)이 레이아웃·지표·차트 설정을 바꾸면 받아 온다. 안 받으면 이 탭이 다음에 무엇이든
+  // 바꿀 때 옛 값을 통째로 저장하고 동기화 서버에도 올려, 그쪽 변경(내려받은 설정 포함)을 지운다.
+  useEffect(() => {
+    const take = <T extends object>(next: T, set: React.Dispatch<React.SetStateAction<T>>) => {
+      set((prev) => {
+        if (JSON.stringify(prev) === JSON.stringify(next)) return prev
+        adopted.current.add(next)
+        return next
+      })
+    }
+    const onStorage = (e: StorageEvent) => {
+      if (e.storageArea !== localStorage) return
+      const key = e.key
+      // 다른 탭에서 그림을 끌어 옮기는 동안에는 프레임마다 이벤트가 온다 — 이 셋이 아니면 읽지 않는다.
+      if (key === null || key.startsWith('trading.layout')) take(loadLayout(), setLayoutState)
+      if (key === null || key.startsWith('trading.indicators.')) take(loadIndicators(), setIndicators)
+      if (key === null || key.startsWith('trading.chartSettings')) take(loadChartSettings(), setSettings)
+    }
+    window.addEventListener('storage', onStorage)
+    return () => window.removeEventListener('storage', onStorage)
+  }, [])
+
+  // ── toasts ────────────────────────────────────────────────────────
+  const [toasts, setToasts] = useState<ToastItem[]>([])
+  const dismissToast = useCallback((id: string) => {
+    setToasts((prev) => prev.filter((t) => t.id !== id))
+  }, [])
+  /** 토스트를 띄운다. action 이 있으면 '되돌리기' 같은 버튼이 붙는다. ms 가 0 이면 닫을 때까지 남는다. */
+  const pushToast = useCallback(
+    (message: string, action?: ToastItem['action'], ms = TOAST_MS) => {
+      const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
+      setToasts((prev) => [...prev, action ? { id, message, action } : { id, message }])
+      if (ms > 0) window.setTimeout(() => dismissToast(id), ms)
+    },
+    [dismissToast],
+  )
 
   // ── transient shell state ─────────────────────────────────────────
   const [tool, setTool] = useState<DrawingTool>('cross')
-  const [replay, setReplay] = useState(false)
-  const [toasts, setToasts] = useState<Toast[]>([])
-  const [livePrice, setLivePrice] = useState<number | null>(null)
+  /** 리플레이 중인 칸. 시작한 칸에 머문다 — 다른 칸을 눌러 활성이 바뀌어도 옮겨 가지 않는다. */
+  const [replayCell, setReplayCell] = useState<number | null>(null)
+  /** 마지막으로 받은 활성 종목 가격. 종목을 함께 들고 있어 종목이 바뀌면 바로 무효가 된다. */
+  const [live, setLive] = useState<{ symbol: string; price: number } | null>(null)
   const [liveFeatures, setLiveFeatures] = useState<FeatureSet | null>(null)
   const [pinMode, setPinMode] = useState(false)
   const [pinSide, setPinSide] = useState<PinSide>('long')
@@ -160,6 +238,8 @@ function App() {
   const [mobileTab, setMobileTab] = useState<MobileTab>('chart')
   const [mobileSheet, setMobileSheet] = useState<MobileSheet | null>(null)
   const [saved, setSaved] = useState(false)
+  /** 객체 트리에서 누른 그림 — 그 칸의 차트가 선택한다. nonce 가 바뀔 때마다 한 번. */
+  const [drawingSelect, setDrawingSelect] = useState<{ cell: number; req: { id: string; nonce: number } } | null>(null)
 
   // ── data hooks ────────────────────────────────────────────────────
   const symbols = useSymbols()
@@ -176,7 +256,7 @@ function App() {
   const install = useInstallPrompt()
   const watchlist = useWatchlist()
   const pinStore = usePins()
-  const sync = useSync()
+  const sync = useSync({ onNotice: pushToast })
 
   // 칸마다 그 종목·주기의 핀. 렌더마다 새 배열을 넘기면 차트가 초당 몇 번씩 마커를 다시 건다.
   const pinsFor = useMemo(() => {
@@ -197,19 +277,14 @@ function App() {
   const activeSymbol = activeCell.symbol
   const activeSymbolRef = useRef(activeSymbol)
   activeSymbolRef.current = activeSymbol
-
-  // toasts
-  const dismissToast = useCallback((id: string) => {
-    setToasts((prev) => prev.filter((t) => t.id !== id))
-  }, [])
-  const pushToast = useCallback(
-    (message: string) => {
-      const id = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
-      setToasts((prev) => [...prev, { id, message }])
-      window.setTimeout(() => dismissToast(id), TOAST_MS)
-    },
-    [dismissToast],
-  )
+  // 종목을 바꾸면 새 종목의 첫 틱 전까지는 가격을 모른다 — 옛 종목 가격을 알림 창·알림 위젯에 쓰지 않는다.
+  const livePrice = live && live.symbol === activeSymbol ? live.price : null
+  // Alt+Enter 로 최대화하면 분할 화면에서도 활성 칸 하나만 보인다(나머지 칸은 가린 채 마운트해 둔다).
+  const maximizedNow = maximized && !isMobile && layout > 1
+  /** 지금 눈에 보이는 칸의 종목들. */
+  const shownSymbols = isMobile || maximizedNow ? [activeSymbol] : cells.slice(0, layout).map((c) => c.symbol)
+  /** 실시간 틱을 받는 칸(가린 칸 포함)의 종목들. PiP 는 활성 종목이라 여기에 들어 있다. */
+  const feedKey = (isMobile ? [activeSymbol] : cells.slice(0, layout).map((c) => c.symbol)).join(',')
 
   // 모의 선물거래 — 계좌는 동기화 코드로 기기끼리 공유한다(D1). 주문창·거래 패널·차트 선이 PaperContext 로 읽는다.
   const paperName = useCallback((s: string) => displaySymbol(s, symbols), [symbols])
@@ -228,7 +303,14 @@ function App() {
     },
     [notify, pushToast],
   )
-  const { alerts, addAlert, removeAlert, checkPrice, markFired } = usePriceAlerts(handleTrigger)
+  const {
+    alerts,
+    addAlert,
+    removeAlert,
+    checkPrice,
+    markFired,
+    setActive: setAlertActive,
+  } = usePriceAlerts(handleTrigger)
 
   // indicator alerts (브라우저에서 지표 값을 계산해 판정한다)
   const handleIndicatorFire = useCallback(
@@ -278,30 +360,66 @@ function App() {
     updateDrawing,
     removeDrawing,
     removeAll,
+    restoreDrawings,
     reorderDrawing,
     checkPrice: checkDrawings,
+    markFired: markLinesFired,
     undo,
     redo,
     canUndo,
     canRedo,
   } = useDrawings(handleCross)
 
-  const push = usePushAlerts(sync.code, alerts, markFired)
+  // 앱을 닫아도 울리게 서버(푸시 워커)가 지켜볼 수평선 알림. 그림을 끌 때마다 새 배열을 주지 않게 내용이 같으면 그대로 둔다.
+  const lineWatchList = drawings.filter(
+    (d) => d.kind === 'horizontal' && d.alert && !d.fired && Number.isFinite(d.points[0]?.price),
+  )
+  const lineWatchKey = lineWatchList.map((d) => `${d.id}|${d.symbol}|${d.points[0].price}`).join(',')
+  const lineWatches = useMemo<LineWatch[]>(
+    () => lineWatchList.map((d) => ({ id: d.id, symbol: d.symbol, price: d.points[0].price })),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [lineWatchKey],
+  )
+  const push = usePushAlerts(sync.code, alerts, markFired, lineWatches, markLinesFired)
 
   const handlePrice = useCallback(
     (symbol: string, price: number) => {
       checkPrice(symbol, price)
       checkDrawings(symbol, price)
-      if (symbol === activeSymbolRef.current) setLivePrice(price)
+      if (symbol === activeSymbolRef.current) {
+        setLive((prev) => (prev && prev.symbol === symbol && prev.price === price ? prev : { symbol, price }))
+      }
     },
     [checkPrice, checkDrawings],
   )
+
+  // 화면(칸·PiP)에 없는 종목의 가격 알림·수평선 알림도 울려야 한다 — 그 종목만 미니 티커로 따로 받아 같은 판정에 흘린다.
+  // 칸에 있는 종목은 차트가 이미 틱을 준다(최대화로 가린 칸도 마운트돼 있어 계속 받는다).
+  const alertOnlySymbols = useMemo(() => {
+    const fed = new Set(feedKey.split(','))
+    const out = new Set<string>()
+    for (const a of alerts) if (a.active && !fed.has(a.symbol)) out.add(a.symbol)
+    for (const d of lineWatchList) if (!fed.has(d.symbol)) out.add(d.symbol)
+    return [...out]
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [alerts, lineWatchKey, feedKey])
+  useMiniTickers(alertOnlySymbols, (t) => handlePrice(t.symbol, t.lastPrice))
 
   // ── cell mutation helpers ─────────────────────────────────────────
   const setCellField = useCallback((index: number, field: Partial<CellConfig>) => {
     setLayoutState((prev) => ({
       ...prev,
       cells: prev.cells.map((c, i) => (i === index ? { ...c, ...field } : c)),
+    }))
+  }, [])
+
+  /** 활성 칸의 종목을 바꾼다. 심볼 동기화가 켜져 있으면 숨은 칸까지 모두 같이 바꾼다. */
+  const setCellSymbol = useCallback((symbol: string) => {
+    setLayoutState((prev) => ({
+      ...prev,
+      cells: prev.cells.map((c, i) =>
+        (prev.syncSymbol || i === prev.active) && c.symbol !== symbol ? { ...c, symbol } : c,
+      ),
     }))
   }, [])
 
@@ -313,25 +431,49 @@ function App() {
     }))
   }, [])
 
-  // 켜는 순간 활성 칸의 종류로 맞춘다 — 켰는데 칸마다 다르면 동기화가 된 건지 알 수 없다.
-  const setSyncChartType = useCallback((on: boolean) => {
+  // 켜는 순간 활성 칸 값으로 맞춘다 — 켰는데 칸마다 다르면 동기화가 된 건지 알 수 없다.
+  const setLayoutSync = useCallback((key: LayoutSyncKey, on: boolean) => {
     setLayoutState((prev) => {
-      const t = prev.cells[prev.active]?.chartType
+      const src = prev.cells[prev.active]
+      if (key === 'crosshair') return { ...prev, syncCrosshair: on }
+      if (key === 'symbol') {
+        return {
+          ...prev,
+          syncSymbol: on,
+          cells: on && src ? prev.cells.map((c) => (c.symbol === src.symbol ? c : { ...c, symbol: src.symbol })) : prev.cells,
+        }
+      }
       return {
         ...prev,
         syncChartType: on,
-        cells: on && t ? prev.cells.map((c) => ({ ...c, chartType: t })) : prev.cells,
+        cells: on && src ? prev.cells.map((c) => ({ ...c, chartType: src.chartType })) : prev.cells,
       }
     })
   }, [])
 
+  /** 비교 심볼을 바꾼다. 비교선이 있으면 차트가 % 눈금으로 그리므로 눈금 설정도 %로 맞춰 버튼 표시를 실제와 같게 한다. */
+  const setCompare = useCallback(
+    (index: number, compare: string[]) => {
+      setCellField(index, compare.length > 0 ? { compare, scaleMode: 'percent' } : { compare })
+    },
+    [setCellField],
+  )
+
+  const setScaleMode = (index: number, mode: ScaleMode) => {
+    const cell = cells[index]
+    if (!cell) return
+    if (cell.compare.length > 0 && mode !== 'percent') {
+      pushToast(COMPARE_SCALE_MSG)
+      return
+    }
+    setCellField(index, { scaleMode: mode })
+  }
+
   // Alt+L / Alt+P: 같은 눈금을 다시 누르면 일반으로 돌아간다.
-  const toggleScaleMode = useCallback((index: number, mode: ScaleMode) => {
-    setLayoutState((prev) => ({
-      ...prev,
-      cells: prev.cells.map((c, i) => (i === index ? { ...c, scaleMode: c.scaleMode === mode ? 'normal' : mode } : c)),
-    }))
-  }, [])
+  const toggleScaleMode = (index: number, mode: ScaleMode) => {
+    const cell = cells[index]
+    if (cell) setScaleMode(index, cell.scaleMode === mode ? 'normal' : mode)
+  }
 
   const toggleInvert = useCallback((index: number) => {
     setLayoutState((prev) => ({
@@ -346,8 +488,78 @@ function App() {
 
   const setLayout = useCallback((mode: LayoutMode) => {
     setMaximized(false)
+    // 리플레이하던 칸이 사라지면 리플레이도 끝난다.
+    setReplayCell((c) => (c !== null && c >= mode ? null : c))
     setLayoutState((prev) => ({ ...prev, layout: mode, active: Math.min(prev.active, mode - 1) }))
   }, [])
+
+  // 폰은 활성 칸 하나만 보이므로 버튼은 그 칸의 리플레이를 켜고 끈다.
+  const replayOn = isMobile ? replayCell === active : replayCell !== null
+  const toggleReplay = () => setReplayCell(replayOn ? null : active)
+
+  // ── drawings / indicators (삭제는 '되돌리기' 토스트를 띄운다) ────────
+  /** 새 그림. 모든 그림을 숨긴 채 그리면 숨김을 푼다(TradingView) — 안 그러면 놓는 순간 사라져 실패한 줄 안다. */
+  const createDrawing = useCallback(
+    (d: NewDrawing): string => {
+      if (prefs.drawingsHidden) patchPrefs({ drawingsHidden: false })
+      return addDrawing(d)
+    },
+    [prefs.drawingsHidden, patchPrefs, addDrawing],
+  )
+
+  const removeDrawingsOf = useCallback(
+    (symbol: string) => {
+      const removed = removeAll(symbol)
+      if (removed.length === 0) return
+      pushToast(`그림 ${removed.length}개를 삭제했습니다`, { label: '되돌리기', run: () => restoreDrawings(removed) })
+    },
+    [removeAll, restoreDrawings, pushToast],
+  )
+
+  // 되돌리기 이력은 종목 구분 없이 하나다 — 화면에 없는 종목의 그림만 바뀌었으면 알린다(안 알리면 아무 일도 없던 줄 안다).
+  const reportHistory = (changed: string[], verb: string) => {
+    if (changed.length === 0 || changed.some((s) => shownSymbols.includes(s))) return
+    pushToast(`${changed.map((s) => displaySymbol(s, symbols)).join(', ')} 그림 ${verb}`)
+  }
+  const undoDrawing = () => reportHistory(undo(), '되돌림')
+  const redoDrawing = () => reportHistory(redo(), '다시 실행')
+
+  // 지표는 모든 칸이 함께 쓴다 — 지우면 모든 차트에서 한꺼번에 사라지므로 되돌릴 길을 준다.
+  const indicatorsRef = useRef(indicators)
+  indicatorsRef.current = indicators
+  /** 지표 목록을 바꾼다. 지워진 것이 있으면 '되돌리기' 토스트를 띄운다. */
+  const changeIndicators = useCallback(
+    (next: IndicatorInstance[]) => {
+      const prev = indicatorsRef.current
+      indicatorsRef.current = next
+      setIndicators(next)
+      const kept = new Set(next.map((i) => i.id))
+      const removed = prev.filter((i) => !kept.has(i.id))
+      if (removed.length === 0) return
+      pushToast(`지표 ${removed.length}개를 삭제했습니다`, {
+        label: '되돌리기',
+        run: () => setIndicators((cur) => restoreIndicators(cur, prev, removed)),
+      })
+    },
+    [pushToast],
+  )
+  const applyIndicatorTemplate = useCallback(
+    (next: IndicatorInstance[]) => {
+      const prev = indicatorsRef.current
+      indicatorsRef.current = next
+      setIndicators(next)
+      pushToast('지표 템플릿을 적용했습니다', { label: '되돌리기', run: () => setIndicators(prev) })
+    },
+    [pushToast],
+  )
+  /** 빠른 검색에서 지표 추가 — 지표 창과 같은 방식으로 만든다. */
+  const addIndicator = useCallback(
+    (kind: IndicatorKind) => {
+      const cur = indicatorsRef.current
+      changeIndicators([...cur, createIndicator(kind, cur)])
+    },
+    [changeIndicators],
+  )
 
   const resetSplit = useCallback(() => {
     setLayoutState((prev) => ({ ...prev, splitCol: 0.5, splitRow: 0.5 }))
@@ -440,21 +652,89 @@ function App() {
 
   // ── save / sync ───────────────────────────────────────────────────
   const handleSave = useCallback(() => {
-    if (sync.code) {
-      void sync.push(sync.code)
-      setSaved(true)
-      window.setTimeout(() => setSaved(false), 1500)
-    } else {
+    if (!sync.code) {
       if (isMobile) setMobileSheet('sync')
       else setWidgetOpen('sync')
+      return
     }
-  }, [sync, isMobile])
+    // 서버 충돌 검사를 지키는 저장 — 다른 기기가 먼저 바꿨으면 덮어쓰지 않고 이유를 알린다.
+    void sync.save().then((r) => {
+      if (!r.ok) {
+        pushToast(r.message)
+        return
+      }
+      setSaved(true)
+      window.setTimeout(() => setSaved(false), 1500)
+    })
+  }, [sync, isMobile, pushToast])
 
   const createSyncCode = useCallback(() => {
-    const code = randomCode()
-    sync.setCode(code)
+    const code = sync.createCode()
+    pushToast(`동기화 코드 ${code} 를 만들었습니다`)
     return code
-  }, [sync])
+  }, [sync, pushToast])
+
+  /** 알림을 눌러 들어온 종목(알림 목록·푸시 알림·주소 ?symbol=)을 활성 칸에 연다. 폰은 차트 탭으로 간다. */
+  const showSymbol = useCallback(
+    (symbol: string) => {
+      setCellSymbol(symbol)
+      if (isMobile) {
+        setMobileSheet(null)
+        setMobileTab('chart')
+      }
+    },
+    [isMobile, setCellSymbol],
+  )
+
+  // 푸시 알림을 눌러 앱이 새로 열리면 주소에 ?symbol= 이 붙어 온다. 주소에서는 바로 지운다(새로고침·공유에 남지 않게).
+  const [urlSymbol, setUrlSymbol] = useState(() => {
+    const s = new URLSearchParams(window.location.search).get('symbol')?.toUpperCase() ?? ''
+    return SYMBOL_RE.test(s) ? s : null
+  })
+  useEffect(() => {
+    const url = new URL(window.location.href)
+    if (!url.searchParams.has('symbol')) return
+    url.searchParams.delete('symbol')
+    window.history.replaceState(window.history.state, '', `${url.pathname}${url.search}${url.hash}`)
+  }, [])
+  // 종목 목록을 받은 뒤 확인한다 — 캐시가 없으면 처음에는 기본 한 종목뿐이다.
+  useEffect(() => {
+    if (!urlSymbol) return
+    const known = symbols.some((i) => i.symbol === urlSymbol)
+    if (!known && symbols.length <= 1) return
+    setUrlSymbol(null)
+    if (known) showSymbol(urlSymbol)
+  }, [urlSymbol, symbols, showSymbol])
+
+  // 앱이 열려 있을 때 푸시 알림을 누르면 서비스워커가 이 창에 종목을 보낸다.
+  const symbolsRef = useRef(symbols)
+  symbolsRef.current = symbols
+  useEffect(() => {
+    const sw = navigator.serviceWorker
+    if (!sw) return
+    const onMessage = (e: MessageEvent) => {
+      const data = e.data as { type?: unknown; symbol?: unknown } | null
+      if (data?.type !== 'open-symbol' || typeof data.symbol !== 'string') return
+      const symbol = data.symbol.toUpperCase()
+      if (!SYMBOL_RE.test(symbol)) return
+      const list = symbolsRef.current
+      if (list.length > 1 && !list.some((i) => i.symbol === symbol)) return
+      showSymbol(symbol)
+    }
+    sw.addEventListener('message', onMessage)
+    return () => sw.removeEventListener('message', onMessage)
+  }, [showSymbol])
+
+  // 새 배포가 준비되면(main.tsx) 보던 화면을 갑자기 새로고침하지 않고 사용자가 고르게 한다.
+  useEffect(() => {
+    const onReady = () =>
+      pushToast('새 버전이 준비됐습니다', { label: '새로고침', run: () => window.location.reload() }, 0)
+    window.addEventListener('app-update-ready', onReady)
+    return () => window.removeEventListener('app-update-ready', onReady)
+  }, [pushToast])
+
+  // 폰: 차트가 아닌 탭에서 뒤로가기를 누르면 앱을 나가지 않고 차트 탭으로 돌아온다.
+  useBackClose(isMobile && mobileTab !== 'chart', () => setMobileTab('chart'))
 
   // ── date range ────────────────────────────────────────────────────
   const applyDateRange = useCallback(
@@ -546,9 +826,9 @@ function App() {
       case 'save':
         return handleSave()
       case 'undo':
-        return undo()
+        return undoDrawing()
       case 'redo':
-        return redo()
+        return redoDrawing()
       case 'zoomIn':
         return getChart(active)?.zoom(1)
       case 'zoomOut':
@@ -601,11 +881,11 @@ function App() {
     [isMobile],
   )
 
-  /** 우클릭한 칸을 활성으로 두고 주문창을 연다 — 그 가격을 지정가로 채운다. */
+  /** 우클릭한 칸을 활성으로 두고 주문창을 연다 — 그 칸 종목·가격을 지정가로 채운다. */
   const openTradeAt = useCallback(
-    (index: number, price: number) => {
+    (index: number, symbol: string, price: number) => {
       setActive(index)
-      setTradeDraft({ price, type: 'limit', nonce: Date.now() })
+      setTradeDraft({ symbol, price, type: 'limit', nonce: Date.now() })
       if (isMobile) setMobileSheet('trade')
       else setWidgetOpen('trade')
     },
@@ -638,7 +918,7 @@ function App() {
           item('눈금 반전', () => toggleInvert(index), { checked: cell.invertScale, shortcut: key('invertScale') }),
           divider,
           ...SCALE_MODES.map((m) =>
-            item(`${m.label} 눈금`, () => setCellField(index, { scaleMode: m.id }), {
+            item(`${m.label} 눈금`, () => setScaleMode(index, m.id), {
               checked: cell.scaleMode === m.id,
               shortcut: m.id === 'log' ? key('toggleLog') : m.id === 'percent' ? key('togglePercent') : undefined,
             }),
@@ -653,6 +933,8 @@ function App() {
       case 'drawing': {
         const d = drawings.find((x) => x.id === target.drawingId)
         if (!d) return []
+        // 잠근 그림(하나·전체 잠금)은 "실수로 지워지지 않게" 약속한 것이다 — 우클릭으로도 지우지 않는다.
+        const lockedNow = d.locked || prefs.drawingsLocked
         return [
           ...(d.kind === 'horizontal'
             ? [
@@ -666,7 +948,7 @@ function App() {
           item(
             '복제',
             () =>
-              addDrawing({
+              createDrawing({
                 symbol: d.symbol,
                 kind: d.kind,
                 points: cloneOffset(d.points, cell.interval),
@@ -684,7 +966,11 @@ function App() {
             icon: icon(d.locked ? 'unlock' : 'lock'),
           }),
           item('숨기기', () => updateDrawing(d.id, { hidden: true }), { icon: icon('eyeOff') }),
-          item('삭제', () => removeDrawing(d.id), { icon: icon('trash'), shortcut: 'Delete' }),
+          item('삭제', () => removeDrawing(d.id), {
+            icon: icon('trash'),
+            shortcut: lockedNow ? undefined : 'Delete',
+            disabled: lockedNow,
+          }),
         ]
       }
       case 'chart': {
@@ -705,7 +991,7 @@ function App() {
             '붙여넣기',
             () => {
               const next = pasteDrawing(cell.symbol, cell.interval)
-              if (next) addDrawing(next)
+              if (next) createDrawing(next)
             },
             { icon: icon('clipboard'), shortcut: 'Ctrl+V', disabled: !hasCopiedDrawing() },
           ),
@@ -716,11 +1002,11 @@ function App() {
                   icon: icon('alarm'),
                   shortcut: key('createAlert'),
                 }),
-                item(`${priceText}에 지정가 주문…`, () => openTradeAt(index, price), { icon: icon('trade') }),
+                item(`${priceText}에 지정가 주문…`, () => openTradeAt(index, cell.symbol, price), { icon: icon('trade') }),
                 item(
                   `${priceText}에 수평선 그리기`,
                   () =>
-                    addDrawing({
+                    createDrawing({
                       symbol: cell.symbol,
                       kind: 'horizontal',
                       points: [{ time: time ?? Math.floor(Date.now() / 1000), price }],
@@ -761,11 +1047,11 @@ function App() {
             () => patchPrefs({ drawingsHidden: !prefs.drawingsHidden }),
             { icon: icon(prefs.drawingsHidden ? 'eye' : 'eyeOff'), shortcut: key('toggleDrawingsHidden') },
           ),
-          item(`그림 ${drawingCount}개 삭제`, () => removeAll(cell.symbol), {
+          item(`그림 ${drawingCount}개 삭제`, () => removeDrawingsOf(cell.symbol), {
             icon: icon('trash'),
             disabled: drawingCount === 0,
           }),
-          item(`지표 ${indicators.length}개 삭제`, () => setIndicators([]), {
+          item(`지표 ${indicators.length}개 삭제`, () => changeIndicators([]), {
             icon: icon('trash'),
             disabled: indicators.length === 0,
           }),
@@ -776,9 +1062,10 @@ function App() {
     }
   }
 
+  // 울린 수평선 알림은 목록에 '다시 켜기'로 남지만 배지에는 세지 않는다(가격·지표 알림과 같게).
   const alertBadge =
     alerts.filter((a) => a.active).length +
-    drawings.filter((d) => d.alert).length +
+    lineWatchList.length +
     indicatorAlerts.alerts.filter((a) => a.active).length
 
   // Indicators mapped for the object tree.
@@ -812,9 +1099,9 @@ function App() {
         invertScale={cell.invertScale}
         lockedTime={cursorLocks[index] ?? null}
         compare={cell.compare}
-        onCompareChange={(next) => setCellField(index, { compare: next })}
+        onCompareChange={(next) => setCompare(index, next)}
         indicators={indicators}
-        onIndicatorsChange={setIndicators}
+        onIndicatorsChange={changeIndicators}
         settings={settings}
         alerts={alerts}
         drawings={drawings}
@@ -823,7 +1110,7 @@ function App() {
         stayInDrawingMode={prefs.stayInDrawingMode}
         drawingsLocked={prefs.drawingsLocked}
         drawingsHidden={prefs.drawingsHidden}
-        onCreateDrawing={(d: NewDrawing) => addDrawing(d)}
+        onCreateDrawing={createDrawing}
         onUpdateDrawing={updateDrawing}
         onRemoveDrawing={removeDrawing}
         onToolDone={() => setTool('cross')}
@@ -834,8 +1121,8 @@ function App() {
         }
         onPinFail={pushToast}
         onLiveFeatures={isActive ? setLiveFeatures : undefined}
-        replay={replay && isActive}
-        onReplayExit={() => setReplay(false)}
+        replay={replayCell === index}
+        onReplayExit={() => setReplayCell((c) => (c === index ? null : c))}
         active={isActive}
         highlightActive={!isMobile && layout > 1}
         onActivate={() => setActive(index)}
@@ -844,6 +1131,9 @@ function App() {
         onIndicatorAlert={openIndicatorAlert}
         onEditIndicator={setEditIndicatorId}
         onScaleMenu={isMobile ? () => setMobileSheet('scale') : undefined}
+        onNotice={pushToast}
+        syncCrosshair={!isMobile && layoutState.syncCrosshair}
+        drawingSelectRequest={drawingSelect?.cell === index ? drawingSelect.req : null}
       />
       </ErrorBoundary>
     )
@@ -862,7 +1152,7 @@ function App() {
               infos={symbols}
               current={activeSymbol}
               onPick={(s) => {
-                setCellField(active, { symbol: s })
+                setCellSymbol(s)
                 // 폰: TradingView 앱처럼 종목을 누르면 그 차트로 간다.
                 if (page) setMobileTab('chart')
               }}
@@ -885,6 +1175,9 @@ function App() {
             onAdd={createPriceAlert}
             onRemove={removeAlert}
             onDisableLineAlert={(lineId) => updateDrawing(lineId, { alert: false })}
+            onPickSymbol={showSymbol}
+            onReactivateAlert={(alertId) => setAlertActive(alertId, true)}
+            onReactivateLine={(lineId) => updateDrawing(lineId, { alert: true, fired: false })}
             indicatorAlerts={indicatorAlerts.alerts}
             onRemoveIndicatorAlert={indicatorAlerts.removeAlert}
             interval={activeCell.interval}
@@ -906,10 +1199,18 @@ function App() {
             indicators={indicatorRows}
             onUpdateDrawing={updateDrawing}
             onRemoveDrawing={removeDrawing}
+            onSelectDrawing={(drawingId) => {
+              setDrawingSelect({ cell: active, req: { id: drawingId, nonce: Date.now() } })
+              // 폰: 시트를 닫아 차트에서 고른 그림이 보이게 한다.
+              if (page) setMobileSheet(null)
+            }}
+            timezone={settings.timezone}
+            pricePrecision={priceDecimals(activeSymbol, symbols)}
+            locked={prefs.drawingsLocked}
             onToggleIndicator={(indId) =>
               setIndicators((prev) => prev.map((i) => (i.id === indId ? { ...i, visible: !i.visible } : i)))
             }
-            onRemoveIndicator={(indId) => setIndicators((prev) => prev.filter((i) => i.id !== indId))}
+            onRemoveIndicator={(indId) => changeIndicators(indicatorsRef.current.filter((i) => i.id !== indId))}
             onEditIndicator={setEditIndicatorId}
           />
         )
@@ -929,8 +1230,11 @@ function App() {
             pinSide={pinSide}
             onPinModeChange={(on) => {
               setPinMode(on)
-              // 폰: 핀 찍기를 켜면 시트를 닫고 차트를 누를 수 있게 한다.
-              if (on && page) setMobileSheet(null)
+              // 폰: 핀 찍기를 켜면 시트를 닫고 차트 탭으로 가서 바로 누를 수 있게 한다(메뉴 탭에서 켰어도).
+              if (on && page) {
+                setMobileSheet(null)
+                setMobileTab('chart')
+              }
             }}
             onPinSideChange={setPinSide}
             onRemove={pinStore.remove}
@@ -950,7 +1254,15 @@ function App() {
           />
         )
       case 'trade':
-        return <OrderPanel symbol={activeSymbol} symbols={symbols} compact={page} draft={tradeDraft} />
+        return (
+          <OrderPanel
+            symbol={activeSymbol}
+            symbols={symbols}
+            compact={page}
+            draft={tradeDraft}
+            onDraftApplied={() => setTradeDraft(null)}
+          />
+        )
       case 'sync':
         return (
           <SyncPanel
@@ -978,19 +1290,19 @@ function App() {
     onChartTypeChange: setChartType,
     onOpenIndicators: () => setIndicatorsOpen(true),
     indicators,
-    onIndicatorsChange: setIndicators,
+    onIndicatorsChange: applyIndicatorTemplate,
     onOpenAlert: () => openAlertAt(null),
-    replay,
-    onToggleReplay: () => setReplay((v) => !v),
+    replay: replayOn,
+    onToggleReplay: toggleReplay,
     canUndo,
     canRedo,
-    onUndo: undo,
-    onRedo: redo,
+    onUndo: undoDrawing,
+    onRedo: redoDrawing,
     layout,
     onLayoutChange: setLayout,
     onEqualize: resetSplit,
-    syncChartType: layoutState.syncChartType,
-    onSyncChartTypeChange: setSyncChartType,
+    layoutSync: layoutSync(layoutState),
+    onLayoutSyncChange: setLayoutSync,
     onSave: handleSave,
     saved,
     onQuickSearch: () => setQuickOpen(true),
@@ -1018,15 +1330,12 @@ function App() {
     onLockedChange: (v: boolean) => patchPrefs({ drawingsLocked: v }),
     hidden: prefs.drawingsHidden,
     onHiddenChange: (v: boolean) => patchPrefs({ drawingsHidden: v }),
-    onRemoveDrawings: () => removeAll(activeSymbol),
-    onRemoveIndicators: () => setIndicators([]),
+    onRemoveDrawings: () => removeDrawingsOf(activeSymbol),
+    onRemoveIndicators: () => changeIndicators([]),
     toolShortcuts,
   }
 
-  // Alt+Enter 로 최대화하면 분할 화면에서도 활성 칸 하나만 크게 보인다.
-  const maximizedNow = maximized && !isMobile && layout > 1
-  const visibleCells = isMobile || maximizedNow ? [activeCell] : cells.slice(0, layout)
-  const effectiveLayout: LayoutMode = isMobile || maximizedNow ? 1 : layout
+  const effectiveLayout: LayoutMode = maximizedNow ? 1 : layout
 
   // ── dialogs & overlays (shared between desktop/mobile) ─────────────
   const dialogs = (
@@ -1042,10 +1351,9 @@ function App() {
         onSelect={(sym) => {
           if (symbolSearchMode === 'compare') {
             const cur = activeCell.compare
-            const next = cur.includes(sym) ? cur.filter((s) => s !== sym) : [...cur, sym]
-            setCellField(active, { compare: next })
+            setCompare(active, cur.includes(sym) ? cur.filter((s) => s !== sym) : [...cur, sym])
           } else {
-            setCellField(active, { symbol: sym })
+            setCellSymbol(sym)
             setSymbolSearchOpen(false)
           }
         }}
@@ -1055,7 +1363,7 @@ function App() {
         open={indicatorsOpen}
         onClose={() => setIndicatorsOpen(false)}
         indicators={indicators}
-        onChange={setIndicators}
+        onChange={changeIndicators}
       />
 
       <CreateAlertDialog
@@ -1105,6 +1413,9 @@ function App() {
         onFullscreen={() => void fullscreen.toggle()}
         onLayout={setLayout}
         onTheme={(theme) => setSettings((prev) => ({ ...prev, theme }))}
+        symbols={symbols}
+        onPickSymbol={showSymbol}
+        onAddIndicator={addIndicator}
       />
 
       <QuickIntervalBox seed={ivSeed} onApply={(iv) => setCellField(active, { interval: iv })} onClose={() => setIvSeed(null)} />
@@ -1140,9 +1451,9 @@ function App() {
             invertScale={activeCell.invertScale}
             lockedTime={null}
             compare={activeCell.compare}
-            onCompareChange={(next) => setCellField(active, { compare: next })}
+            onCompareChange={(next) => setCompare(active, next)}
             indicators={indicators}
-            onIndicatorsChange={setIndicators}
+            onIndicatorsChange={changeIndicators}
             settings={settings}
             alerts={alerts}
             drawings={drawings}
@@ -1151,7 +1462,7 @@ function App() {
             stayInDrawingMode={false}
             drawingsLocked={prefs.drawingsLocked}
             drawingsHidden={prefs.drawingsHidden}
-            onCreateDrawing={(d: NewDrawing) => addDrawing(d)}
+            onCreateDrawing={createDrawing}
             onUpdateDrawing={updateDrawing}
             onRemoveDrawing={removeDrawing}
             onToolDone={() => setTool('cross')}
@@ -1160,7 +1471,8 @@ function App() {
             onAddPin={() => {}}
             onPinFail={() => {}}
             replay={false}
-            onReplayExit={() => setReplay(false)}
+            onReplayExit={() => {}}
+            onNotice={pushToast}
             active={false}
             highlightActive={false}
             onActivate={() => {}}
@@ -1219,7 +1531,7 @@ function App() {
             templates: (
               <IndicatorTemplatesMenu
                 indicators={indicators}
-                onApply={setIndicators}
+                onApply={applyIndicatorTemplate}
                 onClose={() => setMobileSheet(null)}
               />
             ),
@@ -1231,8 +1543,9 @@ function App() {
               <MobileTrade
                 symbol={activeSymbol}
                 symbols={symbols}
-                onSelectSymbol={(s) => setCellField(active, { symbol: s })}
+                onSelectSymbol={setCellSymbol}
                 draft={tradeDraft}
+                onDraftApplied={() => setTradeDraft(null)}
               />
             ),
           }}
@@ -1247,14 +1560,22 @@ function App() {
           onSnapshot={snapshotShare}
           chartType={activeCell.chartType}
           onChartTypeChange={setChartType}
-          replay={replay}
-          onToggleReplay={() => setReplay((v) => !v)}
+          replay={replayOn}
+          onToggleReplay={toggleReplay}
           onOpenSettings={() => setSettingsOpen(true)}
           onGoToDate={() => setGoToOpen(true)}
           onApplyRange={applyDateRange}
           timezone={settings.timezone}
           scaleEntries={scaleEntries}
-          drawing={{ ...drawingToolbarProps, canUndo, canRedo, onUndo: undo, onRedo: redo }}
+          drawing={{
+            ...drawingToolbarProps,
+            drawingCount: drawings.filter((d) => d.symbol === activeSymbol).length,
+            indicatorCount: indicators.length,
+            canUndo,
+            canRedo,
+            onUndo: undoDrawing,
+            onRedo: redoDrawing,
+          }}
         />
         {dialogs}
       </PaperContext.Provider>
@@ -1298,15 +1619,19 @@ function App() {
                 }
           }
         >
-          {visibleCells.map((cell, i) =>
+          {cells.slice(0, layout).map((cell, i) =>
             renderCell(
               cell,
-              maximizedNow ? active : i,
-              effectiveLayout === 1
-                ? undefined
-                : effectiveLayout === 2
-                  ? { gridColumn: i === 0 ? 1 : 3, gridRow: 1 }
-                  : { gridColumn: i % 2 === 0 ? 1 : 3, gridRow: i < 2 ? 1 : 3 },
+              i,
+              maximizedNow
+                ? i === active
+                  ? undefined
+                  : HIDDEN_CELL
+                : effectiveLayout === 1
+                  ? undefined
+                  : effectiveLayout === 2
+                    ? { gridColumn: i === 0 ? 1 : 3, gridRow: 1 }
+                    : { gridColumn: i % 2 === 0 ? 1 : 3, gridRow: i < 2 ? 1 : 3 },
             ),
           )}
 
@@ -1338,7 +1663,7 @@ function App() {
           timezone={settings.timezone}
           onTimezoneChange={(id) => setSettings((prev) => ({ ...prev, timezone: id }))}
           scaleMode={activeCell.scaleMode}
-          onScaleModeChange={(mode) => setCellField(active, { scaleMode: mode })}
+          onScaleModeChange={(mode) => setScaleMode(active, mode)}
           autoScale={activeCell.autoScale}
           onAutoScaleChange={(v) => setCellField(active, { autoScale: v })}
           shortcut={shortcutKeys.label}
@@ -1349,7 +1674,7 @@ function App() {
         <TradingPanel
           symbols={symbols}
           activeSymbol={activeSymbol}
-          onSelectSymbol={(s) => setCellField(active, { symbol: s })}
+          onSelectSymbol={setCellSymbol}
           variant="desktop"
           collapsed={!prefs.tradePanelOpen}
           onCollapsedChange={(v) => patchPrefs({ tradePanelOpen: !v })}

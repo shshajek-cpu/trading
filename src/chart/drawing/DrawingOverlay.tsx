@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { IChartApi, ISeriesApi, SeriesType } from 'lightweight-charts'
+import type { IChartApi, ISeriesApi, Logical, SeriesType } from 'lightweight-charts'
 import type { Candle, Interval } from '../../lib/binance'
 import type { ChartPalette } from '../../lib/theme'
 import { DRAWING_PALETTE } from '../../lib/theme'
@@ -46,6 +46,8 @@ export interface DrawingOverlayProps {
   onToolDone: () => void
   /** 우클릭 — 누른 자리(그림·차트·가격축·시간축)를 알려 준다. 비활성 칸에서도 받는다. */
   onContextMenu?: (req: ChartMenuRequest) => void
+  /** 밖(객체 트리)에서 고른 그림. nonce 가 바뀔 때마다 이 차트에 그 그림이 있으면 선택한다. */
+  selectRequest?: { id: string; nonce: number } | null
 }
 
 const CURSOR_TOOLS: Record<string, true> = { cross: true, dot: true, arrow: true, eraser: true }
@@ -163,6 +165,7 @@ export function DrawingOverlay(props: DrawingOverlayProps) {
     onRemove,
     onToolDone,
     onContextMenu,
+    selectRequest,
   } = props
 
   const [selectedId, setSelectedId] = useState<string | null>(null)
@@ -274,6 +277,37 @@ export function DrawingOverlay(props: DrawingOverlayProps) {
   useEffect(() => {
     setSelectedId(null)
   }, [symbol])
+
+  // ── 밖(객체 트리)에서 고른 그림 선택. 심볼 초기화 뒤에 둬야 같은 렌더에 온 요청이 지워지지 않는다. ──
+  // nonce 가 바뀔 때만 — 다른 이유로 다시 그려질 때 사용자가 푼 선택을 되살리지 않는다.
+  const selectNonce = selectRequest?.nonce
+  const selectTarget = selectRequest?.id
+  useEffect(() => {
+    if (selectNonce === undefined || !selectTarget) return
+    const l = latest.current
+    const d = l.drawings.find((x) => x.id === selectTarget)
+    // 숨긴 그림(개별·전체)은 고르지 않는다 — 보이지 않게 골라 두면 다시 보일 때 뜻밖에 선택돼 있다.
+    if (!d || d.hidden || l.hidden) return
+    setSelectedId(d.id)
+    // 앵커가 모두 화면 밖이면 첫 점이 가운데 오게 시간축만 옮긴다. 수평선은 어느 시간에서나 보이고,
+    // 가격축은 자동 맞춤을 깨지 않게 건드리지 않는다.
+    if (d.kind === 'horizontal') return
+    const ts = l.chart.timeScale()
+    const range = ts.getVisibleLogicalRange()
+    if (!range) return
+    const coords = coordsOf()
+    let first: number | null = null
+    for (const pt of d.points) {
+      const lg = coords.timeToLogical(pt.time)
+      if (lg === null) continue
+      if (first === null) first = lg
+      // 오른쪽으로 끝없이 뻗는 수평 레이는 시작점이 화면 오른쪽 끝보다 앞이면 보인다.
+      if (d.kind === 'horizontalRay' ? lg <= range.to : lg >= range.from && lg <= range.to) return
+    }
+    if (first === null) return
+    const half = (range.to - range.from) / 2
+    ts.setVisibleLogicalRange({ from: (first - half) as Logical, to: (first + half) as Logical })
+  }, [selectNonce, selectTarget, coordsOf])
 
   const setScroll = useCallback(
     (on: boolean) => {
@@ -424,16 +458,19 @@ export function DrawingOverlay(props: DrawingOverlayProps) {
       }
 
       // 커서 도구. 손가락은 마우스보다 부정확해서 터치는 잡는 폭을 넓힌다. 전체 숨김이면 잡을 것이 없다.
-      const picked = l.hidden ? null : pickDrawing(l.drawings, coords, p, e.pointerType === 'touch')
+      const touch = e.pointerType === 'touch'
       if (t === 'eraser') {
-        if (picked) {
-          handlers.current.onRemove(picked.drawing.id)
-          if (l.selectedId === picked.drawing.id) setSelectedId(null)
+        // 잠근 그림은 지우개로 지우지 않고 그 아래 잠기지 않은 그림을 본다. 전체 잠금이면 아무것도 지우지 않는다.
+        const target = l.hidden || l.locked ? null : pickDrawing(l.drawings, coords, p, touch, true)
+        if (target) {
+          handlers.current.onRemove(target.drawing.id)
+          if (l.selectedId === target.drawing.id) setSelectedId(null)
           e.preventDefault()
           e.stopPropagation()
         }
         return
       }
+      const picked = l.hidden ? null : pickDrawing(l.drawings, coords, p, touch)
 
       if (picked) {
         setSelectedId(picked.drawing.id)
@@ -795,6 +832,8 @@ export function DrawingOverlay(props: DrawingOverlayProps) {
       const ctrl = e.ctrlKey || e.metaKey
 
       if ((e.key === 'Delete' || e.key === 'Backspace') && selected) {
+        // 잠근 그림(개별·전체 잠금)은 지우지 않는다 — 잠금 툴팁의 약속. 지우려면 잠금을 먼저 푼다.
+        if (l.locked || selected.locked) return
         onRemove(selected.id)
         setSelectedId(null)
         e.preventDefault()
@@ -907,13 +946,16 @@ export function DrawingOverlay(props: DrawingOverlayProps) {
             setSelectedId(null)
           }}
           onClone={(d) => {
-            onCreate({
-              symbol: d.symbol,
-              kind: d.kind,
-              points: cloneOffset(d.points, interval),
-              style: { ...d.style },
-              alert: false,
-            })
+            // TradingView 처럼 복제본을 선택한다 — 이어지는 방향키·색 변경이 복제본에 간다.
+            setSelectedId(
+              onCreate({
+                symbol: d.symbol,
+                kind: d.kind,
+                points: cloneOffset(d.points, interval),
+                style: { ...d.style },
+                alert: false,
+              }),
+            )
           }}
           onEditText={(d) => {
             const coords = coordsOf()

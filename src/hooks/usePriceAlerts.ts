@@ -50,6 +50,8 @@ export interface UsePriceAlertsResult {
   checkPrice: (symbol: string, price: number) => void
   /** 다른 곳(푸시 워커)에서 이미 울린 알림을 끈다 — 앱을 다시 열었을 때 또 울리지 않게. */
   markFired: (ids: readonly string[]) => void
+  /** 알림을 켜거나 끈다(울린 알림 '다시 켜기'). */
+  setActive: (id: string, active: boolean) => void
 }
 
 export function usePriceAlerts(
@@ -127,6 +129,19 @@ export function usePriceAlerts(
     [replace],
   )
 
+  const setActive = useCallback(
+    (id: string, active: boolean) => {
+      let changed = false
+      const next = current.current.map((a) => {
+        if (a.id !== id || a.active === active) return a
+        changed = true
+        return { ...a, active }
+      })
+      if (changed) replace(next)
+    },
+    [replace],
+  )
+
   const checkPrice = useCallback(
     (symbol: string, price: number) => {
       if (!Number.isFinite(price)) return
@@ -146,5 +161,5 @@ export function usePriceAlerts(
     [replace],
   )
 
-  return { alerts, addAlert, removeAlert, checkPrice, markFired }
+  return { alerts, addAlert, removeAlert, checkPrice, markFired, setActive }
 }

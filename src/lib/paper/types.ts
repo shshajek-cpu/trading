@@ -97,7 +97,11 @@ export interface PaperPosition {
   fundingSum?: number
 }
 
-export type FillReason = 'order' | 'market' | 'tp' | 'sl' | 'liquidation'
+/**
+ * 체결 사유. order = 지정가(바로 닿은 지정가·발동 뒤 지정가 포함), market = 시장가,
+ * trigger = 조건부 주문이 발동해 시장가로 체결, tp·sl = 포지션 익절·손절, liquidation = 강제 청산.
+ */
+export type FillReason = 'order' | 'market' | 'trigger' | 'tp' | 'sl' | 'liquidation'
 
 export interface PaperFill {
   id: string
@@ -192,6 +196,11 @@ export interface PaperAccount {
   /** 시세를 이 시각까지 반영했다 — 다시 열면 여기부터 되짚는다. */
   checkedAt: number
   createdAt: number
+  /**
+   * 이 계좌에 적용한 사용자 명령 id(최근 것만). 충돌 뒤 대기 명령을 다시 적용할 때 이미 반영된 명령을 건너뛴다.
+   * 이 필드가 생기기 전 계좌에는 없을 수 있다(normalizeAccount 가 채운다).
+   */
+  appliedCmds: string[]
 }
 
 export const HISTORY_CAP = 500
@@ -355,6 +364,8 @@ export interface PaperApi {
   setTpSl: (symbol: string, side: PosSide, tp: TpSl | null | undefined, sl: TpSl | null | undefined) => Promise<string | null>
   /** 격리 증거금 추가(+)·감소(−). */
   adjustMargin: (symbol: string, side: PosSide, delta: number) => Promise<string | null>
+  /** 격리 포지션의 증거금 추가·감소 한도(USDT). 격리 포지션이 없거나 규칙을 아직 못 받았으면 null. */
+  marginLimits: (symbol: string, side: PosSide) => { maxAdd: number; maxRemove: number } | null
   setSymbolSettings: (symbol: string, patch: Partial<SymbolSettings>) => Promise<string | null>
   reset: (startBalance: number) => Promise<string | null>
   setFees: (fees: { maker: number; taker: number }) => Promise<string | null>

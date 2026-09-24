@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import { Dialog } from './ui/Dialog'
 import type { AlertCondition } from '../hooks/usePriceAlerts'
 import { useSymbols } from '../hooks/useSymbols'
@@ -118,6 +118,10 @@ export function CreateAlertDialog({
   const [message, setMessage] = useState('')
   const [messageDirty, setMessageDirty] = useState(false)
   const [error, setError] = useState('')
+  const formId = useId()
+  const valueRef = useRef<HTMLInputElement>(null)
+  // 열릴 때 채운 기준값 — 그 값이 입력칸에 그려진 뒤 포커스·전체 선택한다(바로 고쳐 치게).
+  const selectOnOpen = useRef<string | null>(null)
 
   const instance = source === PRICE ? null : (indicators.find((i) => i.id === source) ?? null)
   const lines = useMemo(() => (instance ? alertLines(instance) : []), [instance])
@@ -136,8 +140,8 @@ export function CreateAlertDialog({
     })}`
   }
 
-  // 지표를 고르면 선·조건·트리거·기준값을 그 지표에 맞춰 채운다.
-  const pickSource = (next: string, fromOpen = false) => {
+  // 지표를 고르면 선·조건·트리거·기준값을 그 지표에 맞춰 채운다. 채운 기준값을 돌려준다.
+  const pickSource = (next: string, fromOpen = false): string => {
     setSource(next)
     setError('')
     const nextInstance = next === PRICE ? null : (indicators.find((i) => i.id === next) ?? null)
@@ -146,7 +150,7 @@ export function CreateAlertDialog({
       const initial = start != null ? fmt(start, dec) : ''
       setValue(initial)
       if (fromOpen || !messageDirty) setMessage(autoMessage(initial, null))
-      return
+      return initial
     }
     const nextLines = alertLines(nextInstance)
     const spike = nextInstance.kind === 'volumeSpike'
@@ -160,6 +164,7 @@ export function CreateAlertDialog({
     const text = initial !== null ? formatAlertValue(initial).replace(/,/g, '') : ''
     setValue(text)
     if (fromOpen || !messageDirty) setMessage(autoMessage(text, nextInstance, nextLine, nextCondition))
+    return text
   }
 
   useEffect(() => {
@@ -167,10 +172,19 @@ export function CreateAlertDialog({
     setMessageDirty(false)
     setPriceKind('cross')
     const preset = initialIndicatorId && indicators.some((i) => i.id === initialIndicatorId) ? initialIndicatorId : PRICE
-    pickSource(canIndicator ? preset : PRICE, true)
+    selectOnOpen.current = pickSource(canIndicator ? preset : PRICE, true)
     // 열린 순간의 값만 초기값으로 쓴다.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, symbol, initialIndicatorId])
+
+  // Dialog 는 첫 칸(대상·조건 선택)에 포커스를 준다. 알림은 거의 늘 가격을 고치므로 값 칸으로 옮긴다.
+  useEffect(() => {
+    const el = valueRef.current
+    if (!open || !el || selectOnOpen.current === null || value !== selectOnOpen.current) return
+    selectOnOpen.current = null
+    el.focus()
+    el.select()
+  }, [open, value])
 
   const setValueAndMessage = (next: string) => {
     setValue(next)
@@ -185,7 +199,8 @@ export function CreateAlertDialog({
     setValueAndMessage(instance ? formatAlertValue(next).replace(/,/g, '') : fmt(next, dec))
   }
 
-  const submit = () => {
+  const submit = (e: React.FormEvent) => {
+    e.preventDefault()
     const num = Number(value)
     if (value.trim() === '' || !Number.isFinite(num) || (!instance && num <= 0)) {
       setError(instance ? '기준값을 입력하세요.' : '올바른 가격을 입력하세요.')
@@ -231,13 +246,14 @@ export function CreateAlertDialog({
           <button type="button" className="tv-btn" onClick={onClose}>
             취소
           </button>
-          <button type="button" className="tv-btn primary" onClick={submit}>
+          <button type="submit" form={formId} className="tv-btn primary">
             만들기
           </button>
         </>
       }
     >
-      <div className="ca-body">
+      {/* 폼으로 감싸 값 칸에서 Enter 를 누르면 만들기와 같다(만들기 버튼은 footer 에 있어 form 속성으로 잇는다). */}
+      <form id={formId} className="ca-body" onSubmit={submit}>
         {canIndicator && (
           <label className="ca-field">
             <span className="ca-label">대상</span>
@@ -309,9 +325,11 @@ export function CreateAlertDialog({
               −
             </button>
             <input
+              ref={valueRef}
               className="tv-input ca-value"
               type="number"
               step="any"
+              inputMode="decimal"
               min={instance ? undefined : '0'}
               value={value}
               onChange={(e) => {
@@ -361,7 +379,7 @@ export function CreateAlertDialog({
         )}
 
         {error && <p className="ca-error">{error}</p>}
-      </div>
+      </form>
     </Dialog>
   )
 }

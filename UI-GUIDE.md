@@ -42,10 +42,11 @@ CSS 그리드 한 판(`.tv-app`), 칸 사이는 `--tv-gap` 거터.
 
 - **상단 툴바**(`TopToolbar`): 심볼 알약(128×28, `심볼 검색` 열기) · 심볼 비교 ⊕(`심볼 비교`) · 즐겨찾기 간격 버튼 + 간격 메뉴(☆ 즐겨찾기 토글, `useUiPrefs` 에 저장) · 차트 유형 메뉴 · 지표 · 지표 템플릿(팝오버) · 알림 · 리플레이 · 실행 취소/다시 실행 · (유동 간격) · 레이아웃 · 저장 · 빠른 검색 · 설정 · 전체 화면 · 스냅샷 · 미니창.
 - **좌측 도구**(52px): `DrawingToolbar`.
-- **차트 그리드**: 1/2/4 분할. 경계 바를 끌어 비율 조정, 더블클릭으로 균등. 활성 칸만 그리기·핀 입력을 받는다.
+- **차트 그리드**: 1/2/4 분할. 경계 바를 끌어 비율 조정, 더블클릭으로 균등. 활성 칸만 그리기·핀 입력을 받는다. 레이아웃 메뉴 「모든 칸에 같이 적용」 = 심볼 · 차트 종류 · 십자선(`layoutConfig.syncSymbol`/`syncChartType`/`syncCrosshair`; 십자선은 `chart/crosshairSync` 모듈 구독으로 주고받아 React 상태를 거치지 않는다). 최대화해도 다른 칸은 `display:none` 으로 살려 둔다(다시 불러오지 않음). 리플레이는 시작한 칸(`replayCell`)에 붙어 있고 활성 칸이 바뀌어도 이어진다.
 - **하단 바**(`BottomBar`): 기간 프리셋(1일→1m … 전체→1M, 클릭 시 활성 칸 간격 변경 후 `getChart(active).setVisibleRange`) · 시계(시간대 메뉴) · % / log / auto(활성 칸 스케일).
 - **거래 패널**(`TradingPanel`, `.tv-trade-cell`): 차트 그리드와 하단 바 사이, 거래소 아래 창처럼 펼친 채 시작한다. 위쪽 경계(`.tp-resize`)를 끌어 높이를 바꾸고(기기마다 `useUiPrefs.tradePanelHeight`), ˅ 로 접는다(머리 줄 32px 만 남음). 탭 = 포지션 · 포지션 기록 · 미체결 · 주문 내역 · 체결 내역 · 자금 내역, 오른쪽 260px 는 자산 칸(폰은 자산 탭).
-- **위젯 바**(`WidgetBar`): 우측 탭 45px + 페이지 302px. 탭 = 관심 목록·거래(주문창 `OrderPanel`)·알림·객체 트리·멀티 타임프레임·핀·탐색·동기화. 열린 탭을 다시 누르면 페이지가 접힌다. 알림 탭에 개수 배지.
+- **위젯 바**(`WidgetBar`): 우측 탭 45px + 페이지 302px. 탭 = 관심 목록·거래(주문창 `OrderPanel`)·알림·객체 트리·멀티 타임프레임·핀·탐색·동기화. 열린 탭을 다시 누르면 페이지가 접힌다. 알림 탭에 개수 배지(울리지 않은 알림만).
+- **토스트**(`Toasts`): 오른쪽 아래(폰은 탭 막대·차트 도구 줄 위). 되돌릴 수 있는 동작(지표·그림 일괄 삭제, 템플릿 적용)과 새 버전 알림은 동작 버튼(`pushToast(message, { label, run })`)을 단다.
 - **차트 위 거래 선**(`chart/trade/TradeOverlay`): 진입가·익절·손절·미체결 주문·청산가 선과 왼쪽 라벨. 라벨을 끌어 가격을 바꾸고(청산가 제외) ✕ 로 종료·취소한다. 라벨은 시리즈 프리미티브의 `updateAllViews` 에서 위치만 옮긴다(렌더 없음).
 
 ---
@@ -65,11 +66,11 @@ CSS 그리드 한 판(`.tv-app`), 칸 사이는 `--tv-gap` 거터.
 └────────────────────────────────────┘
 ```
 
-- **탭**: 관심 목록(큰 제목, 두 줄 행 — 누르면 그 종목 차트로) · 차트 · 알림 · 탐색 · 메뉴. 차트는 다른 탭에 있어도 떠 있어 돌아와도 다시 불러오지 않는다.
+- **탭**: 관심 목록(큰 제목, 두 줄 행 — 누르면 그 종목 차트로, ⋯ → 목록 편집에서 위/아래·빼기) · 차트 · 알림 · 탐색 · 메뉴. 차트는 다른 탭에 있어도 떠 있어 돌아와도 다시 불러오지 않는다. 차트가 아닌 탭에서 뒤로가기 = 차트 탭.
 - **차트 도구 줄**: 심볼(검색) · 주기(주기 시트) · 거래 시트(주문창·포지션·미체결·내역 — `MobileTrade`) · + 추가 시트(그리기·지표·알림·비교·지표 템플릿·차트 사진 저장) · ✎ 그리기 시트(도구 타일·자석·모드 유지·잠금·숨기기·실행 취소·삭제) · ⋯ 더보기 시트(심볼 정보·차트 유형·알림 관리·기간·날짜로 이동·바 리플레이·객체 트리·차트 설정·핀·동기화).
 - 그리기 도구를 고르면 시트가 닫히고 시간축 위에 "도구 ✕" 칩이 뜬다. ✕ 로 그리기를 끝낸다.
 - **시트**: `BottomSheet`(배경 탭·✕·Esc·안드로이드 뒤로가기로 닫힘). 타일은 `SheetTiles`, 목록은 `SheetList`(우클릭 메뉴와 같은 `MenuEntry` 를 받는다 — ⚙ 가격 축 시트가 데스크톱 가격축 메뉴와 같은 항목을 쓴다).
-- 안전 영역(`--sat`/`--sab`) 패딩과 안드로이드 뒤로가기·Esc 닫기(`useBackClose`)를 시트·다이얼로그에 붙인다.
+- 안전 영역(`--sat`/`--sab`, 가로 모드는 `--sal`/`--sar` 까지) 패딩과 안드로이드 뒤로가기·Esc 닫기(`useBackClose`)를 시트·다이얼로그에 붙인다. 다이얼로그 층(960)은 시트(950) 위, 메뉴(1000)·토스트(1100)·툴팁(2000)은 그 위.
 
 ---
 
@@ -125,9 +126,9 @@ src/
     MainMenuDrawer.tsx      데스크톱 좌측 메뉴 서랍
     mobile/                 폰 앱: MobileShell(탭·도구 줄·시트) · BottomSheet · MobileBars · MobileMenuPage
     SettingsDialog.tsx      차트 설정(심볼/상태 줄/스케일/캔버스/시간대)
-    QuickSearchDialog.tsx   Ctrl+K 명령 팔레트
+    QuickSearchDialog.tsx   Ctrl+K 명령 팔레트(기능·종목·지표)
     QuickIntervalBox.tsx    숫자로 여는 주기 변경 상자
-    Toasts.tsx              알림 토스트
+    Toasts.tsx              알림 토스트(선택적 동작 버튼)
     menus/                  차트 유형·간격·레이아웃·시간대·스냅샷 팝오버
     SyncPanel/PinPanel/DiscoverPanel/MtfPanel  위젯(평면 스타일)
     trade/                  모의거래: OrderPanel(주문창) · TradingPanel(거래 패널) · MobileTrade(폰 시트) · format(표시 헬퍼)
@@ -138,9 +139,10 @@ src/
     useBackClose.ts         뒤로가기·Esc 로 맨 위 겹침 요소 닫기, hasOpenOverlay
     usePaperTrading.ts      모의거래 계좌·시세 구독·되짚기·D1 동기화 → PaperContext
   lib/
-    layoutConfig.ts         CellConfig·레이아웃·분할·MTF·pane 크기
+    layoutConfig.ts         CellConfig·레이아웃·분할·칸 동기화(심볼·차트 종류·십자선)·MTF·pane 크기
     chartRegistry.ts        차트 명령 핸들
     timezone.ts             차트 시간대 계산(Intl 인자·검증·벽시계↔epoch)
     paper/                  모의거래 계약(types)·엔진(engine, 순수 함수)·OKX 규칙(rules)·명령(commands)·context
   chart/trade/              차트 위 거래 선(TradeOverlay)
+  chart/crosshairSync.ts    분할 칸끼리 십자선 시각을 주고받는 모듈 구독
 ```

@@ -7,7 +7,7 @@
  * - 동기화 코드가 있으면 D1 서버와 낙관적 잠금으로 계좌를 공유하고, 없으면 이 기기(localStorage)만 쓴다.
  */
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   createAccount,
   normalizeAccount,
@@ -21,8 +21,9 @@ import {
   summarize,
   estimateOrder,
   maxOpenQty as engineMaxOpenQty,
+  marginLimits as engineMarginLimits,
 } from '../lib/paper/engine'
-import { applyCommand, type Command } from '../lib/paper/commands'
+import { applyCommand, wasApplied, type Command, type CommandBody } from '../lib/paper/commands'
 import { loadRules } from '../lib/paper/rules'
 import {
   fetchAggTrades,
@@ -39,7 +40,7 @@ import {
   type Interval,
   type MarkPriceEvent,
 } from '../lib/binance'
-import { ACTION_LABEL, fmtPrice, fmtQty, fmtUsdt, SIDE_LABEL } from '../components/trade/format'
+import { ACTION_LABEL, fmtPrice, fmtQty, fmtUsdt, SIDE_LABEL, TYPE_LABEL } from '../components/trade/format'
 import type { SymbolInfo } from '../lib/symbols'
 import {
   DEFAULT_START_BALANCE,
@@ -87,6 +88,12 @@ const CATCHUP_MIN_GAP = 2000
 const HIDE_SAVE_GAP = 5 * MINUTE
 /** 되짚는 동안 쌓아 둘 실시간 시세 수 상한(되짚기는 보통 몇 초). */
 const MAX_DEFERRED = 50_000
+/** 스트림 시세가 이보다 오래되면(끊김·복귀 직후) 동작에 쓰지 않고 호가를 새로 받는다. */
+const STALE_QUOTE_MS = 10_000
+/** 저장이 서버에 닿지 못했을 때 다시 올리는 간격(연속 실패마다 다음 값, 마지막 값에서 멈춘다). */
+const SAVE_RETRY_MS = [15_000, 30_000, 60_000]
+/** keepalive 요청 본문 상한(브라우저 한도 64KB 보다 조금 작게). */
+const KEEPALIVE_MAX_BYTES = 60_000
 
 /** 엔진에 넣을 실시간 시세 한 건. other = 체결이면 그때의 마크가, 마크면 그때의 최근 체결가. */
 interface LiveStep {
@@ -170,7 +177,7 @@ export function usePaperTrading(opts: UsePaperTradingOptions): PaperApi {
     message: '',
   }))
   const [catchingUp, setCatchingUp] = useState(false)
-  const [, setRulesVersion] = useState(0)
+  const [rulesVersion, setRulesVersion] = useState(0)
   const [, setWatchVersion] = useState(0)
 
   const versionRef = useRef(initial && initial.code === opts.code.trim() ? initial.version : 0)
@@ -181,10 +188,17 @@ export function usePaperTrading(opts: UsePaperTradingOptions): PaperApi {
   const rulesMapRef = useRef(new Map<string, SymbolRules>())
   const rulesLoadingRef = useRef(new Set<string>())
   const quotesRef = useRef<Record<string, PaperQuote>>({})
+  /** 종목별로 스트림 시세를 마지막으로 받은 이 기기 시각 — 시세가 오래됐는지 본다(거래소 시각과 기기 시계 차이와 무관). */
+  const quoteSeenRef = useRef(new Map<string, number>())
   const watchedRef = useRef(new Map<string, number>())
   const lastNextFundingRef = useRef(new Map<string, number>())
   const fundingTimerRef = useRef(new Map<string, ReturnType<typeof setTimeout>>())
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  /** 저장(또는 충돌 처리) 중 — 겹쳐 보내지 않고 끝난 뒤 한 번 더 올린다. */
+  const savingRef = useRef(false)
+  const saveAgainRef = useRef(false)
+  /** 연속으로 서버에 닿지 못한 저장 수(다시 올리는 간격을 정한다). */
+  const saveRetryRef = useRef(0)
   const catchUpRunningRef = useRef(false)
   const lastReqRef = useRef(0)
   const deferredRef = useRef<LiveStep[]>([])
@@ -247,21 +261,36 @@ export function usePaperTrading(opts: UsePaperTradingOptions): PaperApi {
     return marks
   }
 
+  /** 마지막으로 받은 시세 그대로(오래됐을 수 있다) — 화면 추정치·레버리지 변경용. 주문·정정 등 시세로 판정하는 동작은 actionSnap. */
   function snapOf(symbol: string): MarketSnap | null {
     const q = quotesRef.current[symbol]
     if (!q || !Number.isFinite(q.last)) return null
     return { last: q.last, mark: Number.isFinite(q.mark) ? q.mark : q.last, at: q.at }
   }
 
-  async function snapForMarket(symbol: string): Promise<MarketSnap | null> {
-    try {
-      const bt = await fetchBookTicker(symbol)
-      const q = quotesRef.current[symbol]
+  /** 10초 안에 받은 스트림 시세. 스트림이 끊겼거나 막 돌아왔으면 null. */
+  function freshQuote(symbol: string): PaperQuote | null {
+    const q = quotesRef.current[symbol]
+    if (!q || !Number.isFinite(q.last)) return null
+    return Date.now() - (quoteSeenRef.current.get(symbol) ?? 0) <= STALE_QUOTE_MS ? q : null
+  }
+
+  /**
+   * 사용자 동작에 쓸 시세. 시각은 지금이다 — 옛 시각이면 새 주문·포지션의 updatedAt 이 과거가 되어 되짚기가
+   * 넣기 전의 봉으로 체결·손절을 판정한다. 시장가(book)는 늘 호가를 새로 받고, 그 밖에는 스트림 시세가 오래됐을
+   * 때만 받는다. 오래된 최근가·마크가는 새 호가와 섞지 않고 호가 중간값으로 대신한다. 쓸 시세가 없으면 오류 문구.
+   */
+  async function actionSnap(symbol: string, book: boolean): Promise<MarketSnap | string> {
+    const bt = book || !freshQuote(symbol) ? await fetchBookTicker(symbol).catch(() => null) : null
+    // 호가를 받는 사이 스트림이 돌아왔을 수 있다 — 다시 본다.
+    const q = freshQuote(symbol)
+    const snap: MarketSnap | null = q ? { last: q.last, mark: Number.isFinite(q.mark) ? q.mark : q.last, at: Date.now() } : null
+    if (bt && bt.bid > 0 && bt.ask > 0) {
       const mid = (bt.bid + bt.ask) / 2
-      return { last: q?.last ?? mid, mark: q?.mark ?? mid, bid: bt.bid, ask: bt.ask, at: bt.time }
-    } catch {
-      return snapOf(symbol)
+      return { last: snap?.last ?? mid, mark: snap?.mark ?? mid, bid: bt.bid, ask: bt.ask, at: Date.now() }
     }
+    if (snap) return snap
+    return quotesRef.current[symbol] ? '시세가 오래되어 주문할 수 없습니다. 잠시 후 다시 시도하세요' : '시세를 아직 받지 못했습니다'
   }
 
   /* ── 라이브 스토어 ──────────────────────────────────────────── */
@@ -308,57 +337,77 @@ export function usePaperTrading(opts: UsePaperTradingOptions): PaperApi {
     }
   }
 
-  function scheduleSave(): void {
+  function scheduleSave(wait = SAVE_DEBOUNCE_MS): void {
     if (modeRef.current !== 'server') return
-    if (saveTimerRef.current) clearTimeout(saveTimerRef.current)
+    clearTimeout(saveTimerRef.current ?? undefined)
     saveTimerRef.current = setTimeout(() => {
       saveTimerRef.current = null
       void doSave()
-    }, SAVE_DEBOUNCE_MS)
+    }, wait)
   }
 
-  async function doSave(): Promise<void> {
+  /** 서버에 닿지 못했다 — 이 기기에만 저장해 두고, 간격을 늘려 가며 다시 올린다. */
+  function saveOffline(): void {
+    setSync({ mode: 'server', status: 'offline', message: OFFLINE_MSG })
+    const wait = SAVE_RETRY_MS[Math.min(saveRetryRef.current, SAVE_RETRY_MS.length - 1)]
+    saveRetryRef.current++
+    // 이미 예약된 저장(사용자 동작 뒤 짧은 대기)이 있으면 그것이 먼저 다시 시도한다.
+    if (!saveTimerRef.current) scheduleSave(wait)
+  }
+
+  /**
+   * 계좌를 서버에 올린다. keepalive = 탭을 숨길 때 — 페이지가 멈추거나 닫혀도 요청은 끝까지 가고, 응답을 받으면
+   * 여느 저장처럼 처리한다. 올리는 중이면 끝난 뒤 한 번 더 올린다(같은 baseVersion 으로 겹쳐 보내면 하나는 괜히 충돌한다).
+   */
+  async function doSave(keepalive = false): Promise<void> {
     if (modeRef.current !== 'server') return
     const code = optsRef.current.code.trim()
     if (!code) return
+    if (savingRef.current) {
+      saveAgainRef.current = true
+      return
+    }
+    savingRef.current = true
+    saveAgainRef.current = false
     const baseVersion = versionRef.current
     const state = accountRef.current
-    const pendingCount = pendingRef.current.length
+    // 이번에 올리는 대기 명령 — 기다리는 사이 배열이 바뀌어도 올린 명령만 지운다.
+    const sent = new Set(pendingRef.current)
     const body = JSON.stringify({ baseVersion, state })
     setSync((s) => ({ ...s, status: 'saving' }))
 
-    let res: Response
+    let res: Response | null = null
+    let data: ServerResponse | null = null
     try {
       res = await fetch(`/api/paper?code=${encodeURIComponent(code)}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body,
+        // keepalive 요청은 본문 크기 한도가 있다 — 넘으면 보통 요청으로 보낸다(숨긴 탭은 대개 조금 더 살아 있다).
+        keepalive: keepalive && new TextEncoder().encode(body).byteLength <= KEEPALIVE_MAX_BYTES,
       })
+      if (res.status !== 404) data = (await res.json()) as ServerResponse
     } catch {
-      setSync({ mode: 'server', status: 'offline', message: OFFLINE_MSG })
-      return
+      /* 네트워크 오류·JSON 아님 — 아래에서 오프라인으로 */
+    } finally {
+      savingRef.current = false
     }
-    if (res.status === 404) {
-      setSync({ mode: 'server', status: 'offline', message: OFFLINE_MSG })
-      return
-    }
-    let data: ServerResponse
-    try {
-      data = (await res.json()) as ServerResponse
-    } catch {
-      setSync({ mode: 'server', status: 'offline', message: OFFLINE_MSG })
+    if (!res || !data) {
+      saveOffline()
       return
     }
     if (res.ok && typeof data.version === 'number') {
       versionRef.current = data.version
-      pendingRef.current = pendingRef.current.slice(pendingCount)
+      pendingRef.current = pendingRef.current.filter((c) => !sent.has(c))
       savedCheckedAtRef.current = state.checkedAt
+      saveRetryRef.current = 0
       saveLocal()
       setSync({ mode: 'server', status: 'idle', message: '' })
-      if (pendingRef.current.length) scheduleSave()
+      if (pendingRef.current.length || saveAgainRef.current) scheduleSave()
       return
     }
     if (res.status === 409 && data.state && typeof data.version === 'number') {
+      saveRetryRef.current = 0
       await handleConflict(data.state, data.version)
       return
     }
@@ -377,34 +426,50 @@ export function usePaperTrading(opts: UsePaperTradingOptions): PaperApi {
     await runCatchUp()
   }
 
-  /** 충돌: 서버 상태를 받아 되짚은 뒤 대기 명령을 순서대로 다시 적용하고 저장한다. */
+  /**
+   * 충돌: 서버 상태를 받아 되짚은 뒤 대기 명령을 순서대로 다시 적용하고 저장한다.
+   * 서버 상태에 이미 반영된 명령(탭을 숨길 때 올린 저장 등)은 버린다 — 다시 적용하면 주문이 두 번 들어간다.
+   * 다시 적용한 명령의 체결 알림은 처음 넣을 때 이미 띄웠으니 다시 띄우지 않는다(실패만 알린다).
+   */
   async function handleConflict(serverState: PaperAccount, version: number): Promise<void> {
-    const state = normalizeAccount(serverState)
-    accountRef.current = state
-    versionRef.current = version
-    setAccount(state)
-    markLiveDirty()
-    await runCatchUp()
-    const still: Command[] = []
-    for (const cmd of pendingRef.current) {
-      const r = applyCommand(accountRef.current, cmd, rulesOf)
-      if ('error' in r) {
-        optsRef.current.toast('다른 기기에서 먼저 바뀌어 적용하지 못했습니다: ' + r.error)
-        continue
+    // 푸는 동안 저장·폴링을 미룬다 — 명령을 다시 적용하기 전의 서버 상태가 올라가면 그 명령이 사라진다.
+    savingRef.current = true
+    try {
+      const state = normalizeAccount(serverState)
+      const onServer = new Set(state.appliedCmds)
+      accountRef.current = state
+      versionRef.current = version
+      setAccount(state)
+      markLiveDirty()
+      await runCatchUp()
+      const still: Command[] = []
+      for (const cmd of pendingRef.current) {
+        if (cmd.id !== undefined && onServer.has(cmd.id)) continue
+        // 되짚는 사이에 넣은 명령은 이미 이 계좌에 적용됐다 — 올릴 목록에만 남긴다.
+        if (wasApplied(accountRef.current, cmd)) {
+          still.push(cmd)
+          continue
+        }
+        const r = applyCommand(accountRef.current, cmd, rulesOf)
+        if ('error' in r) {
+          optsRef.current.toast('다른 기기에서 먼저 바뀌어 적용하지 못했습니다: ' + r.error)
+          continue
+        }
+        accountRef.current = r.account
+        still.push(cmd)
       }
-      accountRef.current = r.account
-      still.push(cmd)
-      if (r.events.length) handleEvents(r.events)
+      pendingRef.current = still
+      setAccount(accountRef.current)
+      saveLocal()
+      markLiveDirty()
+    } finally {
+      savingRef.current = false
     }
-    pendingRef.current = still
-    setAccount(accountRef.current)
-    saveLocal()
-    markLiveDirty()
     await doSave()
   }
 
   async function poll(): Promise<void> {
-    if (modeRef.current !== 'server' || document.hidden) return
+    if (modeRef.current !== 'server' || document.hidden || savingRef.current) return
     const code = optsRef.current.code.trim()
     if (!code) return
     let data: ServerResponse
@@ -419,10 +484,14 @@ export function usePaperTrading(opts: UsePaperTradingOptions): PaperApi {
       return
     }
     if (data.same) {
+      // 서버에 닿는다 — 못 올린 명령이 남아 있으면 지금 올린다(안 그러면 문구만 사라지고 서버에는 없다).
+      if (pendingRef.current.length) scheduleSave()
       // 폴링은 마운트 때 만든 타이머에서 돈다 — 상태는 함수형 갱신으로 최신 값을 본다.
-      setSync((s) => (s.status === 'offline' ? { mode: 'server', status: 'idle', message: '' } : s))
+      else setSync((s) => (s.status === 'offline' ? { mode: 'server', status: 'idle', message: '' } : s))
       return
     }
+    // 기다리는 사이 저장이 시작됐으면 그 응답(충돌)이 처리한다.
+    if (savingRef.current) return
     if (typeof data.version === 'number' && data.version > versionRef.current && data.state) {
       if (pendingRef.current.length === 0) await adopt(data.state, data.version)
       else await handleConflict(data.state, data.version)
@@ -438,8 +507,16 @@ export function usePaperTrading(opts: UsePaperTradingOptions): PaperApi {
 
   function handleEvents(events: EngineEvent[]): void {
     for (const ev of events) {
-      if (ev.kind === 'canceled' || ev.kind === 'funding') continue
+      if (ev.kind === 'funding') continue
       const name = optsRef.current.displayName
+      if (ev.kind === 'canceled') {
+        // 조건부 주문이 발동 뒤 거절됐을 때만 알린다(증거금 부족·구간 초과). 사용자 취소, 청산·포지션 종료에 따른 취소는 조용히.
+        const o = ev.order
+        if (o.status === 'rejected') {
+          notifyAndToast('조건부 주문 거절', `조건부 주문 거절: ${name(o.symbol)} ${SIDE_LABEL[o.side]} — ${o.note ?? '거절'}`, `paper-${o.id}`)
+        }
+        continue
+      }
       if (ev.kind === 'triggered') {
         const o = ev.order
         notifyAndToast('조건부 주문 발동', `${name(o.symbol)} ${SIDE_LABEL[o.side]} 조건부 주문 발동`, `paper-${o.id}`)
@@ -468,6 +545,8 @@ export function usePaperTrading(opts: UsePaperTradingOptions): PaperApi {
       } else if (f.reason === 'sl') {
         title = '손절 체결'
         typeLabel = '손절'
+      } else if (f.reason === 'trigger') {
+        typeLabel = '조건부 시장가'
       } else if (f.reason === 'order') {
         typeLabel = '지정가'
       }
@@ -721,6 +800,7 @@ export function usePaperTrading(opts: UsePaperTradingOptions): PaperApi {
           at,
         },
       }
+      quoteSeenRef.current.set(symbol, Date.now())
       runStep({ kind: 'trade', symbol, price, at, other: quotesRef.current[symbol].mark })
       markLiveDirty()
     } else if (d.e === 'markPriceUpdate') {
@@ -738,6 +818,7 @@ export function usePaperTrading(opts: UsePaperTradingOptions): PaperApi {
           at,
         },
       }
+      quoteSeenRef.current.set(symbol, Date.now())
       runStep({ kind: 'mark', symbol, price: mark, at, other: prev?.last })
       markLiveDirty()
       scheduleFunding(symbol, d.T)
@@ -746,7 +827,9 @@ export function usePaperTrading(opts: UsePaperTradingOptions): PaperApi {
 
   /* ── 사용자 동작 ────────────────────────────────────────────── */
 
-  function dispatch(cmd: Command): string | null {
+  function dispatch(body: CommandBody): string | null {
+    // id — 충돌 뒤 다시 적용할 때 이미 서버 상태에 반영된 명령을 거른다.
+    const cmd: Command = { ...body, id: `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}` }
     const res = applyCommand(accountRef.current, cmd, rulesOf)
     if ('error' in res) return res.error
     accountRef.current = res.account
@@ -760,11 +843,8 @@ export function usePaperTrading(opts: UsePaperTradingOptions): PaperApi {
     return null
   }
 
-  const api: PaperApi = {
-    account,
-    live: storeRef.current,
-    sync,
-    catchingUp,
+  type Methods = Omit<PaperApi, 'account' | 'live' | 'sync' | 'catchingUp'>
+  const methods: Methods = {
     rules: (symbol) => {
       const r = rulesMapRef.current.get(symbol)
       if (r) return r
@@ -773,44 +853,74 @@ export function usePaperTrading(opts: UsePaperTradingOptions): PaperApi {
     },
     watch: (symbol) => {
       const m = watchedRef.current
-      m.set(symbol, (m.get(symbol) ?? 0) + 1)
+      const count = (m.get(symbol) ?? 0) + 1
+      m.set(symbol, count)
       ensureRules(symbol)
-      setWatchVersion((v) => v + 1)
+      // 받는 종목 목록이 실제로 바뀔 때(첫 구독)만 다시 그린다 — 스트림을 다시 열어야 하니까.
+      if (count === 1) setWatchVersion((v) => v + 1)
+      let released = false
       return () => {
-        const n = (m.get(symbol) ?? 0) - 1
-        if (n <= 0) m.delete(symbol)
-        else m.set(symbol, n)
+        if (released) return
+        released = true
+        const left = (m.get(symbol) ?? 0) - 1
+        if (left > 0) {
+          m.set(symbol, left)
+          return
+        }
+        m.delete(symbol)
         setWatchVersion((v) => v + 1)
       }
     },
     place: async (req) => {
-      const snap = req.type === 'market' ? await snapForMarket(req.symbol) : snapOf(req.symbol)
-      if (!snap) return '시세를 아직 받지 못했습니다'
-      return dispatch({ kind: 'place', req, snap, marks: buildMarks(), at: Date.now() })
+      const snap = await actionSnap(req.symbol, req.type === 'market')
+      if (typeof snap === 'string') return snap
+      const before = new Set(accountRef.current.orders.map((o) => o.id))
+      const err = dispatch({ kind: 'place', req, snap, marks: buildMarks(), at: Date.now() })
+      if (err) return err
+      // 바로 체결되면 체결 알림이 따로 뜬다 — 대기 주문으로 남았을 때만 접수됐음을 알린다.
+      const rested = accountRef.current.orders.find((o) => !before.has(o.id))
+      if (rested) {
+        const info = infoOf(rested.symbol)
+        const tick = info?.tickSize && info.tickSize > 0 ? info.tickSize : 0.01
+        const step = info?.stepSize && info.stepSize > 0 ? info.stepSize : 0.001
+        const at = rested.type === 'trigger' ? `발동 ${fmtPrice(rested.triggerPrice ?? 0, tick)}` : `@ ${fmtPrice(rested.price ?? 0, tick)}`
+        optsRef.current.toast(
+          `주문 접수: ${optsRef.current.displayName(rested.symbol)} ${SIDE_LABEL[rested.side]} ${ACTION_LABEL[rested.action]} ${TYPE_LABEL[rested.type]} ${fmtQty(rested.qty, step)} ${at}`,
+        )
+      }
+      return null
     },
     cancel: async (orderId) => dispatch({ kind: 'cancel', orderId, at: Date.now() }),
     cancelAll: async (symbol) => dispatch({ kind: 'cancelAll', symbol: symbol ?? null, at: Date.now() }),
     amend: async (orderId, patch) => {
       const order = accountRef.current.orders.find((o) => o.id === orderId)
       if (!order) return '주문을 찾을 수 없습니다'
-      const snap = snapOf(order.symbol)
-      if (!snap) return '시세를 아직 받지 못했습니다'
+      const snap = await actionSnap(order.symbol, false)
+      if (typeof snap === 'string') return snap
       return dispatch({ kind: 'amend', orderId, patch, snap, marks: buildMarks(), at: Date.now() })
     },
     close: async (symbol, side, qty) => {
-      const snap = await snapForMarket(symbol)
-      if (!snap) return '시세를 아직 받지 못했습니다'
+      const snap = await actionSnap(symbol, true)
+      if (typeof snap === 'string') return snap
       return dispatch({ kind: 'close', symbol, side, qty: qty ?? 0, snap, marks: buildMarks(), at: Date.now() })
     },
     setTpSl: async (symbol, side, tp, sl) => {
-      const snap = snapOf(symbol)
-      if (!snap) return '시세를 아직 받지 못했습니다'
+      const snap = await actionSnap(symbol, false)
+      if (typeof snap === 'string') return snap
       return dispatch({ kind: 'setTpSl', symbol, side, tp, sl, snap, marks: buildMarks(), at: Date.now() })
     },
     adjustMargin: async (symbol, side, delta) => {
-      const snap = snapOf(symbol)
-      if (!snap) return '시세를 아직 받지 못했습니다'
+      const snap = await actionSnap(symbol, false)
+      if (typeof snap === 'string') return snap
       return dispatch({ kind: 'adjustMargin', symbol, side, delta, snap, marks: buildMarks(), at: Date.now() })
+    },
+    marginLimits: (symbol, side) => {
+      const rules = rulesMapRef.current.get(symbol)
+      if (!rules) {
+        ensureRules(symbol)
+        return null
+      }
+      return engineMarginLimits(accountRef.current, symbol, side, rules, buildMarks())
     },
     setSymbolSettings: async (symbol, patch) =>
       dispatch({ kind: 'setSymbolSettings', symbol, patch, snap: snapOf(symbol), marks: buildMarks(), at: Date.now() }),
@@ -837,12 +947,35 @@ export function usePaperTrading(opts: UsePaperTradingOptions): PaperApi {
     report: (message) => optsRef.current.toast(message),
   }
 
+  // 화면이 효과 의존성에 메서드를 넣어도 다시 걸리지 않게, 메서드는 처음 만든 함수 그대로 두고 몸통만 최신 구현을 부른다.
+  // (렌더마다 새 함수였을 때: 주문창의 watch 효과가 매번 끊고 다시 걸며 상태를 바꿔 App 이 초당 수십 번 다시 그려졌다.)
+  const methodsRef = useRef(methods)
+  methodsRef.current = methods
+  const stableRef = useRef<Methods | null>(null)
+  if (!stableRef.current) {
+    const stable = {} as Record<string, unknown>
+    for (const key of Object.keys(methods) as (keyof Methods)[]) {
+      stable[key] = (...args: unknown[]) => (methodsRef.current[key] as (...a: unknown[]) => unknown)(...args)
+    }
+    stableRef.current = stable as unknown as Methods
+  }
+  const stableMethods = stableRef.current
+  // 계좌·동기화·되짚기 상태나 규칙·구독이 바뀔 때만 새 객체 — 이것을 읽는 화면이 그때만 다시 그린다.
+  const api = useMemo<PaperApi>(
+    () => ({ account, live: storeRef.current!, sync, catchingUp, ...stableMethods }),
+    // 규칙을 받으면 rules() 결과가 달라진다 — 새 객체로 화면을 다시 그리게 일부러 넣는다.
+    // (구독 변화는 App 만 다시 그려 스트림 종목을 다시 셈하면 된다 — 넣으면 watch 효과와 맞물려 무한 반복된다.)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [account, sync, catchingUp, rulesVersion, stableMethods],
+  )
+
   /* ── 효과 ───────────────────────────────────────────────────── */
 
   // 동기화 코드가 바뀌면(또는 처음 마운트) 서버와 맞춘다.
   useEffect(() => {
     const code = opts.code.trim()
     modeRef.current = code ? 'server' : 'local'
+    saveRetryRef.current = 0
     if (!code) {
       setSync({ mode: 'local', status: 'idle', message: '' })
       return
@@ -957,38 +1090,48 @@ export function usePaperTrading(opts: UsePaperTradingOptions): PaperApi {
 
   // 서버 폴링(보이는 동안 8초마다) + 탭 복귀/숨김 처리.
   useEffect(() => {
-    const flushOnHide = () => {
+    /** leaving = pagehide(페이지를 떠남). 아니면 탭을 숨겼을 뿐 페이지는 살아 있다. */
+    const flushOnHide = (leaving: boolean) => {
       saveLocal()
       if (modeRef.current !== 'server') return
       const code = optsRef.current.code.trim()
       if (!code) return
-      if (accountRef.current.checkedAt - savedCheckedAtRef.current < HIDE_SAVE_GAP) return
-      try {
-        void fetch(`/api/paper?code=${encodeURIComponent(code)}`, {
-          method: 'PUT',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ baseVersion: versionRef.current, state: accountRef.current }),
-          keepalive: true,
-        })
-        savedCheckedAtRef.current = accountRef.current.checkedAt
-      } catch {
-        /* 마지막 저장 실패는 무시 */
+      // 올릴 것 — 못 올린 명령, 또는 마지막 저장보다 많이 앞선 반영 시각(되짚기 결과).
+      if (pendingRef.current.length === 0 && accountRef.current.checkedAt - savedCheckedAtRef.current < HIDE_SAVE_GAP) return
+      if (!leaving) {
+        // 여느 저장 경로로 올려 응답(버전·충돌)까지 처리한다. keepalive 라 페이지가 멈춰도 요청은 끝난다.
+        clearTimeout(saveTimerRef.current ?? undefined)
+        saveTimerRef.current = null
+        void doSave(true)
+        return
       }
+      // 떠나는 중 — 응답을 받을 수 없으니 보내고 잊는다. 대기 명령은 남는데, 이 저장에 이미 반영된 명령은
+      // 다음에 열 때 충돌 처리에서 id 로 걸러진다(다시 적용하지 않는다).
+      void fetch(`/api/paper?code=${encodeURIComponent(code)}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ baseVersion: versionRef.current, state: accountRef.current }),
+        keepalive: true,
+      }).catch(() => {
+        /* 마지막 저장 실패는 무시 — 다음에 열 때 대기 명령을 올린다 */
+      })
+      savedCheckedAtRef.current = accountRef.current.checkedAt
     }
     const onVis = () => {
-      if (document.hidden) flushOnHide()
+      if (document.hidden) flushOnHide(false)
       else {
         void runCatchUp()
         void poll()
       }
     }
+    const onPageHide = () => flushOnHide(true)
     const id = setInterval(() => void poll(), POLL_MS)
     document.addEventListener('visibilitychange', onVis)
-    window.addEventListener('pagehide', flushOnHide)
+    window.addEventListener('pagehide', onPageHide)
     return () => {
       clearInterval(id)
       document.removeEventListener('visibilitychange', onVis)
-      window.removeEventListener('pagehide', flushOnHide)
+      window.removeEventListener('pagehide', onPageHide)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])

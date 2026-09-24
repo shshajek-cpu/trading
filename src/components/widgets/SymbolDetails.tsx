@@ -120,12 +120,11 @@ export function SymbolDetails({ symbol, infos }: SymbolDetailsProps) {
   const contractLabel = info && isQuarterly(info) ? '분기물' : '무기한'
 
   const dec = priceDecimals(symbol, infos)
-  const price = ticker?.lastPrice ?? 0
-  const priceStr = fmtPrice(price, dec)
-  const head = priceStr.length > 2 ? priceStr.slice(0, -2) : priceStr
-  const tail = priceStr.length > 2 ? priceStr.slice(-2) : ''
-  const up = (ticker?.priceChangePercent ?? 0) >= 0
-  const color = up ? 'var(--tv-up)' : 'var(--tv-down)'
+  // 시세를 아직 못 받았으면(심볼 전환 직후·요청 제한·실패) 0.00 대신 '—' — 0 은 잘못된 시세로 읽힌다.
+  const priceStr = ticker ? fmtPrice(ticker.lastPrice, dec) : '—'
+  const head = ticker && priceStr.length > 2 ? priceStr.slice(0, -2) : priceStr
+  const tail = ticker && priceStr.length > 2 ? priceStr.slice(-2) : ''
+  const color = !ticker ? 'var(--tv-text-dim)' : ticker.priceChangePercent >= 0 ? 'var(--tv-up)' : 'var(--tv-down)'
 
   return (
     <section className="sd">

@@ -50,6 +50,8 @@ export function WatchlistWidget({
   const [sortDir, setSortDir] = useState<SortDir>('none')
   const [addOpen, setAddOpen] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
+  // 폰 관심 목록 편집(빼기·위/아래 이동). 폰은 끌어 옮기기가 스크롤과 겹쳐 버튼으로 한다.
+  const [editing, setEditing] = useState(false)
   const menuBtn = useRef<HTMLButtonElement>(null)
 
   // 마지막 틱 방향 플래시.
@@ -99,17 +101,21 @@ export function WatchlistWidget({
 
   const sortMark = (col: SortCol) => (sortCol === col && sortDir !== 'none' ? (sortDir === 'asc' ? '▲' : '▼') : '')
 
+  const move = (from: number, to: number) => {
+    if (from === to || to < 0 || to >= symbols.length) return
+    const next = [...symbols]
+    const [moved] = next.splice(from, 1)
+    next.splice(to, 0, moved)
+    onReorder(next)
+  }
+
   // 드래그 정렬(정렬이 없을 때만).
   const dragFrom = useRef<number | null>(null)
   const canDrag = sortDir === 'none' && variant === 'panel'
   const onDrop = (to: number) => {
     const from = dragFrom.current
     dragFrom.current = null
-    if (from == null || from === to) return
-    const next = [...symbols]
-    const [moved] = next.splice(from, 1)
-    next.splice(to, 0, moved)
-    onReorder(next)
+    if (from != null) move(from, to)
   }
 
   const clearAll = () => {
@@ -120,6 +126,9 @@ export function WatchlistWidget({
   }
 
   const isPage = variant === 'page'
+  const isEditing = isPage && editing
+  // 편집 중에는 저장된 순서 그대로 보여야 위/아래 이동이 그 순서를 바꾼다.
+  const list = isEditing ? symbols : sorted
 
   return (
     <section className={`wl${isPage ? ' wl-page' : ''}`}>
@@ -131,18 +140,26 @@ export function WatchlistWidget({
             관심 목록 <span className="wl-caret">▾</span>
           </span>
         )}
-        <button type="button" className="tv-icon-btn" aria-label="심볼 추가" onClick={() => setAddOpen(true)}>
-          <Icon name="plus" size={isPage ? 22 : 18} />
-        </button>
-        <button
-          ref={menuBtn}
-          type="button"
-          className="tv-icon-btn"
-          aria-label="더보기"
-          onClick={() => setMenuOpen((v) => !v)}
-        >
-          <Icon name="more" size={isPage ? 22 : 18} />
-        </button>
+        {isEditing ? (
+          <button type="button" className="wl-done" onClick={() => setEditing(false)}>
+            완료
+          </button>
+        ) : (
+          <>
+            <button type="button" className="tv-icon-btn" aria-label="심볼 추가" onClick={() => setAddOpen(true)}>
+              <Icon name="plus" size={isPage ? 22 : 18} />
+            </button>
+            <button
+              ref={menuBtn}
+              type="button"
+              className="tv-icon-btn"
+              aria-label="더보기"
+              onClick={() => setMenuOpen((v) => !v)}
+            >
+              <Icon name="more" size={isPage ? 22 : 18} />
+            </button>
+          </>
+        )}
       </header>
 
       {!isPage && (
@@ -163,7 +180,7 @@ export function WatchlistWidget({
       )}
 
       <ul className="wl-rows">
-        {sorted.map((s, idx) => {
+        {list.map((s, idx) => {
           const r = rows[s]
           const pct = r?.changePercent ?? 0
           const up = pct >= 0
@@ -172,27 +189,56 @@ export function WatchlistWidget({
           return (
             <li
               key={s}
-              className={`wl-row${s === current ? ' active' : ''}${flash[s] ? ` flash-${flash[s]}` : ''}`}
+              className={`wl-row${s === current && !isEditing ? ' active' : ''}${isEditing ? ' editing' : ''}${flash[s] ? ` flash-${flash[s]}` : ''}`}
               draggable={canDrag}
               onDragStart={() => (dragFrom.current = idx)}
               onDragOver={(e) => canDrag && e.preventDefault()}
               onDrop={() => canDrag && onDrop(idx)}
-              onClick={() => onPick(s)}
+              onClick={isEditing ? undefined : () => onPick(s)}
             >
               <CoinIcon base={infos.find((i) => i.symbol === s)?.baseAsset ?? s.replace(/USDT.*/, '')} size={isPage ? 32 : 18} />
-              {isPage ? (
+              {isPage && (
+                <div className="wl-full-main">
+                  <span className="wl-full-sym">{displaySymbol(s, infos)}</span>
+                  <span className="wl-full-desc">{describeSymbol(s, infos)}</span>
+                </div>
+              )}
+              {isEditing ? (
                 <>
-                  <div className="wl-full-main">
-                    <span className="wl-full-sym">{displaySymbol(s, infos)}</span>
-                    <span className="wl-full-desc">{describeSymbol(s, infos)}</span>
-                  </div>
-                  <div className="wl-full-num">
-                    <span className="wl-full-price">{r ? fmtPrice(r.price, dec) : '—'}</span>
-                    <span className="wl-full-chg" style={{ color }}>
-                      {r ? `${fmtChange(r.change, dec)} ${fmtPct(pct)}` : ''}
-                    </span>
-                  </div>
+                  <button
+                    type="button"
+                    className="tv-icon-btn wl-edit-btn"
+                    aria-label="위로"
+                    disabled={idx === 0}
+                    onClick={() => move(idx, idx - 1)}
+                  >
+                    <Icon name="arrowUp" size={20} />
+                  </button>
+                  <button
+                    type="button"
+                    className="tv-icon-btn wl-edit-btn"
+                    aria-label="아래로"
+                    disabled={idx === list.length - 1}
+                    onClick={() => move(idx, idx + 1)}
+                  >
+                    <Icon name="arrowDown" size={20} />
+                  </button>
+                  <button
+                    type="button"
+                    className="tv-icon-btn wl-edit-btn wl-edit-remove"
+                    aria-label="목록에서 제거"
+                    onClick={() => onRemove(s)}
+                  >
+                    <Icon name="trash" size={20} />
+                  </button>
                 </>
+              ) : isPage ? (
+                <div className="wl-full-num">
+                  <span className="wl-full-price">{r ? fmtPrice(r.price, dec) : '—'}</span>
+                  <span className="wl-full-chg" style={{ color }}>
+                    {r ? `${fmtChange(r.change, dec)} ${fmtPct(pct)}` : ''}
+                  </span>
+                </div>
               ) : (
                 <>
                   <span className="wl-sym">{displaySymbol(s, infos)}</span>
@@ -232,6 +278,16 @@ export function WatchlistWidget({
           }}
         />
         <MenuItem label="모두 지우기" onSelect={clearAll} />
+        {isPage && (
+          <MenuItem
+            label="목록 편집"
+            disabled={symbols.length === 0}
+            onSelect={() => {
+              setMenuOpen(false)
+              setEditing(true)
+            }}
+          />
+        )}
       </Popover>
 
       <SymbolSearchDialog
@@ -239,7 +295,7 @@ export function WatchlistWidget({
         onClose={() => setAddOpen(false)}
         title="관심 목록에 추가"
         symbols={infos}
-        onSelect={onAdd}
+        onSelect={(s) => (symbols.includes(s) ? onRemove(s) : onAdd(s))}
         selected={symbols}
         keepOpen
       />

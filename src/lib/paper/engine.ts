@@ -99,6 +99,7 @@ export function createAccount(startBalance: number, now: number): PaperAccount {
     orderHistory: [],
     funding: [],
     positionHistory: [],
+    appliedCmds: [],
     settings: {},
     fees: { ...DEFAULT_FEES },
     checkedAt: now,
@@ -126,9 +127,17 @@ export function symbolsInUse(acct: PaperAccount): string[] {
   return [...set]
 }
 
-/** 밖에서 들어온 계좌(로컬 사본·서버)를 지금 모양으로 맞춘다 — 포지션 기록이 생기기 전 계좌에는 그 배열이 없다. */
+/**
+ * 밖에서 들어온 계좌(로컬 사본·서버)를 지금 모양으로 맞춘다 — 포지션 기록·적용한 명령 id 가 생기기 전 계좌에는
+ * 그 배열이 없다.
+ */
 export function normalizeAccount(acct: PaperAccount): PaperAccount {
-  return Array.isArray(acct.positionHistory) ? acct : { ...acct, positionHistory: [] }
+  if (Array.isArray(acct.positionHistory) && Array.isArray(acct.appliedCmds)) return acct
+  return {
+    ...acct,
+    positionHistory: Array.isArray(acct.positionHistory) ? acct.positionHistory : [],
+    appliedCmds: Array.isArray(acct.appliedCmds) ? acct.appliedCmds : [],
+  }
 }
 
 export function markChecked(acct: PaperAccount, at: number): PaperAccount {
@@ -692,7 +701,31 @@ export function setTpSl(
   return finish(d, [])
 }
 
-/** 격리 증거금 추가(+)·감소(−). 줄일 때는 마크가 기준 초기 증거금 아래로는 못 내린다. */
+/**
+ * 격리 포지션의 증거금 조정 한도(USDT). 늘릴 때는 가용 금액까지, 줄일 때는 마크가 기준 초기 증거금 아래로는
+ * 못 내리고(손실은 빼고 이익은 넣지 않는다) 곧바로 강제 청산될 만큼도 못 줄인다. 격리 포지션이 없으면 null.
+ */
+export function marginLimits(
+  acct: PaperAccount,
+  symbol: string,
+  side: PosSide,
+  rules: SymbolRules,
+  marks?: Marks,
+): { maxAdd: number; maxRemove: number } | null {
+  const pos = findPos(acct, symbol, side)
+  if (!pos || pos.marginMode !== 'isolated') return null
+  const mark = markOf(pos, marks)
+  const upl = uplOf(pos, mark)
+  const floor = (pos.qty * mark) / pos.leverage
+  const removable = pos.isoMargin + Math.min(0, upl) - floor
+  const aboveLiq = pos.isoMargin + upl - pos.qty * mark * tierOf(rules, pos.qty).mmr
+  return {
+    maxAdd: Math.max(0, availableOf(acct, marks)),
+    maxRemove: Math.max(0, Math.min(removable, aboveLiq)),
+  }
+}
+
+/** 격리 증거금 추가(+)·감소(−). 한도는 marginLimits 와 같다. */
 export function adjustMargin(
   acct: PaperAccount,
   symbol: string,
@@ -707,13 +740,11 @@ export function adjustMargin(
   if (pos.marginMode !== 'isolated') return { error: '교차 포지션은 증거금을 따로 조정하지 않습니다' }
   if (!Number.isFinite(delta) || delta === 0) return { error: '금액을 입력하세요' }
   const mk: Marks = { ...marks, [symbol]: snap.mark }
+  const lim = marginLimits(acct, symbol, side, rules, mk)!
   if (delta > 0) {
-    const avail = availableOf(acct, mk)
-    if (delta > avail + EPS) return { error: marginShortfall(delta, avail) }
+    if (delta > lim.maxAdd + EPS) return { error: marginShortfall(delta, lim.maxAdd) }
   } else {
-    const floor = (pos.qty * snap.mark) / pos.leverage
-    const removable = Math.max(0, pos.isoMargin + Math.min(0, uplOf(pos, snap.mark)) - floor)
-    if (-delta > removable + EPS) return { error: `줄일 수 있는 최대 금액은 ${num(removable)} USDT 입니다` }
+    if (-delta > lim.maxRemove + EPS) return { error: `줄일 수 있는 최대 금액은 ${num(lim.maxRemove)} USDT 입니다` }
     const after = pos.isoMargin + delta + uplOf(pos, snap.mark)
     if (after <= pos.qty * snap.mark * tierOf(rules, pos.qty).mmr) return { error: '줄이면 곧바로 강제 청산됩니다' }
   }
@@ -848,7 +879,8 @@ function fireTrigger(
         return
       }
     }
-    const fill = applyFill(d, { ...o, price, maker: false, reason: 'order', at, orderId: o.id, mark }, events)
+    // 조건부 시장가 — 체결 내역·알림에서 지정가와 구분한다.
+    const fill = applyFill(d, { ...o, price, maker: false, reason: 'trigger', at, orderId: o.id, mark }, events)
     if (!fill) {
       d.orderHistory.push({ ...o, status: 'canceled', endedAt: at, note: '종료할 포지션이 없어 취소' })
       events.push({ kind: 'canceled', order: d.orderHistory[d.orderHistory.length - 1] })
@@ -1173,22 +1205,42 @@ export function applyFunding(acct: PaperAccount, symbol: string, events: Funding
 
 /* ── 파생 값 ──────────────────────────────────────────── */
 
-/** 예상 강제 청산가. 격리는 그 포지션 증거금으로, 교차는 나머지 교차 자산까지 본다. */
+/**
+ * 예상 강제 청산가. 격리는 그 포지션 증거금으로 푼다. 교차는 청산 판정(교차 자산 ≤ 교차 유지증거금)과 같은 식을
+ * 가격 P 에 대해 푼다 — 같은 종목의 교차 포지션(롱·숏 모두)은 P 를 따라 움직이고, 다른 종목은 지금 마크가로 둔다.
+ * 같은 종목 교차 포지션은 모두 함께 청산되므로 청산가도 같다. 순 수량이 0 이면(완전 헤지) null.
+ */
 function positionLiq(acct: PaperAccount, pos: PaperPosition, rules: SymbolRules, marks: Marks | undefined, rulesOf: RulesOf): number | null {
-  const m = tierOf(rules, pos.qty).mmr
-  const q = pos.qty
-  const e = pos.entry
-  let cushion: number
   if (pos.marginMode === 'isolated') {
-    cushion = pos.isoMargin
-  } else {
-    // 이 포지션을 뺀 교차 자산 − 다른 교차 포지션의 유지증거금.
-    const others = { ...acct, positions: acct.positions.filter((p) => p !== pos && p.id !== pos.id) }
-    const ms = marginState(others, marks, rulesOf)
-    if (ms.crossMMUnknown) return null
-    cushion = crossEquityOf(others, ms) - ms.crossMM
+    const m = tierOf(rules, pos.qty).mmr
+    const q = pos.qty
+    const e = pos.entry
+    const cushion = pos.isoMargin
+    const price = pos.side === 'long' ? (q * e - cushion) / (q * (1 - m)) : (cushion + q * e) / (q * (1 + m))
+    return Number.isFinite(price) && price > 0 ? price : null
   }
-  const price = pos.side === 'long' ? (q * e - cushion) / (q * (1 - m)) : (cushion + q * e) / (q * (1 + m))
+  // 교차 자산(P) = C + P·Σdir·q − Σdir·q·e,  유지증거금(P) = MMo + P·Σq·mmr
+  // → P = (Σdir·q·e − (C − MMo)) / (Σdir·q − Σq·mmr). C·MMo 는 이 종목 교차 포지션을 뺀 교차 자산·유지증거금.
+  const rest: PaperPosition[] = []
+  let net = 0
+  let netEntry = 0
+  let mmQty = 0
+  for (const p of acct.positions) {
+    if (p.marginMode !== 'cross' || p.symbol !== pos.symbol) {
+      rest.push(p)
+      continue
+    }
+    const dir = dirOf(p.side)
+    net += dir * p.qty
+    netEntry += dir * p.qty * p.entry
+    mmQty += p.qty * tierOf(rules, p.qty).mmr
+  }
+  if (Math.abs(net) < EPS) return null
+  const others = { ...acct, positions: rest }
+  const ms = marginState(others, marks, rulesOf)
+  if (ms.crossMMUnknown) return null
+  const cushion = crossEquityOf(others, ms) - ms.crossMM
+  const price = (netEntry - cushion) / (net - mmQty)
   return Number.isFinite(price) && price > 0 ? price : null
 }
 

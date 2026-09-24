@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { FeatureSet } from '../lib/features'
-import { loadPins, savePins, type Pin, type PinSide } from '../lib/pins'
+import { loadPins, PINS_STORAGE_KEY, savePins, type Pin, type PinSide } from '../lib/pins'
 import { onSettingsChanged } from '../lib/syncBus'
 
 export function usePins() {
@@ -8,6 +8,15 @@ export function usePins() {
 
   // 다른 기기에서 내려받으면 저장소가 바뀐다. 다시 읽어 화면을 맞춘다.
   useEffect(() => onSettingsChanged(() => setPins(loadPins())), [])
+
+  // 다른 탭이 바꾼 핀을 받아 온다. 안 받으면 이 탭이 옛 목록을 통째로 저장해 그쪽 변경을 지운다.
+  useEffect(() => {
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === PINS_STORAGE_KEY) setPins(loadPins())
+    }
+    window.addEventListener('storage', onStorage)
+    return () => window.removeEventListener('storage', onStorage)
+  }, [])
 
   const add = useCallback(
     (input: {

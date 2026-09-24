@@ -264,7 +264,12 @@ export function DrawingToolbar({
         <button
           type="button"
           className={`tv-drawbar-btn${locked ? ' active' : ''}`}
-          {...tip('모든 그림 잠금', '그린 선이 실수로 움직이거나 지워지지 않게 모두 고정합니다.', undefined, 'right')}
+          {...tip(
+            locked ? '모든 그림 잠금 풀기' : '모든 그림 잠금',
+            '모든 그림을 실수로 움직이거나 지우지 못하게 고정합니다.',
+            undefined,
+            'right',
+          )}
           aria-label="모든 그림 잠금"
           aria-pressed={locked}
           onClick={() => onLockedChange(!locked)}
@@ -287,7 +292,7 @@ export function DrawingToolbar({
             ref={removeRef}
             type="button"
             className="tv-drawbar-btn"
-            {...tip('삭제', '이 종목의 그림이나 지표를 한꺼번에 지웁니다.', undefined, 'right')}
+            {...tip('삭제', '이 종목의 그림이나 모든 차트의 지표를 한꺼번에 지웁니다.', undefined, 'right')}
             aria-label="삭제"
             onClick={() => setRemoveOpen(true)}
           >
@@ -303,6 +308,7 @@ export function DrawingToolbar({
               <MenuItem
                 icon={<ToolIcon name="trash" size={20} />}
                 label="그림 삭제"
+                shortcut="이 종목"
                 onSelect={() => {
                   onRemoveDrawings()
                   setRemoveOpen(false)
@@ -311,6 +317,7 @@ export function DrawingToolbar({
               <MenuItem
                 icon={<ToolIcon name="indicator" size={20} />}
                 label="지표 삭제"
+                shortcut="모든 차트"
                 onSelect={() => {
                   onRemoveIndicators()
                   setRemoveOpen(false)

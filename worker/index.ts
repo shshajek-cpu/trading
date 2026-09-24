@@ -9,6 +9,7 @@
  * - 매분 목록을 조회하지 않고 감시 대상 코드 목록 키(`w-index`) 하나만 읽는다.
  *   목록 조회는 정각마다 한 번(하루 24회) 색인을 다시 맞출 때만 쓴다.
  * - 기록은 알림이 실제로 울렸을 때만 한다(예전에는 매분 모든 코드를 다시 썼다).
+ *   수평선 알림만 예외로, 새로 등록된 선의 기준 쪽(현재가가 선 위인지 아래인지)을 처음 볼 때 한 번 기록한다.
  */
 import { sendPush, type PushSubscription } from './webpush'
 
@@ -24,7 +25,18 @@ interface WatchAlert {
   symbol: string
   condition: 'above' | 'below'
   price: number
+  /** 사용자 메모. 푸시 본문에 붙인다. */
+  message?: string
 }
+
+/** 수평선 알림. 처음 본 현재가 쪽(lineSides)을 기준으로, 가격이 선을 지나 반대쪽으로 가면 울린다. */
+interface WatchLine {
+  id: string
+  symbol: string
+  price: number
+}
+
+type Side = 'above' | 'below'
 
 interface WatchRecord {
   subs: PushSubscription[]
@@ -32,6 +44,10 @@ interface WatchRecord {
   alertsBy?: Record<string, WatchAlert[]>
   // 버킷 도입 전 레거시 평면 목록. 감시기는 건드리지 않고 첫 PUT 에서 정리된다.
   alerts?: WatchAlert[]
+  // 기기별 수평선 버킷. 예전 기록에는 없다.
+  linesBy?: Record<string, WatchLine[]>
+  // 수평선마다 처음 본 현재가 쪽. 키는 lineKey — /api/push 와 형식이 같아야 한다.
+  lineSides?: Record<string, Side>
   firedIds: string[]
 }
 
@@ -43,6 +59,20 @@ function unionAlerts(record: WatchRecord): WatchAlert[] {
   }
   for (const a of record.alerts ?? []) if (!byId.has(a.id)) byId.set(a.id, a)
   return [...byId.values()]
+}
+
+/** 기기별 수평선 버킷을 합쳐 id 로 중복을 제거한다. */
+function unionLines(record: WatchRecord): WatchLine[] {
+  const byId = new Map<string, WatchLine>()
+  for (const list of Object.values(record.linesBy ?? {})) {
+    for (const l of list) byId.set(l.id, l)
+  }
+  return [...byId.values()]
+}
+
+/** lineSides 키. 선을 옮기면(가격이 바뀌면) 기준 쪽을 새로 잡는다. /api/push 와 형식이 같아야 한다. */
+function lineKey(line: WatchLine): string {
+  return `${line.id}@${line.price}`
 }
 
 /** 감시할 동기화 코드 목록. /api/push 가 구독·알림이 바뀔 때 맞춘다. */
@@ -78,6 +108,12 @@ function meets(alert: WatchAlert, now: number): boolean {
   return alert.condition === 'above' ? now >= alert.price : now <= alert.price
 }
 
+/** 이번 분에 보낼 푸시 하나. */
+interface Hit {
+  id: string
+  payload: string
+}
+
 /**
  * 목록 조회로 감시 대상 색인을 다시 만든다(색인이 없을 때, 그리고 정각마다 — 동시 수정으로 어긋난 색인을 바로잡는다).
  * 구독과 알림이 모두 있는 코드만 넣어 매분 읽을 기록 수를 줄인다.
@@ -89,7 +125,9 @@ async function rebuildIndex(env: Env, current: string[] | null): Promise<string[
     const page = await env.SETTINGS.list({ prefix: 'w:', cursor })
     for (const key of page.keys) {
       const record = await env.SETTINGS.get<WatchRecord>(key.name, 'json')
-      if (record && record.subs.length > 0 && unionAlerts(record).length > 0) codes.push(key.name.slice(2))
+      if (record && record.subs.length > 0 && unionAlerts(record).length + unionLines(record).length > 0) {
+        codes.push(key.name.slice(2))
+      }
     }
     cursor = page.list_complete ? undefined : page.cursor
   } while (cursor)
@@ -110,38 +148,75 @@ async function checkAll(env: Env, rebuild: boolean): Promise<void> {
     const key = `w:${code}`
     const record = await env.SETTINGS.get<WatchRecord>(key, 'json')
     if (!record || record.subs.length === 0) continue
-    const watch = unionAlerts(record)
-    if (watch.length === 0) continue
+    const alerts = unionAlerts(record)
+    const lines = unionLines(record)
+    if (alerts.length === 0 && lines.length === 0) continue
 
     const fired = new Set(record.firedIds)
-    const hits = watch.filter((alert) => {
+    const hits: Hit[] = []
+    for (const alert of alerts) {
       const now = prices.get(alert.symbol)
-      return now !== undefined && !fired.has(alert.id) && meets(alert, now)
-    })
-    // 울릴 것이 없으면 아무것도 쓰지 않는다 — 무료 한도의 대부분이 여기서 아껴진다.
-    if (hits.length === 0) continue
-
-    const dead: string[] = []
-    for (const alert of hits) {
-      fired.add(alert.id)
-      const price = prices.get(alert.symbol) ?? alert.price
-      const payload = JSON.stringify({
-        title: `${alert.symbol} ${alert.condition === 'above' ? '▲' : '▼'} ${alert.price}`,
-        body: `현재가 ${price}`,
-        // 로컬 시스템 알림과 같은 태그를 써 OS 가 하나로 합치게 한다.
-        tag: `price-${alert.id}`,
+      if (now === undefined || fired.has(alert.id) || !meets(alert, now)) continue
+      hits.push({
+        id: alert.id,
+        payload: JSON.stringify({
+          title: `${alert.symbol} ${alert.condition === 'above' ? '▲' : '▼'} ${alert.price}`,
+          body: alert.message ? `${alert.message}\n현재가 ${now}` : `현재가 ${now}`,
+          // 로컬 시스템 알림과 같은 태그를 써 OS 가 하나로 합치게 한다.
+          tag: `price-${alert.id}`,
+          // 알림을 누르면 이 종목 차트를 연다(sw-push.js).
+          symbol: alert.symbol,
+        }),
       })
+    }
+
+    // 수평선: 처음 볼 때 현재가가 선의 어느 쪽인지 적어 두고, 반대쪽으로 넘어가면 울린다.
+    // 기준 쪽은 새 선(또는 옮긴 선)을 처음 볼 때 한 번만 기록한다 — 매분 쓰지 않는다.
+    const sides: Record<string, Side> = { ...(record.lineSides ?? {}) }
+    let sidesChanged = false
+    for (const line of lines) {
+      const now = prices.get(line.symbol)
+      if (now === undefined || fired.has(line.id)) continue
+      const lk = lineKey(line)
+      const before = sides[lk]
+      // 앱(useDrawings)과 같은 기준: 선 이상이면 위, 미만이면 아래.
+      const side: Side = now >= line.price ? 'above' : 'below'
+      if (before === undefined) {
+        sides[lk] = side
+        sidesChanged = true
+        continue
+      }
+      if (before === side) continue
+      // 울린 선은 기준을 지운다 — 다시 켜면 그때 현재가로 새로 잡는다.
+      delete sides[lk]
+      hits.push({
+        id: line.id,
+        payload: JSON.stringify({
+          title: `${line.symbol} 수평선 ${line.price} 통과`,
+          body: `현재가 ${now}`,
+          tag: `line-${line.id}`,
+          symbol: line.symbol,
+        }),
+      })
+    }
+    // 울릴 것도, 새로 적을 기준도 없으면 아무것도 쓰지 않는다 — 무료 한도의 대부분이 여기서 아껴진다.
+    if (hits.length === 0 && !sidesChanged) continue
+
+    const dead = new Set<string>()
+    for (const hit of hits) {
+      fired.add(hit.id)
       for (const sub of record.subs) {
+        if (dead.has(sub.endpoint)) continue
         // 한 기기의 발송 실패(네트워크 등)가 나머지 기기와 발동 기록을 막지 않게 한다.
         // 기록이 안 남으면 매분 같은 알림이 다시 울린다.
         try {
-          const r = await sendPush(sub, payload, {
+          const r = await sendPush(sub, hit.payload, {
             publicKey: env.VAPID_PUBLIC_KEY,
             privateKey: env.VAPID_PRIVATE_KEY,
             subject: env.VAPID_SUBJECT || 'mailto:noreply@example.com',
           })
           // 404/410 은 구독이 죽은 것 — 다음부터 빼둔다.
-          if (!r.ok && (r.status === 404 || r.status === 410)) dead.push(sub.endpoint)
+          if (!r.ok && (r.status === 404 || r.status === 410)) dead.add(sub.endpoint)
         } catch (e) {
           console.error('push failed', sub.endpoint, e)
         }
@@ -150,13 +225,19 @@ async function checkAll(env: Env, rebuild: boolean): Promise<void> {
 
     // 죽은 구독은 그 버킷까지 지운다. 레거시 목록은 감시기가 건드리지 않는다(첫 PUT 에서 정리).
     const alertsBy = { ...(record.alertsBy ?? {}) }
-    for (const ep of dead) delete alertsBy[ep]
+    const linesBy = { ...(record.linesBy ?? {}) }
+    for (const ep of dead) {
+      delete alertsBy[ep]
+      delete linesBy[ep]
+    }
     await env.SETTINGS.put(
       key,
       JSON.stringify({
-        subs: record.subs.filter((s) => !dead.includes(s.endpoint)),
+        subs: record.subs.filter((s) => !dead.has(s.endpoint)),
         alertsBy,
         ...(record.alerts ? { alerts: record.alerts } : {}),
+        linesBy,
+        lineSides: sides,
         firedIds: [...fired],
       } satisfies WatchRecord),
     )
@@ -190,26 +271,30 @@ export default {
       const rec = await env.SETTINGS.get<WatchRecord>(`w:${code}`, 'json')
       const prices = await fetchPrices()
       const watch = rec ? unionAlerts(rec) : []
+      const lines = rec ? unionLines(rec) : []
+      const symbols = [...watch.map((a) => a.symbol), ...lines.map((l) => l.symbol)]
       return Response.json({
         subs: rec?.subs.length ?? 0,
         alerts: watch,
+        lines,
+        lineSides: rec?.lineSides ?? {},
         watched: ((await env.SETTINGS.get<string[]>(INDEX_KEY, 'json')) ?? []).includes(code),
         firedIds: rec?.firedIds ?? [],
-        livePrices: Object.fromEntries(watch.map((a) => [a.symbol, prices.get(a.symbol) ?? null])),
+        livePrices: Object.fromEntries(symbols.map((s) => [s, prices.get(s) ?? null])),
       })
     }
 
-    // 실제 발속 경로를 그대로 한 번 통과시킨다.
+    // 실제 발송 경로를 그대로 한 번 통과시킨다.
     if (url.pathname === '/test-push') {
       const code = url.searchParams.get('code')
       if (!code) return new Response('code 가 필요합니다', { status: 400 })
       const rec = await env.SETTINGS.get<WatchRecord>(`w:${code}`, 'json')
-      if (!rec || rec.subs.length === 0) return new Response('국독이 없습니다', { status: 404 })
+      if (!rec || rec.subs.length === 0) return new Response('구독이 없습니다', { status: 404 })
       const results = []
       for (const sub of rec.subs) {
         const r = await sendPush(
           sub,
-          JSON.stringify({ title: '테스트 알림', body: '발속 경로가 정상입니다', tag: 'test' }),
+          JSON.stringify({ title: '테스트 알림', body: '발송 경로가 정상입니다', tag: 'test' }),
           {
             publicKey: env.VAPID_PUBLIC_KEY,
             privateKey: env.VAPID_PRIVATE_KEY,

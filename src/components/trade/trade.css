@@ -586,6 +586,55 @@
   font-size: var(--tv-fs-sm);
 }
 
+/* 익절/손절 — 가격 칸 옆에 각자의 기준 가격. */
+.acc-tpsl-row {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+  align-items: end;
+}
+
+/* 격리 증거금 한도 — 누르면 금액 칸을 채운다. */
+.acc-limits {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: -6px -8px 0;
+}
+
+.acc-limit {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 28px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: var(--tv-radius-sm);
+  background: transparent;
+  color: var(--tv-text-dim);
+  font: inherit;
+  font-size: var(--tv-fs-sm);
+  cursor: pointer;
+}
+
+.acc-limit b {
+  color: var(--tv-accent-text);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+.acc-limit:hover:not(:disabled) {
+  background: var(--tv-hover);
+}
+
+.acc-limit:disabled {
+  cursor: default;
+}
+
+.acc-limit:disabled b {
+  color: var(--tv-text-dim);
+}
+
 /* ══ 거래 패널(TradingPanel) ══════════════════════════════════════ */
 .tp {
   position: relative;
@@ -638,6 +687,10 @@
 
 .tp-tabs::-webkit-scrollbar {
   display: none;
+}
+
+.tp-tabs.more {
+  mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent);
 }
 
 .tp-tab {
@@ -859,6 +912,14 @@
   background: var(--tv-hover);
 }
 
+/* 시장가 종료 두 번째 누름 대기('종료?') — 차트 라벨의 확인 상태와 같은 색. */
+.tp .tv-btn.tp-confirm,
+.tp .tp-mini-btn.tp-confirm {
+  border-color: var(--tv-down);
+  background: var(--tv-down);
+  color: #fff;
+}
+
 .tp-icon {
   margin-left: 4px;
   border: 0;
@@ -1077,4 +1138,19 @@
 .tp-mobile .tp-acc-actions .tv-btn {
   flex: 1;
   height: 44px;
+}
+
+/* 폰: 계좌 대화상자·종료 지정가 팝오버도 44px 터치·16px 입력(확대 방지). */
+@media (width <= 900px) {
+  .acc-dialog .op-input,
+  .acc-dialog .op-select,
+  .tp-close-pop .op-input {
+    height: 44px;
+    font-size: 16px;
+  }
+
+  .acc-limit,
+  .tp-pop-submit {
+    min-height: 44px;
+  }
 }

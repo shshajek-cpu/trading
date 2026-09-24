@@ -12,6 +12,7 @@ import {
 } from '../../lib/indicatorAlerts'
 import { Icon } from '../Icon'
 import { PushBox, type PushProps } from '../PushBox'
+import { isIosSafari } from '../../hooks/usePushAlerts'
 import { CreateAlertDialog } from '../CreateAlertDialog'
 import { displaySymbol, priceDecimals, type SymbolInfo } from '../../lib/symbols'
 import { ToolIcon } from '../../chart/drawing/toolIcons'
@@ -40,6 +41,12 @@ interface AlertsWidgetProps {
   onCreateSyncCode: () => string
   /** panel = 데스크톱 오른쪽 위젯, page = 폰 앱의 "알림" 탭. */
   variant: 'panel' | 'page'
+  /** 행을 누르면 그 종목을 차트에 띄운다(폰은 차트 탭으로 넘어간다). */
+  onPickSymbol?: (symbol: string) => void
+  /** 발동된 가격 알림을 다시 켠다. */
+  onReactivateAlert?: (id: string) => void
+  /** 발동된 수평선 알림을 다시 켠다. */
+  onReactivateLine?: (drawingId: string) => void
 }
 
 function fmtAlertPrice(n: number, decimals: number): string {
@@ -66,9 +73,25 @@ export function AlertsWidget({
   hasSyncCode,
   onCreateSyncCode,
   variant,
+  onPickSymbol,
+  onReactivateAlert,
+  onReactivateLine,
 }: AlertsWidgetProps) {
   const [createOpen, setCreateOpen] = useState(false)
   const isPage = variant === 'page'
+  const rowClass = (fired: boolean) => `aw-row${fired ? ' fired' : ''}${onPickSymbol ? ' pick' : ''}`
+
+  // 행 안의 버튼(다시 켜기·지우기)은 행 클릭(종목 이동)으로 번지지 않게 한다.
+  const rowButton = (run: () => void) => (e: React.MouseEvent) => {
+    e.stopPropagation()
+    run()
+  }
+
+  const reactivateButton = (label: string, run: () => void) => (
+    <button type="button" className="aw-reactivate" aria-label={label} onClick={rowButton(run)}>
+      다시 켜기
+    </button>
+  )
 
   return (
     <section className={`aw${isPage ? ' aw-page' : ''}`}>
@@ -91,7 +114,8 @@ export function AlertsWidget({
         {permission === 'denied' && (
           <p className="aw-hint">시스템 알림이 차단되어 화면 안내로만 표시됩니다.</p>
         )}
-        {permission === 'unsupported' && (
+        {/* 아이폰 사파리 탭은 아래 푸시 카드가 '홈 화면에 추가' 방법을 대신 알려 준다. */}
+        {permission === 'unsupported' && !isIosSafari() && (
           <p className="aw-hint">이 브라우저는 알림을 지원하지 않아 화면 안내로만 표시됩니다.</p>
         )}
 
@@ -102,7 +126,7 @@ export function AlertsWidget({
             const up = a.condition === 'above'
             const color = up ? 'var(--tv-up)' : 'var(--tv-down)'
             return (
-              <li key={a.id} className={`aw-row${a.active ? '' : ' fired'}`}>
+              <li key={a.id} className={rowClass(!a.active)} onClick={onPickSymbol && (() => onPickSymbol(a.symbol))}>
                 <span className="aw-dir" style={{ color }}>
                   <Icon name={up ? 'arrowUp' : 'arrowDown'} size={15} />
                 </span>
@@ -112,18 +136,21 @@ export function AlertsWidget({
                   {a.message && <span className="aw-msg">{a.message}</span>}
                 </div>
                 <span className={`aw-status${a.active ? '' : ' fired'}`}>{a.active ? '활성' : '발동됨'}</span>
+                {!a.active && onReactivateAlert && reactivateButton('가격 알림 다시 켜기', () => onReactivateAlert(a.id))}
                 <button
                   type="button"
                   className="tv-icon-btn aw-remove"
                   aria-label="알림 지우기"
-                  onClick={() => onRemove(a.id)}
+                  onClick={rowButton(() => onRemove(a.id))}
                 >
                   <Icon name="close" size={15} />
                 </button>
               </li>
             )
           })}
-          {alerts.length === 0 && indicatorAlerts.length === 0 && <li className="aw-empty">등록된 알림이 없습니다.</li>}
+          {alerts.length === 0 && indicatorAlerts.length === 0 && lineAlerts.length === 0 && (
+            <li className="aw-empty">등록된 알림이 없습니다.</li>
+          )}
         </ul>
 
         {indicatorAlerts.length > 0 && (
@@ -131,7 +158,7 @@ export function AlertsWidget({
             <p className="aw-section-title">지표 알림 · 앱이 열려 있을 때</p>
             <ul className="aw-rows">
               {indicatorAlerts.map((a) => (
-                <li key={a.id} className={`aw-row${a.active ? '' : ' fired'}`}>
+                <li key={a.id} className={rowClass(!a.active)} onClick={onPickSymbol && (() => onPickSymbol(a.symbol))}>
                   <span className="aw-dir">
                     <ToolIcon name="indicator" size={18} />
                   </span>
@@ -147,7 +174,7 @@ export function AlertsWidget({
                     type="button"
                     className="tv-icon-btn aw-remove"
                     aria-label="지표 알림 지우기"
-                    onClick={() => onRemoveIndicatorAlert(a.id)}
+                    onClick={rowButton(() => onRemoveIndicatorAlert(a.id))}
                   >
                     <Icon name="close" size={15} />
                   </button>
@@ -159,7 +186,14 @@ export function AlertsWidget({
 
         {lineAlerts.length > 0 && (
           <div className="aw-section">
-            <p className="aw-section-title">수평선 알림</p>
+            <p className="aw-section-title">
+              {/* 푸시가 켜져 있으면 서버가 수평선 알림도 감시한다(앱을 닫아도 옴). */}
+              {!push.supported
+                ? '수평선 알림'
+                : push.state === 'on'
+                  ? '수평선 알림 · 앱을 닫아도 푸시로 옴'
+                  : '수평선 알림 · 푸시를 켜면 앱을 닫아도 옴'}
+            </p>
             <ul className="aw-rows">
               {lineAlerts.map((d) => {
                 const price = d.points[0]?.price ?? 0
@@ -167,7 +201,7 @@ export function AlertsWidget({
                 const up = d.symbol !== symbol || livePrice === null || livePrice >= price
                 const color = up ? 'var(--tv-up)' : 'var(--tv-down)'
                 return (
-                  <li key={d.id} className={`aw-row${d.fired ? ' fired' : ''}`}>
+                  <li key={d.id} className={rowClass(Boolean(d.fired))} onClick={onPickSymbol && (() => onPickSymbol(d.symbol))}>
                     <span className="aw-dir" style={{ color }}>
                       <ToolIcon name="horizontal" size={18} />
                     </span>
@@ -176,11 +210,12 @@ export function AlertsWidget({
                       <span className="aw-cond">{`${fmtAlertPrice(price, priceDecimals(d.symbol, symbols))} 교차`}</span>
                     </div>
                     <span className={`aw-status${d.fired ? ' fired' : ''}`}>{d.fired ? '발동됨' : '활성'}</span>
+                    {d.fired && onReactivateLine && reactivateButton('수평선 알림 다시 켜기', () => onReactivateLine(d.id))}
                     <button
                       type="button"
                       className="tv-icon-btn aw-remove"
                       aria-label="수평선 알림 끄기"
-                      onClick={() => onDisableLineAlert(d.id)}
+                      onClick={rowButton(() => onDisableLineAlert(d.id))}
                     >
                       <Icon name="close" size={15} />
                     </button>

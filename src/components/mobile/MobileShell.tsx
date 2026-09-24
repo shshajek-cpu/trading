@@ -40,6 +40,9 @@ export interface MobileDrawingControls {
   onHiddenChange: (v: boolean) => void
   onRemoveDrawings: () => void
   onRemoveIndicators: () => void
+  /** 지금 종목의 그림 수 · 모든 차트가 함께 쓰는 지표 수 — 지울 것이 없으면 삭제 타일을 끈다. */
+  drawingCount: number
+  indicatorCount: number
   canUndo: boolean
   canRedo: boolean
   onUndo: () => void
@@ -310,8 +313,20 @@ export function MobileShell(props: MobileShellProps) {
             tiles={[
               { key: 'undo', label: '실행 취소', icon: tileIcon('undo'), disabled: !drawing.canUndo, onSelect: drawing.onUndo },
               { key: 'redo', label: '다시 실행', icon: tileIcon('redo'), disabled: !drawing.canRedo, onSelect: drawing.onRedo },
-              { key: 'rmDraw', label: '그림 삭제', icon: tileIcon('trash'), onSelect: then(drawing.onRemoveDrawings) },
-              { key: 'rmInd', label: '지표 삭제', icon: tileIcon('trash'), onSelect: then(drawing.onRemoveIndicators) },
+              {
+                key: 'rmDraw',
+                label: `그림 ${drawing.drawingCount}개 삭제`,
+                icon: tileIcon('trash'),
+                disabled: drawing.drawingCount === 0,
+                onSelect: then(drawing.onRemoveDrawings),
+              },
+              {
+                key: 'rmInd',
+                label: `지표 ${drawing.indicatorCount}개 삭제`,
+                icon: tileIcon('trash'),
+                disabled: drawing.indicatorCount === 0,
+                onSelect: then(drawing.onRemoveIndicators),
+              },
             ]}
           />
         </SheetSection>

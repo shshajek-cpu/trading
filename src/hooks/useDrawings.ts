@@ -16,13 +16,19 @@ export interface UseDrawingsResult {
     opts?: { history?: boolean },
   ) => void
   removeDrawing: (id: string) => void
-  removeAll: (symbol: string) => void
+  /** 그 종목 그림을 모두 지우고, 지운 그림을 돌려준다(삭제 토스트의 '되돌리기'용). */
+  removeAll: (symbol: string) => Drawing[]
+  /** 지운 그림을 되살린다. 그사이 새로 그린 그림은 그대로 둔다. 되돌리기 이력에 남는다. */
+  restoreDrawings: (list: readonly Drawing[]) => void
   /** 그리는 순서 바꾸기 — 뒤에 그린 것이 위에 보인다. */
   reorderDrawing: (id: string, where: 'front' | 'back') => void
   /** 실시간 가격을 흘려보내면 수평선을 통과한 순간 알림을 발동시킨다. */
   checkPrice: (symbol: string, price: number) => void
-  undo: () => void
-  redo: () => void
+  /** 다른 곳(푸시 워커)에서 이미 울린 수평선 알림을 울린 것으로 표시한다. 되돌리기 이력에 남기지 않는다. */
+  markFired: (ids: readonly string[]) => void
+  /** 되돌리기/다시 실행. 바뀐 그림의 종목들을 돌려준다(화면에 없는 종목이면 셸이 알린다). */
+  undo: () => string[]
+  redo: () => string[]
   canUndo: boolean
   canRedo: boolean
 }
@@ -33,6 +39,29 @@ let idCounter = 0
 function nextId(): string {
   idCounter += 1
   return `d${Date.now().toString(36)}${idCounter.toString(36)}`
+}
+
+/** 두 스냅샷 사이에 그림이 더해지거나·지워지거나·바뀌거나·순서가 바뀐 종목들. */
+function changedSymbols(before: readonly Drawing[], after: readonly Drawing[]): string[] {
+  const bySymbol = (list: readonly Drawing[]) => {
+    const map = new Map<string, Drawing[]>()
+    for (const d of list) {
+      const group = map.get(d.symbol)
+      if (group) group.push(d)
+      else map.set(d.symbol, [d])
+    }
+    return map
+  }
+  const a = bySymbol(before)
+  const b = bySymbol(after)
+  const out: string[] = []
+  for (const symbol of new Set([...a.keys(), ...b.keys()])) {
+    const x = a.get(symbol) ?? []
+    const y = b.get(symbol) ?? []
+    // 그림은 바뀔 때마다 새 객체가 된다 — 같은 자리에 같은 객체면 그대로다.
+    if (x.length !== y.length || x.some((d, i) => d !== y[i])) out.push(symbol)
+  }
+  return out
 }
 
 export function useDrawings(
@@ -154,8 +183,22 @@ export function useDrawings(
   )
 
   const removeAll = useCallback(
-    (symbol: string) => {
-      commit((prev) => prev.filter((d) => d.symbol !== symbol))
+    (symbol: string): Drawing[] => {
+      const removed = current.current.filter((d) => d.symbol === symbol)
+      if (removed.length > 0) commit((prev) => prev.filter((d) => d.symbol !== symbol))
+      return removed
+    },
+    [commit],
+  )
+
+  const restoreDrawings = useCallback(
+    (list: readonly Drawing[]) => {
+      commit((prev) => {
+        const have = new Set(prev.map((d) => d.id))
+        const back = list.filter((d) => !have.has(d.id))
+        // 옛 그림이라 그사이 새로 그린 것 아래에 둔다.
+        return back.length > 0 ? [...back, ...prev] : prev
+      })
     },
     [commit],
   )
@@ -172,26 +215,45 @@ export function useDrawings(
     [commit],
   )
 
-  const undo = useCallback(() => {
+  const undo = useCallback((): string[] => {
     const snapshot = undoStack.current.pop()
-    if (snapshot === undefined) return
-    redoStack.current.push(current.current)
+    if (snapshot === undefined) return []
+    const before = current.current
+    redoStack.current.push(before)
     if (redoStack.current.length > HISTORY_DEPTH) redoStack.current.shift()
     // 되돌아온 수평선은 그동안 가격이 어디로 갔는지 모른다 — 기준을 새로 잡게 한다.
     sideRef.current.clear()
     replace(snapshot)
     syncFlags()
+    return changedSymbols(before, snapshot)
   }, [replace, syncFlags])
 
-  const redo = useCallback(() => {
+  const redo = useCallback((): string[] => {
     const snapshot = redoStack.current.pop()
-    if (snapshot === undefined) return
-    undoStack.current.push(current.current)
+    if (snapshot === undefined) return []
+    const before = current.current
+    undoStack.current.push(before)
     if (undoStack.current.length > HISTORY_DEPTH) undoStack.current.shift()
     sideRef.current.clear()
     replace(snapshot)
     syncFlags()
+    return changedSymbols(before, snapshot)
   }, [replace, syncFlags])
+
+  const markFired = useCallback(
+    (ids: readonly string[]) => {
+      if (ids.length === 0) return
+      const set = new Set(ids)
+      let changed = false
+      const next = current.current.map((d) => {
+        if (!set.has(d.id) || !d.alert || d.fired) return d
+        changed = true
+        return { ...d, fired: true }
+      })
+      if (changed) replace(next)
+    },
+    [replace],
+  )
 
   const checkPrice = useCallback(
     (symbol: string, price: number) => {
@@ -229,8 +291,10 @@ export function useDrawings(
       updateDrawing,
       removeDrawing,
       removeAll,
+      restoreDrawings,
       reorderDrawing,
       checkPrice,
+      markFired,
       undo,
       redo,
       canUndo,
@@ -242,8 +306,10 @@ export function useDrawings(
       updateDrawing,
       removeDrawing,
       removeAll,
+      restoreDrawings,
       reorderDrawing,
       checkPrice,
+      markFired,
       undo,
       redo,
       canUndo,

@@ -2,7 +2,8 @@
  * 설정 동기화 API (Cloudflare Pages Functions).
  * 계정 없이 쓰므로 사용자가 직접 정한 "동기화 코드"를 열쇠로 삼는다.
  *
- *   GET  /api/settings?code=xxx  → 저장된 설정
+ *   GET  /api/settings?code=xxx  → 저장된 설정 { at, data }
+ *   GET  /api/settings?code=xxx&since=123 → 서버 기록이 since 보다 새로울 때만 data 를 싣는다(아니면 { at })
  *   PUT  /api/settings?code=xxx  → 설정 저장
  */
 
@@ -34,6 +35,12 @@ export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
 
   // 저장된 모양 그대로 돌려준다: { at, data }
   const value = await env.SETTINGS.get(`s:${code}`)
+  // 앱이 열리거나 탭으로 돌아올 때 확인하는 요청 — 새것이 없으면 시각만 보내 폰 데이터를 아낀다.
+  const since = Number(new URL(request.url).searchParams.get('since') ?? NaN)
+  if (value && Number.isFinite(since)) {
+    const at = recordAt(value)
+    if (at <= since) return new Response(JSON.stringify({ at }), { headers: JSON_HEADERS })
+  }
   return new Response(value ?? '{}', { headers: JSON_HEADERS })
 }
 

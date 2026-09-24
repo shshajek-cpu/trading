@@ -91,6 +91,14 @@
   background: var(--tv-row-active);
 }
 
+/* 잠긴 그림의 삭제처럼 지금 쓸 수 없는 버튼. */
+.tv-draw-selbtn:disabled {
+  color: var(--tv-text-dim);
+  background: transparent;
+  opacity: 0.5;
+  cursor: default;
+}
+
 .tv-draw-swatch {
   display: inline-block;
   width: 16px;

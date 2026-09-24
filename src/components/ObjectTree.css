@@ -61,6 +61,42 @@
   text-overflow: ellipsis;
 }
 
+/* 그림 행의 이름 쪽 — 누르면 차트에서 그 그림을 고른다. 동작 버튼과 겹치지 않게 따로 둔 버튼. */
+.tv-objtree-main {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.tv-objtree-main:disabled {
+  cursor: default;
+}
+
+.tv-objtree-main:focus-visible {
+  outline: 1px solid var(--tv-accent);
+  outline-offset: -1px;
+  border-radius: var(--tv-radius-sm);
+}
+
+/* 같은 종류끼리 가르는 값(수평 계열 가격 · 첫 점 시각). */
+.tv-objtree-detail {
+  flex: none;
+  color: var(--tv-text-dim);
+  font-size: var(--tv-fs-xs);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
 .tv-objtree-act {
   display: none;
   align-items: center;
@@ -89,9 +125,29 @@
   color: var(--tv-accent-text);
 }
 
+/* 잠긴 그림의 삭제처럼 지금 쓸 수 없는 버튼. */
+.tv-objtree-act:disabled {
+  background: transparent;
+  color: var(--tv-text-dim);
+  opacity: 0.4;
+  cursor: default;
+}
+
 /* 터치 기기에서는 액션 버튼을 항상 보여준다. */
 @media (hover: none) {
   .tv-objtree-act {
     display: inline-flex;
+  }
+}
+
+/* 폰: 손가락 기준 44px. */
+@media (width <= 900px) {
+  .tv-objtree-row {
+    height: 44px;
+  }
+
+  .tv-objtree-act {
+    width: 44px;
+    height: 44px;
   }
 }

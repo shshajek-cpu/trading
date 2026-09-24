@@ -101,6 +101,19 @@ export function useWatchlist() {
     saveList(next)
   }, [])
 
+  // 다른 탭(또는 PWA 창)이 바꾼 목록을 받아 온다. 안 받으면 이 탭이 옛 목록을 통째로 저장해
+  // 다른 탭이 방금 추가하거나 내려받은 종목을 되돌린다.
+  useEffect(() => {
+    const onStorage = (e: StorageEvent) => {
+      if (e.key !== STORAGE_KEY) return
+      const next = loadList()
+      symbolsRef.current = next
+      setSymbols(next)
+    }
+    window.addEventListener('storage', onStorage)
+    return () => window.removeEventListener('storage', onStorage)
+  }, [])
+
   const add = useCallback(
     (symbol: string) => {
       const prev = symbolsRef.current

@@ -13,6 +13,20 @@
   font: var(--tv-fs) / 1.4 var(--tv-font);
 }
 
+/* iOS 홈 화면 앱: 다크로 켠 뒤(흰 글자 반투명 상태 표시줄) 라이트로 바꾸면 흰 바탕에 시계·배터리가 묻힌다.
+   상태 표시줄 뒤(위쪽 안전 영역)만 어둡게 칠한다. 라이트로 켠 앱은 상태 표시줄이 화면 밖이라 높이가 0 이다. */
+:root[data-theme='light'] body::after {
+  content: '';
+  position: fixed;
+  top: 0;
+  right: 0;
+  left: 0;
+  z-index: 2147483647;
+  height: var(--sat);
+  background: var(--tv-tooltip-bg);
+  pointer-events: none;
+}
+
 .tv-hamburger-cell {
   grid-column: 1;
   grid-row: 1;
@@ -892,6 +906,27 @@
   color: var(--tv-warn);
 }
 
+/* 폰: 입력 글자가 16px 보다 작으면 iOS 가 화면을 확대한다. 버튼·입력칸은 44px 이상으로 눌리게 한다. */
+@media (width <= 900px) {
+  .panel input[type='text'],
+  .panel input[type='number'],
+  .panel select {
+    height: 44px;
+    font-size: 16px;
+  }
+
+  .panel textarea {
+    font-size: 16px;
+  }
+
+  .panel .inline-form button,
+  .sync-code-row button,
+  .sync-actions button {
+    min-width: 44px;
+    height: 44px;
+  }
+}
+
 /* ══ Settings dialog ═══════════════════════════════════════════════ */
 .tv-settings-layout {
   display: flex;
@@ -1242,7 +1277,7 @@
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 12px 14px;
+  padding: 6px 6px 6px 14px;
   border: 1px solid var(--tv-border);
   border-radius: var(--tv-radius);
   background: var(--tv-elevated);
@@ -1250,7 +1285,6 @@
   box-shadow: var(--tv-shadow);
   font: inherit;
   text-align: left;
-  cursor: pointer;
 }
 
 .toast-icon {
@@ -1260,11 +1294,58 @@
 
 .toast-msg {
   flex: 1;
+  padding: 6px 0;
   font-size: var(--tv-fs-sm);
 }
 
-.toast-x {
+/* '되돌리기'·'새로고침' 같은 토스트 버튼. */
+.toast-action {
+  flex: none;
+  height: 32px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--tv-radius-sm);
+  background: transparent;
+  color: var(--tv-accent-text);
+  font: inherit;
+  font-size: var(--tv-fs-sm);
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.toast-close {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  border: 0;
+  border-radius: var(--tv-radius-sm);
+  background: transparent;
   color: var(--tv-text-dim);
+  cursor: pointer;
+}
+
+.toast-action:hover,
+.toast-close:hover {
+  background: var(--tv-hover);
+}
+
+/* 폰: 아래 탭 막대(56px)와 차트 도구 줄(52px) 위에 띄운다 — 가리면 토스트를 닫느라 그 버튼을 못 누른다. */
+@media (width <= 900px) {
+  .toasts {
+    right: 8px;
+    left: 8px;
+    bottom: calc(116px + var(--sab));
+    max-width: none;
+  }
+
+  .toast-action,
+  .toast-close {
+    min-width: 44px;
+    height: 44px;
+  }
 }
 
 /* ── Error fallback (ErrorBoundary) ── */

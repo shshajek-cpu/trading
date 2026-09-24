@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { PointerEvent as ReactPointerEvent } from 'react'
 import { usePaper, usePaperLive } from '../../lib/paper/context'
 import type {
@@ -8,17 +8,21 @@ import type {
   PaperPosition,
   PosSide,
   PaperPositionRecord,
+  TpSl,
   TriggerBy,
 } from '../../lib/paper/types'
 import { displaySymbol, type SymbolInfo } from '../../lib/symbols'
 import {
   ACTION_LABEL,
+  floorTo,
+  fmtMarginRatio,
   fmtPct,
   fmtPrice,
   fmtQty,
   fmtSigned,
   fmtUsdt,
   pnlClass,
+  roundTo,
   SIDE_LABEL,
   TRIGGER_BY_LABEL,
   TYPE_LABEL,
@@ -50,6 +54,7 @@ const NO_HISTORY: PaperPositionRecord[] = []
 const REASON_LABEL: Record<FillReason, string> = {
   order: '지정가',
   market: '시장가',
+  trigger: '조건부',
   tp: '익절',
   sl: '손절',
   liquidation: '강제 청산',
@@ -105,6 +110,25 @@ export function TradingPanel({
   const isCollapsed = variant === 'desktop' && (collapsed ?? internalCollapsed)
   const setCollapsed = (v: boolean) => (onCollapsedChange ? onCollapsedChange(v) : setInternalCollapsed(v))
 
+  // 탭 줄이 좁아 옆으로 밀릴 때 — 가려진 탭이 더 있으면 오른쪽 끝을 흐리게 해 밀어 볼 수 있음을 알린다.
+  const tabsRef = useRef<HTMLDivElement>(null)
+  const [tabsMore, setTabsMore] = useState(false)
+  const updateTabsMore = () => {
+    const el = tabsRef.current
+    if (el) setTabsMore(el.scrollLeft + el.clientWidth < el.scrollWidth - 1)
+  }
+  const updateTabsMoreRef = useRef(updateTabsMore)
+  updateTabsMoreRef.current = updateTabsMore
+  useEffect(() => {
+    const el = tabsRef.current
+    if (!el) return
+    const ro = new ResizeObserver(() => updateTabsMoreRef.current())
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
+  // 개수 표시·오른쪽 버튼이 바뀌면 탭 줄 너비도 바뀐다.
+  useEffect(() => updateTabsMoreRef.current(), [tab, account.positions.length, account.orders.length])
+
   // 겹쳐 뜨는 것들.
   const [tpSlTarget, setTpSlTarget] = useState<PaperPosition | null>(null)
   const [marginTarget, setMarginTarget] = useState<PaperPosition | null>(null)
@@ -113,6 +137,8 @@ export function TradingPanel({
   const [resetOpen, setResetOpen] = useState(false)
   const [feesOpen, setFeesOpen] = useState(false)
   const [editOrder, setEditOrder] = useState<{ id: string; value: string } | null>(null)
+  // 시장가 종료는 두 번 눌러야 한다(첫 번째 → '종료?', 3초 뒤 원래대로) — 차트 라벨의 ✕ 와 같은 방식.
+  const [closeConfirm, setCloseConfirm] = useConfirmKey()
 
   const tickOf = (sym: string) => paper.rules(sym)?.tickSize || symbols.find((s) => s.symbol === sym)?.tickSize || 0.01
   const stepOf = (sym: string) => paper.rules(sym)?.stepSize || symbols.find((s) => s.symbol === sym)?.stepSize || 0.001
@@ -186,11 +212,34 @@ export function TradingPanel({
     if (firstErr) paper.report(firstErr)
   }
 
+  // 미체결 가격 편집. Enter·Esc 로 끝낸 뒤 입력칸이 사라지며 blur 가 한 번 더 올 수 있어, 편집 한 번에 한 번만 처리한다.
+  const editDoneRef = useRef(false)
+  function startEdit(id: string, value: string) {
+    editDoneRef.current = false
+    setEditOrder({ id, value })
+  }
+  function cancelEdit() {
+    editDoneRef.current = true
+    setEditOrder(null)
+  }
   async function commitAmend(order: PaperOrder, value: string) {
+    if (editDoneRef.current) return
+    editDoneRef.current = true
     setEditOrder(null)
     const price = Number(value.replace(/[^0-9.]/g, ''))
-    if (!(price > 0) || price === order.price) return
-    await report(() => paper.amend(order.id, { price }))
+    // 조건부 주문은 발동가를 고친다(발동 뒤 지정가가 아니라) — 차트에서 선을 끌 때와 같다.
+    const isTrigger = order.type === 'trigger'
+    if (!(price > 0) || price === (isTrigger ? order.triggerPrice : order.price)) return
+    await report(() => paper.amend(order.id, isTrigger ? { triggerPrice: price } : { price }))
+  }
+
+  function closeMarket(p: PaperPosition) {
+    if (closeConfirm === p.id) {
+      setCloseConfirm(null)
+      report(() => paper.close(p.symbol, p.side))
+    } else {
+      setCloseConfirm(p.id)
+    }
   }
 
   const isMobile = variant === 'mobile'
@@ -274,8 +323,15 @@ export function TradingPanel({
                     증거금
                   </button>
                 )}
-                <button type="button" className="tv-btn" onClick={() => report(() => paper.close(p.symbol, p.side))}>
-                  시장가 종료
+                <button type="button" className="tv-btn" onClick={(e) => setCloseAnchor({ el: e.currentTarget, pos: p })}>
+                  지정가
+                </button>
+                <button
+                  type="button"
+                  className={`tv-btn${closeConfirm === p.id ? ' tp-confirm' : ''}`}
+                  onClick={() => closeMarket(p)}
+                >
+                  {closeConfirm === p.id ? '종료?' : '시장가 종료'}
                 </button>
               </div>
             </div>
@@ -357,8 +413,12 @@ export function TradingPanel({
                 )}
               </td>
               <td className="tp-close-cell">
-                <button type="button" className="tp-mini-btn" onClick={() => report(() => paper.close(p.symbol, p.side))}>
-                  시장가
+                <button
+                  type="button"
+                  className={`tp-mini-btn${closeConfirm === p.id ? ' tp-confirm' : ''}`}
+                  onClick={() => closeMarket(p)}
+                >
+                  {closeConfirm === p.id ? '종료?' : '시장가'}
                 </button>
                 <button type="button" className="tp-mini-btn" onClick={(e) => setCloseAnchor({ el: e.currentTarget, pos: p })}>
                   지정가
@@ -388,7 +448,7 @@ export function TradingPanel({
             onBlur={() => commitAmend(o, editOrder.value)}
             onKeyDown={(e) => {
               if (e.key === 'Enter') commitAmend(o, editOrder.value)
-              if (e.key === 'Escape') setEditOrder(null)
+              if (e.key === 'Escape') cancelEdit()
             }}
           />
         )
@@ -397,7 +457,7 @@ export function TradingPanel({
         <button
           type="button"
           className="tp-price-edit"
-          onClick={() => setEditOrder({ id: o.id, value: String(shown ?? '') })}
+          onClick={() => startEdit(o.id, String(shown ?? ''))}
           {...tip('가격 수정', '눌러서 지정가·발동가를 바꿉니다')}
         >
           {shown != null ? fmtPrice(shown, tick) : '시장가'}
@@ -816,7 +876,7 @@ export function TradingPanel({
         </div>
         <div>
           <span>증거금률</span>
-          <b>{summary.marginRatio == null ? '—' : `${summary.marginRatio.toFixed(1)}%`}</b>
+          <b>{fmtMarginRatio(summary.marginRatio)}</b>
         </div>
         <div>
           <span>누적 수수료</span>
@@ -882,13 +942,17 @@ export function TradingPanel({
         />
       )}
       <header className="tp-head">
-        <div className="tp-tabs">
+        <div className={`tp-tabs${tabsMore ? ' more' : ''}`} ref={tabsRef} onScroll={updateTabsMore}>
           {TABS.map((t) => (
             <button
               key={t.id}
               type="button"
               className={`tp-tab${tab === t.id ? ' active' : ''}`}
-              onClick={() => setTab(t.id)}
+              onClick={(e) => {
+                setTab(t.id)
+                // 반쯤 가려진 탭을 누르면 다 보이게 민다.
+                e.currentTarget.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' })
+              }}
             >
               {t.label}
               {t.count != null && t.count > 0 && <em className="tp-count"> ({t.count})</em>}
@@ -964,8 +1028,9 @@ export function TradingPanel({
         <AdjustMarginDialog pos={marginTarget} symbols={symbols} onClose={() => setMarginTarget(null)} />
       )}
 
-      <ResetDialog open={resetOpen} onClose={() => setResetOpen(false)} />
-      <FeesDialog open={feesOpen} onClose={() => setFeesOpen(false)} />
+      {resetOpen && <ResetDialog open onClose={() => setResetOpen(false)} />}
+      {/* 열 때마다 새로 마운트해 지금 계좌의 수수료로 칸을 채운다. */}
+      {feesOpen && <FeesDialog open onClose={() => setFeesOpen(false)} />}
 
       {confirm && (
         <Dialog
@@ -1009,8 +1074,12 @@ interface CloseLimitPopoverProps {
 
 function CloseLimitPopover({ anchor, pos, tick, step, onClose }: CloseLimitPopoverProps) {
   const paper = usePaper()
-  const [price, setPrice] = useState(String(pos.entry))
-  const [qty, setQty] = useState(String(pos.qty))
+  // 기본값: 지정가는 최근가(없으면 마크)를 틱에 맞춘 값, 수량은 보유 전량을 수량 단위에 맞춘 값.
+  const [price, setPrice] = useState(() => {
+    const q = paper.live.get().quotes[pos.symbol]
+    return fmtPrice(roundTo(q?.last || q?.mark || pos.entry, tick), tick)
+  })
+  const [qty, setQty] = useState(() => fmtQty(pos.qty, step))
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 
@@ -1069,22 +1138,23 @@ function TpSlDialog({ pos, tick, symbols, onClose }: TpSlDialogProps) {
   const paper = usePaper()
   const [tp, setTp] = useState(pos.tp ? String(pos.tp.price) : '')
   const [sl, setSl] = useState(pos.sl ? String(pos.sl.price) : '')
-  const [by, setBy] = useState<TriggerBy>(pos.tp?.by ?? pos.sl?.by ?? 'last')
+  // 기준 가격은 TP·SL 마다 따로 — 차트에서 붙인 값(마크)과 주문창 기본값(최근가)이 섞여 있을 수 있다.
+  const [tpBy, setTpBy] = useState<TriggerBy>(pos.tp?.by ?? pos.sl?.by ?? 'last')
+  const [slBy, setSlBy] = useState<TriggerBy>(pos.sl?.by ?? pos.tp?.by ?? 'last')
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
 
   async function save() {
     if (busy) return
-    const tpv = Number(tp.replace(/[^0-9.]/g, ''))
-    const slv = Number(sl.replace(/[^0-9.]/g, ''))
+    // 빈칸 = 지움, 가격·기준이 그대로면 undefined 로 보내 건드리지 않는다.
+    const next = (text: string, by: TriggerBy, cur: TpSl | undefined): TpSl | null | undefined => {
+      const v = Number(text.replace(/[^0-9.]/g, ''))
+      if (!(v > 0)) return null
+      return cur && cur.price === v && cur.by === by ? undefined : { price: v, by }
+    }
     setBusy(true)
     setError(null)
-    const err = await paper.setTpSl(
-      pos.symbol,
-      pos.side,
-      tpv > 0 ? { price: tpv, by } : null,
-      slv > 0 ? { price: slv, by } : null,
-    )
+    const err = await paper.setTpSl(pos.symbol, pos.side, next(tp, tpBy, pos.tp), next(sl, slBy, pos.sl))
     setBusy(false)
     if (err) setError(err)
     else onClose()
@@ -1108,28 +1178,42 @@ function TpSlDialog({ pos, tick, symbols, onClose }: TpSlDialogProps) {
       }
     >
       <div className="acc-dialog">
-        <label className="op-field">
-          <span className="op-field-label">익절가 (TP)</span>
-          <input className="op-input" inputMode="decimal" value={tp} onChange={(e) => { setTp(e.target.value); setError(null) }} placeholder={fmtPrice(pos.entry, tick)} />
-        </label>
-        <label className="op-field">
-          <span className="op-field-label">손절가 (SL)</span>
-          <input className="op-input" inputMode="decimal" value={sl} onChange={(e) => { setSl(e.target.value); setError(null) }} placeholder={fmtPrice(pos.entry, tick)} />
-        </label>
-        <label className="op-field">
-          <span className="op-field-label">기준 가격</span>
-          <select className="op-select" value={by} onChange={(e) => setBy(e.target.value as TriggerBy)}>
-            {(['last', 'mark'] as const).map((b) => (
-              <option key={b} value={b}>
-                {TRIGGER_BY_LABEL[b]}
-              </option>
-            ))}
-          </select>
-        </label>
+        <div className="acc-tpsl-row">
+          <label className="op-field">
+            <span className="op-field-label">익절가 (TP)</span>
+            <input className="op-input" inputMode="decimal" value={tp} onChange={(e) => { setTp(e.target.value); setError(null) }} placeholder={fmtPrice(pos.entry, tick)} />
+          </label>
+          <label className="op-field">
+            <span className="op-field-label">기준 가격</span>
+            <TriggerBySelect value={tpBy} onChange={setTpBy} />
+          </label>
+        </div>
+        <div className="acc-tpsl-row">
+          <label className="op-field">
+            <span className="op-field-label">손절가 (SL)</span>
+            <input className="op-input" inputMode="decimal" value={sl} onChange={(e) => { setSl(e.target.value); setError(null) }} placeholder={fmtPrice(pos.entry, tick)} />
+          </label>
+          <label className="op-field">
+            <span className="op-field-label">기준 가격</span>
+            <TriggerBySelect value={slBy} onChange={setSlBy} />
+          </label>
+        </div>
         <p className="lev-note">빈칸으로 두고 저장하면 해당 값이 제거됩니다.</p>
         {error && <p className="op-error">{error}</p>}
       </div>
     </Dialog>
+  )
+}
+
+function TriggerBySelect({ value, onChange }: { value: TriggerBy; onChange: (by: TriggerBy) => void }) {
+  return (
+    <select className="op-select" value={value} onChange={(e) => onChange(e.target.value as TriggerBy)}>
+      {(['last', 'mark'] as const).map((b) => (
+        <option key={b} value={b}>
+          {TRIGGER_BY_LABEL[b]}
+        </option>
+      ))}
+    </select>
   )
 }
 
@@ -1142,9 +1226,21 @@ interface AdjustMarginDialogProps {
 
 function AdjustMarginDialog({ pos, symbols, onClose }: AdjustMarginDialogProps) {
   const paper = usePaper()
+  // 한도는 마크 가격에 따라 바뀐다 — 시세가 들어올 때마다 다시 그린다.
+  usePaperLive((l) => l.positions[pos.id])
+  const current = paper.account.positions.find((p) => p.id === pos.id) ?? pos
+  // 한도는 넘지 않게 센트 단위로 내려 보여 주고, 누르면 그 값으로 금액 칸을 채운다.
+  const limits = paper.marginLimits(pos.symbol, pos.side)
+  const maxAdd = limits ? floorTo(limits.maxAdd, 0.01) : 0
+  const maxRemove = limits ? floorTo(limits.maxRemove, 0.01) : 0
   const [amount, setAmount] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+
+  function fill(v: number) {
+    setAmount(v.toFixed(2))
+    setError(null)
+  }
 
   async function apply(sign: 1 | -1) {
     if (busy) return
@@ -1181,14 +1277,39 @@ function AdjustMarginDialog({ pos, symbols, onClose }: AdjustMarginDialogProps) 
       <div className="acc-dialog">
         <div className="op-info-row">
           <span>현재 격리 증거금</span>
-          <b>{fmtUsdt(pos.isoMargin)} USDT</b>
+          <b>{fmtUsdt(current.isoMargin)} USDT</b>
         </div>
         <label className="op-field">
           <span className="op-field-label">금액 (USDT)</span>
           <input className="op-input" inputMode="decimal" value={amount} onChange={(e) => { setAmount(e.target.value); setError(null) }} placeholder="0" />
         </label>
+        {limits && (
+          <div className="acc-limits">
+            <button type="button" className="acc-limit" disabled={!(maxAdd > 0)} onClick={() => fill(maxAdd)}>
+              <span>최대 추가</span>
+              <b>{fmtUsdt(maxAdd)} USDT</b>
+            </button>
+            <button type="button" className="acc-limit" disabled={!(maxRemove > 0)} onClick={() => fill(maxRemove)}>
+              <span>최대 감소</span>
+              <b>{fmtUsdt(maxRemove)} USDT</b>
+            </button>
+          </div>
+        )}
         {error && <p className="op-error">{error}</p>}
       </div>
     </Dialog>
   )
+}
+
+/** 3초 뒤 저절로 풀리는 확인 상태(차트 TradeOverlay 의 두 번 눌러 종료와 같은 시간). */
+function useConfirmKey(): [string | null, (key: string | null) => void] {
+  const [key, setKey] = useState<string | null>(null)
+  const timer = useRef<number | undefined>(undefined)
+  const set = (k: string | null) => {
+    clearTimeout(timer.current)
+    setKey(k)
+    if (k) timer.current = window.setTimeout(() => setKey(null), 3000)
+  }
+  useEffect(() => () => clearTimeout(timer.current), [])
+  return [key, set]
 }

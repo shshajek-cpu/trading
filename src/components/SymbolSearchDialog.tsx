@@ -2,15 +2,8 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Dialog } from './ui/Dialog'
 import { Icon } from './Icon'
 import { CoinIcon } from './CoinIcon'
-import {
-  baseCode,
-  coinName,
-  describeSymbol,
-  displaySymbol,
-  isQuarterly,
-  symbolCategory,
-  type SymbolInfo,
-} from '../lib/symbols'
+import { describeSymbol, displaySymbol, isQuarterly, symbolCategory, type SymbolInfo } from '../lib/symbols'
+import { rankSymbol, retrySymbols, useSymbolsStatus } from '../hooks/useSymbols'
 import './symbolSearch.css'
 
 interface SymbolSearchDialogProps {
@@ -43,20 +36,6 @@ interface Ranked {
   score: number
 }
 
-/** 검색어에 대한 순위 점수. 낮을수록 상위. -1 이면 제외. */
-function rank(info: SymbolInfo, q: string): number {
-  const sym = info.symbol.toUpperCase()
-  const disp = displaySymbol(info.symbol, [info]).toUpperCase()
-  const base = baseCode(info.baseAsset)
-  const name = coinName(info.baseAsset).toUpperCase()
-  if (sym === q || disp === q) return 0
-  if (base === q) return 1
-  if (sym.startsWith(q) || disp.startsWith(q)) return 2
-  if (name.startsWith(q)) return 3
-  if (sym.includes(q) || name.includes(q)) return 4
-  return -1
-}
-
 /** displaySymbol 안에서 검색어가 걸린 구간을 accent 로 강조. */
 function highlight(text: string, q: string) {
   if (!q) return text
@@ -82,6 +61,7 @@ export function SymbolSearchDialog({
   initialQuery,
 }: SymbolSearchDialogProps) {
   const [query, setQuery] = useState('')
+  const listStatus = useSymbolsStatus()
   const [tab, setTab] = useState<Tab>('all')
   const [active, setActive] = useState(0)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -108,7 +88,7 @@ export function SymbolSearchDialog({
     } else {
       ranked = []
       for (const info of inTab) {
-        const score = rank(info, q)
+        const score = rankSymbol(info, q)
         if (score >= 0) ranked.push({ info, score })
       }
     }
@@ -225,7 +205,22 @@ export function SymbolSearchDialog({
             </button>
           )
         })}
-        {results.length === 0 && <p className="ss-empty">일치하는 심볼이 없습니다.</p>}
+        {/* 목록을 못 받았으면 '없음' 대신 이유와 다시 시도를 보여 준다. */}
+        {listStatus.missing ? (
+          listStatus.failed ? (
+            <p className="ss-empty">
+              심볼 목록을 불러오지 못했습니다 —{' '}
+              {/* 목록의 Enter(첫 심볼 고르기)가 이 버튼을 가로채지 않게 한다. */}
+              <button type="button" className="tv-btn" onClick={retrySymbols} onKeyDown={(e) => e.stopPropagation()}>
+                다시 시도
+              </button>
+            </p>
+          ) : (
+            <p className="ss-empty">심볼 목록을 불러오는 중…</p>
+          )
+        ) : (
+          results.length === 0 && <p className="ss-empty">일치하는 심볼이 없습니다.</p>
+        )}
       </div>
     </Dialog>
   )

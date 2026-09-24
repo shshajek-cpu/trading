@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { usePaper, usePaperLive } from '../../lib/paper/context'
-import type { OrderRequest, OrderType, PosSide, TriggerBy } from '../../lib/paper/types'
+import type { OrderRequest, OrderType, PaperPosition, PosSide, TriggerBy } from '../../lib/paper/types'
 import { DEFAULT_SETTINGS } from '../../lib/paper/types'
 import { displaySymbol, type SymbolInfo } from '../../lib/symbols'
 import {
   ACTION_LABEL,
   floorTo,
+  fmtMarginRatio,
   fmtPrice,
   fmtQty,
   fmtSigned,
@@ -20,8 +21,9 @@ import { Popover } from '../ui/Popover'
 import { LeverageDialog } from './LeverageDialog'
 import './trade.css'
 
-/** 차트 우클릭 등에서 넘어오는 주문 초안. nonce 가 바뀔 때마다 새로 반영한다. */
+/** 차트 우클릭 등에서 넘어오는 주문 초안. nonce 가 바뀔 때마다 새로 반영하고, 다른 종목 초안은 무시한다. */
 export interface OrderDraft {
+  symbol: string
   price?: number
   type?: OrderType
   nonce: number
@@ -33,6 +35,8 @@ interface OrderPanelProps {
   /** true = 폰 시트(전체 폭·44px·16px 입력). */
   compact?: boolean
   draft?: OrderDraft | null
+  /** 초안을 채운 직후 부른다 — App 이 초안을 지워, 주문창이 다시 마운트될 때 또 채우지 않게 한다. */
+  onDraftApplied?: () => void
 }
 
 type Tab = 'open' | 'close'
@@ -44,6 +48,12 @@ type QtyUnit = 'coin' | 'usdt'
 function num(s: string): number {
   const n = parseFloat(s.replace(/,/g, '').trim())
   return Number.isFinite(n) ? n : NaN
+}
+
+/** '25%' 같은 비율 입력. 비율이 아니면 null. */
+function pctOf(s: string): number | null {
+  const m = /^\s*(\d+(?:\.\d+)?)\s*%\s*$/.exec(s)
+  return m ? Number(m[1]) : null
 }
 
 /** 남은 시간을 mm:ss(한 시간 넘으면 hh:mm:ss)로. */
@@ -59,7 +69,7 @@ function fmtCountdown(ms: number): string {
 
 const SLIDER_MARKS = [0, 25, 50, 75, 100]
 
-export function OrderPanel({ symbol, symbols, compact = false, draft }: OrderPanelProps) {
+export function OrderPanel({ symbol, symbols, compact = false, draft, onDraftApplied }: OrderPanelProps) {
   const paper = usePaper()
   const quote = usePaperLive((l) => l.quotes[symbol])
   const summary = usePaperLive((l) => l.summary)
@@ -72,8 +82,9 @@ export function OrderPanel({ symbol, symbols, compact = false, draft }: OrderPan
 
   const settings = paper.account.settings[symbol] ?? DEFAULT_SETTINGS
 
-  // 이 종목 시세를 구독한다(주문창이 보고 있는 동안).
-  useEffect(() => paper.watch(symbol), [paper, symbol])
+  // 이 종목 시세를 구독한다(주문창이 보고 있는 동안). watch 는 늘 같은 함수라 종목이 바뀔 때만 다시 건다.
+  const watch = paper.watch
+  useEffect(() => watch(symbol), [watch, symbol])
 
   // 초당 한 번 다시 그려 펀딩 카운트다운을 갱신한다.
   const [nowTick, setNowTick] = useState(() => Date.now())
@@ -102,7 +113,7 @@ export function OrderPanel({ symbol, symbols, compact = false, draft }: OrderPan
   const [marginErr, setMarginErr] = useState<string | null>(null)
   const [levOpen, setLevOpen] = useState(false)
 
-  // 종목이 바뀌면 입력을 비우고 지정가를 최근가로 다시 채우도록 표시한다.
+  // 종목이 바뀌면 입력을 비우고 지정가를 최근가로 다시 채우도록 표시한다. 익절/손절 값도 비운다(토글은 그대로).
   const prefillRef = useRef(true)
   useEffect(() => {
     prefillRef.current = true
@@ -110,6 +121,8 @@ export function OrderPanel({ symbol, symbols, compact = false, draft }: OrderPan
     setTriggerStr('')
     setExecPriceStr('')
     setQtyStr('')
+    setTpStr('')
+    setSlStr('')
     setError(null)
   }, [symbol])
 
@@ -121,17 +134,21 @@ export function OrderPanel({ symbol, symbols, compact = false, draft }: OrderPan
     }
   }, [quote?.last, tick])
 
-  // 차트에서 넘어온 초안: 진입 탭으로, 종류·가격을 채운다.
+  // 차트에서 넘어온 초안: 진입 탭으로, 종류·가격을 채운다. 다른 종목 초안은 무시하고, 채운 뒤엔 App 이 지운다.
   const draftNonce = draft?.nonce
   useEffect(() => {
-    if (draftNonce == null || !draft) return
+    if (draftNonce == null || !draft || draft.symbol !== symbol) return
     setTab('open')
     setType(draft.type ?? 'limit')
+    // 종료 탭의 비율('25%')은 진입 수량이 아니다.
+    setQtyStr((s) => (pctOf(s) != null ? '' : s))
     if (draft.price != null) {
       setPriceStr(fmtPrice(roundTo(draft.price, tick), tick))
       prefillRef.current = false
     }
     setError(null)
+    onDraftApplied?.()
+    // nonce 가 바뀔 때만 한 번 반영한다 — 종목·틱·콜백이 바뀌었다고 같은 초안을 다시 채우지 않는다.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [draftNonce])
 
@@ -146,8 +163,9 @@ export function OrderPanel({ symbol, symbols, compact = false, draft }: OrderPan
     return Number.isFinite(p) && p > 0 ? p : last
   }, [type, priceStr, execType, execPriceStr, triggerStr, last])
 
-  // 입력된 수량(코인). USDT 단위면 주문 가격으로 환산.
+  // 입력된 수량(코인). USDT 단위면 주문 가격으로 환산. 비율('25%')은 수량이 아니다(종료 탭에서 방향별로 계산).
   const coinQty = useMemo(() => {
+    if (pctOf(qtyStr) != null) return NaN
     const raw = num(qtyStr)
     if (!Number.isFinite(raw) || raw <= 0) return NaN
     if (qtyUnit === 'coin') return floorTo(raw, step)
@@ -156,28 +174,46 @@ export function OrderPanel({ symbol, symbols, compact = false, draft }: OrderPan
 
   const posLong = paper.account.positions.find((p) => p.symbol === symbol && p.side === 'long')
   const posShort = paper.account.positions.find((p) => p.symbol === symbol && p.side === 'short')
+  const longQty = posLong?.qty ?? 0
+  const shortQty = posShort?.qty ?? 0
 
   const maxLong = paper.maxOpenQty(symbol, 'long', orderPrice)
   const maxShort = paper.maxOpenQty(symbol, 'short', orderPrice)
-  // 진입: 롱 최대 기준 슬라이더. 종료: 보유 수량 기준(롱 우선).
-  const sliderMax =
-    tab === 'open' ? maxLong : posLong?.qty && posLong.qty > 0 ? posLong.qty : posShort?.qty ?? 0
+  // 종료 탭의 슬라이더·% 버튼은 비율('25%')만 적어 두고, 누른 쪽(롱/숏) 보유 수량에 곱해 보낸다.
+  const closePct = tab === 'close' ? pctOf(qtyStr) : null
 
   const clearErr = useCallback(() => setError(null), [])
 
-  // 슬라이더/마크: 최대 대비 수량으로 채운다.
+  // 슬라이더/마크 — 진입: 롱 최대 대비 수량(고른 단위 그대로, USDT 면 주문 금액). 종료: 비율.
   const applyPct = useCallback(
     (pct: number) => {
       clearErr()
-      if (!(sliderMax > 0)) return
-      const q = floorTo((sliderMax * pct) / 100, step)
-      setQtyUnit('coin')
-      setQtyStr(q > 0 ? String(q) : '')
+      if (tab === 'close') {
+        setQtyStr(`${pct}%`)
+        return
+      }
+      if (!(maxLong > 0)) return
+      const q = floorTo((maxLong * pct) / 100, step)
+      if (!(q > 0)) setQtyStr('')
+      else setQtyStr(qtyUnit === 'usdt' ? (q * orderPrice).toFixed(2) : String(q))
     },
-    [sliderMax, step, clearErr],
+    [tab, maxLong, step, qtyUnit, orderPrice, clearErr],
   )
 
-  const sliderVal = sliderMax > 0 && Number.isFinite(coinQty) ? Math.min(100, (coinQty / sliderMax) * 100) : 0
+  // 직접 넣은 종료 수량은 한쪽만 들고 있을 때만 슬라이더 위치로 보여 준다(양쪽이면 기준이 없다).
+  const sliderBase = tab === 'open' ? maxLong : longQty > 0 && shortQty > 0 ? 0 : longQty || shortQty
+  const sliderVal =
+    closePct != null
+      ? Math.min(100, closePct)
+      : sliderBase > 0 && Number.isFinite(coinQty)
+        ? Math.min(100, (coinQty / sliderBase) * 100)
+        : 0
+
+  /** 이 포지션을 얼마나 닫을지 — 비율이면 보유량 × 비율, 직접 넣었으면 min(입력, 보유), 비었으면 전량. */
+  function closeQtyOf(p: PaperPosition): number {
+    if (closePct != null) return closePct >= 100 ? p.qty : floorTo((p.qty * closePct) / 100, step)
+    return Number.isFinite(coinQty) && coinQty > 0 ? Math.min(coinQty, p.qty) : p.qty
+  }
 
   // 예상치 — 진입은 롱/숏 각각(청산가가 다르다).
   function buildReq(side: PosSide, action: Tab): OrderRequest | null {
@@ -241,14 +277,32 @@ export function OrderPanel({ symbol, symbols, compact = false, draft }: OrderPan
       setError('가격을 입력하세요.')
       return
     }
-    // 종료에서 수량이 비면 전량(0).
-    if (tab === 'close' && !(Number.isFinite(coinQty) && coinQty > 0)) req.qty = 0
+    if (tab === 'close') {
+      const pos = side === 'long' ? posLong : posShort
+      if (closePct != null) {
+        // 비율은 누른 쪽 보유 수량 기준. 100% 는 전량(0)으로 보내 끝수가 남지 않게 한다.
+        const q = pos ? closeQtyOf(pos) : 0
+        if (!(q > 0)) {
+          setError(closePct > 0 ? `종료 수량이 최소 단위(${fmtQty(step, step)})보다 작습니다.` : '수량을 입력하세요.')
+          return
+        }
+        req.qty = closePct >= 100 ? 0 : q
+      } else if (!(Number.isFinite(coinQty) && coinQty > 0)) {
+        // 수량이 비면 전량(0).
+        req.qty = 0
+      }
+    }
     setBusy(true)
     setError(null)
     const err = await paper.place(req)
     setBusy(false)
     if (err) setError(err)
-    else setQtyStr('')
+    else {
+      // 다음 주문에 앞 주문의 수량·익절/손절이 붙지 않게 비운다(켜 둔 토글은 그대로).
+      setQtyStr('')
+      setTpStr('')
+      setSlStr('')
+    }
   }
 
   async function switchMargin(mode: 'cross' | 'isolated') {
@@ -262,13 +316,12 @@ export function OrderPanel({ symbol, symbols, compact = false, draft }: OrderPan
   const nextFunding = quote?.nextFundingTime
   const fundingClass = funding == null ? '' : funding > 0 ? 'down' : funding < 0 ? 'up' : ''
 
-  // 동기화 안내 문구.
-  const syncLine =
-    paper.sync.mode === 'local'
+  // 동기화 안내 문구. 되짚는 중이면 로컬·서버 모드 모두 먼저 알린다.
+  const syncLine = paper.catchingUp
+    ? '꺼 둔 동안의 시세를 반영하는 중…'
+    : paper.sync.mode === 'local'
       ? '이 기기에만 저장됩니다. 동기화 코드를 정하면 PC·폰이 같은 계좌를 씁니다.'
-      : paper.catchingUp
-        ? '꺼 둔 동안의 시세를 반영하는 중…'
-        : paper.sync.message
+      : paper.sync.message
 
   const notional = Number.isFinite(coinQty) ? coinQty * orderPrice : 0
 
@@ -467,7 +520,7 @@ export function OrderPanel({ symbol, symbols, compact = false, draft }: OrderPan
                 onClick={() => {
                   if (u === qtyUnit) return
                   // 단위 전환 시 값을 환산해 유지한다.
-                  const raw = num(qtyStr)
+                  const raw = pctOf(qtyStr) != null ? NaN : num(qtyStr)
                   if (Number.isFinite(raw) && orderPrice > 0) {
                     if (u === 'usdt') setQtyStr((floorTo(raw, step) * orderPrice).toFixed(2))
                     else setQtyStr(String(floorTo(raw / orderPrice, step)))
@@ -484,7 +537,7 @@ export function OrderPanel({ symbol, symbols, compact = false, draft }: OrderPan
           className="op-input"
           inputMode="decimal"
           value={qtyStr}
-          placeholder="0"
+          placeholder={tab === 'close' ? '전량' : '0'}
           onChange={(e) => {
             setQtyStr(e.target.value)
             clearErr()
@@ -614,8 +667,11 @@ export function OrderPanel({ symbol, symbols, compact = false, draft }: OrderPan
       ) : (
         <div className="op-info">
           {[posLong, posShort].filter((p): p is NonNullable<typeof p> => !!p && p.qty > 0).map((p) => {
+            // 입력한 만큼(비율·수량, 비면 전량)만 닫는다고 보고 테이커 수수료를 뺀다.
+            const q = closeQtyOf(p)
             const px = orderPrice
-            const gross = p.side === 'long' ? (px - p.entry) * p.qty : (p.entry - px) * p.qty
+            const gross = p.side === 'long' ? (px - p.entry) * q : (p.entry - px) * q
+            const net = gross - q * px * paper.account.fees.taker
             return (
               <div key={p.id} className="op-info-close">
                 <div className="op-info-row">
@@ -625,12 +681,16 @@ export function OrderPanel({ symbol, symbols, compact = false, draft }: OrderPan
                   <b>{fmtQty(p.qty, step)}</b>
                 </div>
                 <div className="op-info-row">
+                  <span>종료 수량{closePct != null ? ` (${Math.min(100, closePct)}%)` : ''}</span>
+                  <b>{fmtQty(q, step)}</b>
+                </div>
+                <div className="op-info-row">
                   <span>평균 진입가</span>
                   <b>{fmtPrice(p.entry, tick)}</b>
                 </div>
                 <div className="op-info-row">
-                  <span>예상 실현 손익</span>
-                  <b className={pnlClass(gross)}>{fmtSigned(gross)} USDT</b>
+                  <span>예상 실현 손익(수수료 차감)</span>
+                  <b className={pnlClass(net)}>{fmtSigned(net)} USDT</b>
                 </div>
               </div>
             )
@@ -644,7 +704,7 @@ export function OrderPanel({ symbol, symbols, compact = false, draft }: OrderPan
         <button
           type="button"
           className="op-submit up"
-          disabled={busy}
+          disabled={busy || (tab === 'close' && !(posLong && posLong.qty > 0))}
           onClick={() => submit('long')}
         >
           {tab === 'open' ? '롱 진입' : '롱 종료'}
@@ -652,7 +712,7 @@ export function OrderPanel({ symbol, symbols, compact = false, draft }: OrderPan
         <button
           type="button"
           className="op-submit down"
-          disabled={busy}
+          disabled={busy || (tab === 'close' && !(posShort && posShort.qty > 0))}
           onClick={() => submit('short')}
         >
           {tab === 'open' ? '숏 진입' : '숏 종료'}
@@ -677,7 +737,7 @@ export function OrderPanel({ symbol, symbols, compact = false, draft }: OrderPan
           </div>
           <div>
             <span>증거금률</span>
-            <b>{summary.marginRatio == null ? '—' : `${summary.marginRatio.toFixed(1)}%`}</b>
+            <b>{fmtMarginRatio(summary.marginRatio)}</b>
           </div>
         </div>
         <p className="op-sync">{syncLine}</p>

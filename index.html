@@ -11,6 +11,24 @@
     <meta name="apple-mobile-web-app-title" content="Trading" />
     <link rel="apple-touch-icon" href="/pwa-192.png" />
     <title>Trading</title>
+    <script>
+      // 저장된 테마로 첫 화면부터 맞춘다: 화면 색(data-theme), 폰 상태 표시줄 색(theme-color),
+      // iOS 상태 표시줄 글자색(앱을 켤 때 읽는다 — 라이트는 검은 글자 막대, 다크는 앱 위에 흰 글자).
+      // 켠 뒤 테마를 바꾸면 App 이 theme-color 를 --tv-bg 로 다시 맞춘다.
+      ;(function () {
+        try {
+          var saved = JSON.parse(localStorage.getItem('trading.chartSettings.v1') || 'null')
+          if (!saved || saved.theme !== 'light') return
+          document.documentElement.dataset.theme = 'light'
+          document.querySelector('meta[name="theme-color"]').setAttribute('content', '#ffffff')
+          document
+            .querySelector('meta[name="apple-mobile-web-app-status-bar-style"]')
+            .setAttribute('content', 'default')
+        } catch (e) {
+          /* 저장값이 깨졌으면 기본(다크)으로 연다 */
+        }
+      })()
+    </script>
   </head>
   <body>
     <div id="root"></div>

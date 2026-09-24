@@ -207,7 +207,12 @@ export function SelectedToolbar({
       <button
         type="button"
         className={`tv-draw-selbtn${lockedNow ? ' on' : ''}`}
-        {...tip(lockedNow ? '잠금 풀기' : '잠금', '이 그림이 실수로 움직이거나 지워지지 않게 고정합니다.')}
+        {...tip(
+          drawing.locked ? '잠금 풀기' : '잠금',
+          globalLocked
+            ? '이 그림을 실수로 움직이거나 지우지 못하게 고정합니다. 지금은 왼쪽 막대의 모든 그림 잠금이 켜져 있습니다.'
+            : '이 그림을 실수로 움직이거나 지우지 못하게 고정합니다.',
+        )}
         aria-label="잠금"
         aria-pressed={drawing.locked}
         onClick={() => onUpdate(drawing.id, { locked: !drawing.locked })}
@@ -228,8 +233,11 @@ export function SelectedToolbar({
       <button
         type="button"
         className="tv-draw-selbtn"
-        {...tip('삭제', '이 그림을 지웁니다.', 'Delete')}
+        {...(lockedNow
+          ? tip('삭제', '잠긴 그림은 지울 수 없습니다. 먼저 잠금을 푸세요.')
+          : tip('삭제', '이 그림을 지웁니다.', 'Delete'))}
         aria-label="삭제"
+        disabled={lockedNow}
         onClick={() => onRemove(drawing.id)}
       >
         <ToolIcon name="trash" size={20} />

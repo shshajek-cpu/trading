@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import {
   CrosshairMode,
   HistogramSeries,
@@ -45,6 +45,7 @@ import { makeTickFormatter, makeTimeFormatter, formatCountdown, formatPrice, pri
 import { BandFillPrimitive } from '../chart/bandFill'
 import { ColumnHighlightPrimitive } from '../chart/columnHighlight'
 import type { ComputedIndicator } from '../chart/compute'
+import { publishCrosshair, subscribeCrosshair } from '../chart/crosshairSync'
 import { tip } from '../lib/tooltip'
 
 /** 오실레이터 패널의 상단 y 좌표 — ChartCell 이 그 자리에 범례 줄을 놓는다. */
@@ -109,9 +110,37 @@ export interface ChartProps {
   onCompareInfo?: (info: CompareInfo[]) => void
   /** 우클릭 메뉴 요청(차트 영역·그림·가격축·시간축). */
   onContextMenu?: (req: ChartMenuRequest) => void
+  /** 사용자에게 짧게 알릴 말(예: 날짜로 이동이 그 날짜까지 닿지 못함). */
+  onNotice?: (message: string) => void
+  /** 켜면 같은 값을 켠 다른 칸과 크로스헤어 시각을 맞춘다(crosshairSync). */
+  syncCrosshair?: boolean
+  /** 밖(객체 트리)에서 고른 그림 — DrawingOverlay 의 selectRequest 로 넘긴다. */
+  drawingSelectRequest?: { id: string; nonce: number } | null
 }
 
 const asTime = (t: number) => t as UTCTimestamp
+
+/** 과거 한 번 불러오기의 봉 수(useBinanceKlines 의 OLDER_CHUNK 와 같다). */
+const OLDER_CHUNK_BARS = 500
+/** 기간·날짜 목표를 좇아 과거를 더 불러오는 최대 횟수 — 1분봉 약 2주. 그 너머는 요청만 쌓인다. */
+const MAX_BACKFILL_CHUNKS = 40
+
+/** 시각 오름차순 봉 목록에서 time 을 품는 봉(time 이하인 마지막 봉). 첫 봉보다 앞이면 null. */
+function barAtOrBefore(candles: Candle[], time: number): Candle | null {
+  let lo = 0
+  let hi = candles.length - 1
+  let found = -1
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1
+    if (candles[mid].time <= time) {
+      found = mid
+      lo = mid + 1
+    } else {
+      hi = mid - 1
+    }
+  }
+  return found >= 0 ? candles[found] : null
+}
 
 const SCALE_MODE_MAP: Record<ScaleMode, PriceScaleMode> = {
   normal: PriceScaleMode.Normal,
@@ -158,6 +187,9 @@ export function Chart({
   onChartClick,
   onCompareInfo,
   onContextMenu,
+  onNotice,
+  syncCrosshair,
+  drawingSelectRequest,
 }: ChartProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<IChartApi | null>(null)
@@ -170,8 +202,8 @@ export function Chart({
   )
 
   // ── 자주 바뀌는 콜백은 ref 로 잡아 이펙트 재실행을 막는다. ──
-  const cbRef = useRef({ onReachStart, onHoverTime, onPanes, onAutoScaleChange, onReplayPreview, onChartClick, onCompareInfo })
-  cbRef.current = { onReachStart, onHoverTime, onPanes, onAutoScaleChange, onReplayPreview, onChartClick, onCompareInfo }
+  const cbRef = useRef({ onReachStart, onHoverTime, onPanes, onAutoScaleChange, onReplayPreview, onChartClick, onCompareInfo, onNotice })
+  cbRef.current = { onReachStart, onHoverTime, onPanes, onAutoScaleChange, onReplayPreview, onChartClick, onCompareInfo, onNotice }
 
   const candlesRef = useRef<Candle[]>([])
   candlesRef.current = candles
@@ -234,8 +266,16 @@ export function Chart({
   // 시리즈를 갈아끼우면 시간축 보이는 구간이 데이터 밖으로 밀려 빈 차트가 된다.
   // 옛 시리즈를 지우기 직전 구간을 적어 두고, 새 시리즈에 데이터를 넣은 뒤 되돌린다(TradingView와 같은 동작).
   const swapRangeRef = useRef<LogicalRange | null>(null)
-  // 기간 버튼(1일·3개월…)이 요청한 시간 구간. 과거 봉이 모자라면 더 불러오며 맞춘다.
-  const pendingRangeRef = useRef<{ from: number; to: number; attempts: number } | null>(null)
+  // 기간 버튼(1일·3개월…)·날짜로 이동이 요청한 시간 구간. 과거 봉이 모자라면 더 불러오며 맞춘다.
+  // limit: 과거를 더 불러올 최대 횟수 — 첫 봉이 있을 때 모자란 봉 수로 정한다(그 전엔 null).
+  // target: 날짜로 이동한 시각. 거기까지 닿지 못하고 멈추면 알린다(기간 버튼은 null — 알리지 않는다).
+  const pendingRangeRef = useRef<{
+    from: number
+    to: number
+    attempts: number
+    limit: number | null
+    target: number | null
+  } | null>(null)
   const applyPendingRange = useCallback(() => {
     const pending = pendingRangeRef.current
     const chart = chartRef.current
@@ -245,15 +285,26 @@ export function Chart({
     // 날짜로 이동한 시각이 아직 안 불러온 과거면 끝이 시작보다 앞설 수 있다 — 그때는 가장 오래된 구간을 보여 준다.
     const to = pending.to > from ? pending.to : (candlesRef.current[Math.min(candlesRef.current.length - 1, 100)]?.time ?? from + 1)
     chart.timeScale().setVisibleRange({ from: from as Time, to: to as Time })
+    if (pending.limit === null) {
+      // 한 번에 OLDER_CHUNK_BARS 봉씩 받는다. 스크롤 쪽 요청과 겹쳐 무시되는 몫으로 두 번을 더 준다.
+      const missingBars = (first.time - pending.from) / INTERVAL_SECONDS[interval]
+      pending.limit = Math.min(MAX_BACKFILL_CHUNKS, Math.ceil(missingBars / OLDER_CHUNK_BARS) + 2)
+    }
     // 목표에 닿았거나, 시도를 다 썼거나, 거래소에 더 이상 과거가 없으면(도달 불가) 목표를 버린다.
     // 버리지 않으면 이후 setData(차트 종류 변경·갭 재조회)마다 화면이 가장 오래된 봉으로 튄다.
-    if (first.time <= pending.from || pending.attempts >= 8 || exhaustedRef.current) {
+    if (first.time <= pending.from || pending.attempts >= pending.limit || exhaustedRef.current) {
       pendingRangeRef.current = null
+      // 가장 오래된 구간을 목표 날짜로 잘못 읽지 않게 알린다.
+      if (pending.target !== null && first.time > pending.target) {
+        cbRef.current.onNotice?.(
+          exhaustedRef.current ? '그 날짜에는 데이터가 없어 가장 오래된 봉을 보여 줍니다' : '해당 날짜까지 불러오지 못했습니다',
+        )
+      }
       return
     }
     pending.attempts++
     cbRef.current.onReachStart?.()
-  }, [])
+  }, [interval])
   useEffect(() => {
     const chart = chartRef.current
     if (!chart) return
@@ -360,22 +411,33 @@ export function Chart({
     if (!tick) applyPendingRange()
   }, [candles, mainSeries, chartType, colors, applyPendingRange])
 
+  // 거래소에 과거가 더 없다는 소식은 봉 변화 없이 올 수도 있다(빈 응답) — 좇던 목표를 그때 정리한다.
+  useEffect(() => {
+    if (exhausted) applyPendingRange()
+  }, [exhausted, applyPendingRange])
+
   // ── 4) 스케일 모드 + 자동 스케일. ────────────────────────────────────
   // 새로 만든 차트·새 메인 시리즈에는 아직 가격 구간이 없다. 이때 수동 스케일(auto 꺼짐)을 그대로
   // 넘기면 캔들이 화면 밖에 남아 빈 차트가 된다(차트를 위아래로 끌면 auto 가 꺼지고, 그 상태가
   // 저장돼 주기·종목·차트 종류를 바꾸거나 새로고침할 때마다 빈 화면이 됐다).
   // TradingView 처럼 새 시리즈는 항상 auto 로 시작하고, 꺼져 있었다면 부모 상태도 켠다.
   const scaleSeriesRef = useRef<MainSeries | null>(null)
+  // 차트에 마지막으로 넣은(또는 부모에 알린) 자동 스케일 값. 차트 쪽 값이 이와 달라졌으면 사용자가
+  // 축을 끌었거나(꺼짐) 더블클릭했다(켜짐)는 뜻이다. 부모 prop 과 비교하면 새 prop 이 아직 차트에
+  // 들어가기 전 보고가 끼어 사용자의 전환을 되돌릴 수 있어 이 값과 비교한다.
+  const appliedAutoRef = useRef<boolean | null>(null)
   useEffect(() => {
     const chart = chartRef.current
     if (!chart || !mainSeries) return
     const fresh = scaleSeriesRef.current !== mainSeries
     scaleSeriesRef.current = mainSeries
+    const auto = fresh || autoScale
     chart.priceScale('right').applyOptions({
       mode: SCALE_MODE_MAP[effectiveScale],
-      autoScale: fresh || autoScale,
+      autoScale: auto,
       invertScale,
     })
+    appliedAutoRef.current = auto
     if (fresh && !autoScale) cbRef.current.onAutoScaleChange?.(true)
   }, [effectiveScale, autoScale, invertScale, mainSeries])
 
@@ -731,11 +793,22 @@ export function Chart({
     )
   }, [pins, mainSeries])
 
-  // ── 10) 크로스헤어 hover → 시각 보고 + 리플레이 미리보기 세로선. ───────
+  // ── 10) 크로스헤어 hover → 시각 보고 + 리플레이 미리보기 세로선 + 칸 사이 크로스헤어 맞추기. ───────
+  const syncId = useId()
+  const syncRef = useRef(syncCrosshair)
+  syncRef.current = syncCrosshair
+  // 다른 칸이 이 칸 크로스헤어를 맞춰 둔 상태 / 사용자 커서가 이 칸 위에 있어 발행하는 상태 / 마지막 발행 시각.
+  const syncDrivenRef = useRef(false)
+  const syncOwnRef = useRef(false)
+  const syncSentRef = useRef<number | null>(null)
   useEffect(() => {
     const chart = chartRef.current
     if (!chart) return
     const handler = (param: MouseEventParams) => {
+      const user = param.sourceEvent !== undefined
+      // 다른 칸이 맞춰 준 크로스헤어를 봉 갱신 때 차트가 다시 계산해 올린 것 — 이 칸의 호버가 아니다.
+      if (!user && syncDrivenRef.current) return
+      if (user) syncDrivenRef.current = false
       const time = param.time === undefined ? null : Number(param.time)
       cbRef.current.onHoverTime?.(time)
       const el = replayLineRef.current
@@ -748,10 +821,59 @@ export function Chart({
           el.style.display = 'none'
         }
       }
+      // 사용자 커서가 이 칸에 있으면 봉이 바뀔 때만 발행한다(같은 봉 안의 움직임·틱 재계산은 거른다).
+      if (syncRef.current && (user || syncOwnRef.current)) {
+        syncOwnRef.current = param.point !== undefined
+        const next = param.point ? time : null
+        if (next !== syncSentRef.current) {
+          syncSentRef.current = next
+          publishCrosshair(syncId, next)
+        }
+      }
     }
     chart.subscribeCrosshairMove(handler)
     return () => chart.unsubscribeCrosshairMove(handler)
-  }, [replayPick])
+  }, [replayPick, syncId])
+
+  // 10b) 다른 칸이 발행한 시각을 이 칸의 그 시각을 품는 봉 종가에 맞춘다. 차트 API 만 부르고 React 상태는 건드리지 않는다.
+  useEffect(() => {
+    const chart = chartRef.current
+    const series = mainSeries
+    if (!chart || !series || !syncCrosshair) return
+    const clear = () => {
+      if (!syncDrivenRef.current) return
+      syncDrivenRef.current = false
+      chart.clearCrosshairPosition()
+    }
+    const unsubscribe = subscribeCrosshair((sourceId, time) => {
+      if (sourceId === syncId) return
+      // 커서가 다른 칸으로 갔다 — 이 칸은 더 발행하지 않는다.
+      syncOwnRef.current = false
+      syncSentRef.current = null
+      const bar = time === null ? null : barAtOrBefore(candlesRef.current, time)
+      if (!bar) {
+        clear()
+        return
+      }
+      try {
+        chart.setCrosshairPosition(bar.close, bar.time as Time, series)
+        syncDrivenRef.current = true
+      } catch {
+        // 보이는 봉이 하나도 없으면(빈 구간으로 밀어 둔 경우) 가격 좌표를 못 구한다 — 맞추지 않는다.
+        clear()
+      }
+    })
+    return () => {
+      unsubscribe()
+      clear()
+      // 이 칸이 발행해 둔 커서가 있으면 다른 칸에서도 지운다.
+      syncOwnRef.current = false
+      if (syncSentRef.current !== null) {
+        syncSentRef.current = null
+        publishCrosshair(syncId, null)
+      }
+    }
+  }, [syncCrosshair, mainSeries, syncId])
 
   // ── 11) 핀/리플레이 클릭 캡처(시각 + 가격). ──────────────────────────
   useEffect(() => {
@@ -832,8 +954,6 @@ export function Chart({
   // report 가 참조하지만 매초 바뀌어 이펙트를 재구독시키면 안 되는 값은 ref 로 잡는다.
   const indicatorsRef = useRef(indicators)
   indicatorsRef.current = indicators
-  const autoScaleRef = useRef(autoScale)
-  autoScaleRef.current = autoScale
 
   // 14a) 패널 구성이 바뀔 때만 저장된 크기를 되돌린다. panes 는 타이머 안에서 지연 조회한다.
   useEffect(() => {
@@ -883,9 +1003,12 @@ export function Chart({
         cbRef.current.onPanes?.(out, axisWidth)
       }
 
-      // 사용자가 가격축을 끌어 자동스케일이 꺼졌으면 부모에 알린다.
+      // 사용자가 가격축을 끌어 자동스케일이 꺼졌거나, 축을 더블클릭해 다시 켜졌으면 부모에 알린다.
       const auto = c.priceScale('right').options().autoScale
-      if (!auto && autoScaleRef.current) cbRef.current.onAutoScaleChange?.(false)
+      if (appliedAutoRef.current !== null && auto !== appliedAutoRef.current) {
+        appliedAutoRef.current = auto
+        cbRef.current.onAutoScaleChange?.(auto)
+      }
     }
     const first = window.setTimeout(report, 80)
     const timer = window.setInterval(report, 500)
@@ -945,11 +1068,12 @@ export function Chart({
         return out
       },
       setVisibleRange: (from, to) => {
-        pendingRangeRef.current = { from, to, attempts: 0 }
+        pendingRangeRef.current = { from, to, attempts: 0, limit: null, target: null }
         applyPendingRange()
       },
       resetView: () => {
         chartRef.current?.priceScale('right').applyOptions({ autoScale: true })
+        appliedAutoRef.current = true
         cbRef.current.onAutoScaleChange?.(true)
         const n = candlesRef.current.length
         if (n > 0) chartRef.current?.timeScale().setVisibleLogicalRange({ from: Math.max(0, n - 150), to: n + 1 })
@@ -978,7 +1102,7 @@ export function Chart({
         const range = chartRef.current?.timeScale().getVisibleLogicalRange()
         const bars = range ? Math.max(20, range.to - range.from) : 150
         const half = (bars / 2) * INTERVAL_SECONDS[interval]
-        pendingRangeRef.current = { from: time - half, to: time + half, attempts: 0 }
+        pendingRangeRef.current = { from: time - half, to: time + half, attempts: 0, limit: null, target: time }
         applyPendingRange()
       },
     }
@@ -1067,6 +1191,7 @@ export function Chart({
           onRemove={onRemoveDrawing}
           onToolDone={onToolDone}
           onContextMenu={onContextMenu}
+          selectRequest={drawingSelectRequest}
         />
       )}
       {chartRef.current && mainSeries && (

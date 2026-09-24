@@ -7,7 +7,10 @@
   inset: 0;
   display: flex;
   flex-direction: column;
+  /* 가로로 눕힌 아이폰의 노치·둥근 모서리 — 고정 배치라 #root 의 좌우 패딩을 받지 못해 직접 준다. */
   padding-top: var(--sat);
+  padding-right: var(--sar);
+  padding-left: var(--sal);
   background: var(--tv-bg);
 }
 
@@ -206,7 +209,9 @@
   box-shadow: var(--tv-shadow);
 }
 
+/* 보이는 원은 30px 로 두고, 투명한 바깥 영역으로 손가락 기준 44px 를 채운다. */
 .m-tool-chip button {
+  position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -217,6 +222,12 @@
   background: rgb(255 255 255 / 20%);
   color: #fff;
   cursor: pointer;
+}
+
+.m-tool-chip button::before {
+  content: '';
+  position: absolute;
+  inset: -7px;
 }
 
 /* ── 아래 시트 ── */
@@ -235,7 +246,9 @@
   flex-direction: column;
   width: 100%;
   max-height: 88dvh;
+  padding-right: var(--sar);
   padding-bottom: var(--sab);
+  padding-left: var(--sal);
   border-radius: 16px 16px 0 0;
   background: var(--tv-elevated);
   color: var(--tv-text);
@@ -278,7 +291,9 @@
   color: var(--tv-text-strong);
 }
 
+/* 보이는 원은 32px, 투명한 바깥 영역까지 44px. */
 .m-sheet-close {
+  position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -289,6 +304,12 @@
   background: var(--tv-hover);
   color: var(--tv-text);
   cursor: pointer;
+}
+
+.m-sheet-close::before {
+  content: '';
+  position: absolute;
+  inset: -6px;
 }
 
 .m-sheet-body {
@@ -388,10 +409,10 @@
 
 .m-chip {
   min-width: 64px;
-  height: 40px;
+  height: 44px;
   padding: 0 14px;
   border: 1px solid var(--tv-border-strong);
-  border-radius: 20px;
+  border-radius: 22px;
   background: none;
   color: var(--tv-text);
   font: inherit;
@@ -472,7 +493,7 @@
 }
 
 .m-segmented button {
-  height: 34px;
+  height: 44px;
   padding: 0 12px;
   border: 0;
   border-radius: 8px;

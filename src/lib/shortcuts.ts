@@ -199,14 +199,14 @@ export function rejectReason(combo: string): string | null {
   return null
 }
 
-const STORAGE_KEY = 'trading.shortcuts.v1'
+export const SHORTCUTS_STORAGE_KEY = 'trading.shortcuts.v1'
 
 /** 사용자가 바꾼 단축키만 저장한다. 기기마다 다른 프로그램과 겹치는 키가 다르므로 동기화하지 않는다. */
 export type ShortcutOverrides = Partial<Record<ShortcutId, string[]>>
 
 export function loadShortcutOverrides(): ShortcutOverrides {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY)
+    const raw = localStorage.getItem(SHORTCUTS_STORAGE_KEY)
     if (!raw) return {}
     const parsed: unknown = JSON.parse(raw)
     if (typeof parsed !== 'object' || parsed === null) return {}
@@ -223,7 +223,7 @@ export function loadShortcutOverrides(): ShortcutOverrides {
 
 export function saveShortcutOverrides(overrides: ShortcutOverrides): void {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(overrides))
+    localStorage.setItem(SHORTCUTS_STORAGE_KEY, JSON.stringify(overrides))
   } catch {
     /* 저장 실패는 무시 */
   }

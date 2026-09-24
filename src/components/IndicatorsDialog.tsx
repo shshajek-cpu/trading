@@ -85,6 +85,13 @@ export function IndicatorsDialog({ open, onClose, indicators, onChange }: Indica
         placeholder="지표 검색"
         value={query}
         onChange={(e) => setQuery(e.target.value)}
+        onKeyDown={(e) => {
+          // Enter = 목록 맨 위 지표 추가(행을 누른 것과 같다, 창은 열린 채).
+          if (e.key !== 'Enter' || e.nativeEvent.isComposing) return
+          e.preventDefault()
+          const first = rows[0]
+          if (first) onChange([...indicators, createIndicator(first, indicators)])
+        }}
         aria-label="지표 검색"
       />
     </div>

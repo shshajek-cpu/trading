@@ -29,7 +29,7 @@ export const SIDE_COLORS: Record<PinSide, string> = {
   skip: '#8a8a8a',
 }
 
-const STORAGE_KEY = 'trading.pins.v1'
+export const PINS_STORAGE_KEY = 'trading.pins.v1'
 
 function isPin(v: unknown): v is Pin {
   if (typeof v !== 'object' || v === null) return false
@@ -47,7 +47,7 @@ function isPin(v: unknown): v is Pin {
 
 export function loadPins(): Pin[] {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY)
+    const raw = localStorage.getItem(PINS_STORAGE_KEY)
     if (!raw) return []
     const parsed: unknown = JSON.parse(raw)
     return Array.isArray(parsed) ? parsed.filter(isPin) : []
@@ -58,7 +58,7 @@ export function loadPins(): Pin[] {
 
 export function savePins(pins: Pin[]): void {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(pins))
+    localStorage.setItem(PINS_STORAGE_KEY, JSON.stringify(pins))
     notifySettingsChanged()
   } catch {
     /* 용량 초과는 무시 — 다음 저장에서 회복된다 */

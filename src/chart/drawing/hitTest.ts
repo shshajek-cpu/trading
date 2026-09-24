@@ -30,17 +30,21 @@ export interface Picked {
   hit: Hit
 }
 
-/** 위에 그려진 것부터 검사해 커서 아래의 그림 한 개를 고른다. `touch` 면 잡는 폭이 넓다. */
+/**
+ * 위에 그려진 것부터 검사해 커서 아래의 그림 한 개를 고른다. `touch` 면 잡는 폭이 넓다.
+ * `skipLocked` 면 잠긴 그림은 지나쳐 그 아래 그림을 본다(지우개).
+ */
 export function pickDrawing(
   drawings: Drawing[],
   coords: Coords,
   p: Pt,
   touch = false,
+  skipLocked = false,
 ): Picked | null {
   const tol = touch ? TOUCH_TOL : MOUSE_TOL
   for (let i = drawings.length - 1; i >= 0; i--) {
     const d = drawings[i]
-    if (d.hidden) continue
+    if (d.hidden || (skipLocked && d.locked)) continue
     const hit = hitDrawing(d, coords, p, tol)
     if (hit) return { drawing: d, hit }
   }

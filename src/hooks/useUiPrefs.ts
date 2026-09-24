@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import type { Interval } from '../lib/binance'
 import { isInterval, DEFAULT_FAVORITE_INTERVALS } from '../lib/intervals'
 import type { MagnetMode } from '../lib/drawings'
@@ -55,6 +55,15 @@ function load(): UiPrefs {
 
 export function useUiPrefs() {
   const [prefs, setPrefs] = useState<UiPrefs>(load)
+
+  // 다른 탭이 바꾼 값을 받아 온다. 안 받으면 이 탭이 옛 값을 통째로 저장해 그쪽 변경(즐겨찾기 주기 등)을 지운다.
+  useEffect(() => {
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === STORAGE_KEY) setPrefs(load())
+    }
+    window.addEventListener('storage', onStorage)
+    return () => window.removeEventListener('storage', onStorage)
+  }, [])
 
   const patch = useCallback((next: Partial<UiPrefs>) => {
     setPrefs((prev) => {

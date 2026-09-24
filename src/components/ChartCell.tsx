@@ -35,6 +35,15 @@ const REPLAY_SPEEDS: { label: string; ms: number }[] = [
   { label: '3초', ms: 3000 },
 ]
 
+/** 리플레이 스냅샷 — 진입(또는 도중 종목·주기 변경) 시점의 봉과 그 봉의 종목·주기. */
+interface ReplayBase {
+  key: string
+  interval: Interval
+  candles: Candle[]
+}
+/** 늘 같은 빈 목록 — 비워 둘 때 차트·지표가 새 배열로 착각해 다시 계산하지 않게 한다. */
+const EMPTY_CANDLES: Candle[] = []
+
 export interface ChartCellProps {
   cellIndex: number | null
   symbol: string
@@ -85,10 +94,16 @@ export interface ChartCellProps {
   onEditIndicator?: (instanceId: string) => void
   /** 폰: 시간축 오른쪽 모서리의 ⚙ — 가격 축 시트를 연다. */
   onScaleMenu?: () => void
+  /** 사용자에게 짧게 알릴 말(예: 날짜로 이동이 그 날짜까지 닿지 못함). */
+  onNotice?: (message: string) => void
+  /** 켜면 같은 값을 켠 다른 칸과 크로스헤어 시각을 맞춘다. */
+  syncCrosshair?: boolean
+  /** 밖(객체 트리)에서 고른 그림 — 이 칸에 있으면 선택한다. */
+  drawingSelectRequest?: { id: string; nonce: number } | null
 }
 
 /** 범례 조작용 소형 아이콘(직접 그린 SVG). */
-function Ctl({ name }: { name: 'eye' | 'eyeOff' | 'gear' | 'caret' | 'close' | 'bell' }) {
+function Ctl({ name }: { name: 'eye' | 'eyeOff' | 'gear' | 'caret' | 'close' | 'bell' | 'pick' }) {
   const p: Record<typeof name, string> = {
     eye: 'M8 3.5C4.5 3.5 2 8 2 8s2.5 4.5 6 4.5S14 8 14 8 11.5 3.5 8 3.5Zm0 7A2.5 2.5 0 1 1 8 5.5a2.5 2.5 0 0 1 0 5Z',
     eyeOff: 'M2 2l12 12M6 6.2A2.5 2.5 0 0 0 9.8 9.8M8 3.5c3.5 0 6 4.5 6 4.5a12 12 0 0 1-1.8 2.3M4 4.6A12 12 0 0 0 2 8s2.5 4.5 6 4.5',
@@ -96,8 +111,9 @@ function Ctl({ name }: { name: 'eye' | 'eyeOff' | 'gear' | 'caret' | 'close' | '
     caret: 'M4 6l4 4 4-4',
     close: 'M3 3l10 10M13 3 3 13',
     bell: 'M8 2.5a3.5 3.5 0 0 0-3.5 3.5v2.6L3 11h10l-1.5-2.4V6A3.5 3.5 0 0 0 8 2.5ZM6.6 12.8a1.5 1.5 0 0 0 2.8 0',
+    pick: 'M8 2v12M2 8h4M4.5 6.5 6 8l-1.5 1.5M14 8h-4M11.5 6.5 10 8l1.5 1.5',
   }
-  const stroke = name === 'caret' || name === 'close' || name === 'eyeOff' || name === 'bell'
+  const stroke = name === 'caret' || name === 'close' || name === 'eyeOff' || name === 'bell' || name === 'pick'
   return (
     <svg viewBox="0 0 16 16" width={16} height={16} aria-hidden="true">
       <path
@@ -157,6 +173,9 @@ export function ChartCell({
   onIndicatorAlert,
   onEditIndicator,
   onScaleMenu,
+  onNotice,
+  syncCrosshair,
+  drawingSelectRequest,
 }: ChartCellProps) {
   const [liveCandle, setLiveCandle] = useState<Candle | null>(null)
   const [hoverTime, setHoverTime] = useState<number | null>(null)
@@ -174,7 +193,7 @@ export function ChartCell({
   const [replayPlaying, setReplayPlaying] = useState(false)
   const [replaySpeed, setReplaySpeed] = useState(1000)
   const [speedOpen, setSpeedOpen] = useState(false)
-  const replayBaseRef = useRef<Candle[]>([])
+  const [replayBase, setReplayBase] = useState<ReplayBase | null>(null)
 
   const ticker = useTicker24h(symbol)
   const { candles, loading, error, reload, loadOlder, loadingOlder, exhausted, commit } = useBinanceKlines(symbol, interval)
@@ -286,10 +305,14 @@ export function ChartCell({
   // 심볼/주기 변경 시 이전 실시간 봉 폐기.
   const seriesKey = `${symbol}-${interval}`
   const seriesKeyRef = useRef(seriesKey)
+  // 종목·주기를 바꾼 순간의 봉 목록. 새 종목의 봉이 올 때까지 candles 는 이 목록(옛 종목 것)이다.
+  const staleCandlesRef = useRef<Candle[] | null>(null)
   if (seriesKeyRef.current !== seriesKey) {
     seriesKeyRef.current = seriesKey
+    staleCandlesRef.current = candles
     if (liveCandle !== null) setLiveCandle(null)
   }
+  const candlesFresh = candles !== staleCandlesRef.current
 
   const mergedCandles = useMemo(() => {
     if (candles.length === 0 || !liveCandle) return candles
@@ -300,35 +323,59 @@ export function ChartCell({
   }, [candles, liveCandle])
 
   const replayPicking = replay && replayStart === null
+  // 지금 종목·주기로 찍어 둔 리플레이 봉(아직 없으면 빈 목록).
+  const replayBars = replay && replayBase?.key === seriesKey ? replayBase.candles : EMPTY_CANDLES
 
-  // 리플레이 진입/이탈 처리. 이탈하면 TradingView처럼 실시간 끝으로 돌아간다.
+  // 리플레이 진입/이탈. 둘 다 스냅샷을 비운다 — 진입하면 아래 이펙트가 지금 봉으로 새로 찍는다.
+  // 이탈하면 TradingView처럼 실시간 끝으로 돌아간다.
   const wasReplayRef = useRef(false)
   useEffect(() => {
-    if (replay) {
-      replayBaseRef.current = mergedCandles
-      setReplayStart(null)
-      setReplayPos(0)
-      setReplayPlaying(false)
-    } else {
-      setReplayStart(null)
-      setReplayPlaying(false)
-      if (wasReplayRef.current && cellIndex !== null) {
-        // 전체 캔들이 다시 그려진 뒤에 옮겨야 한다.
-        window.setTimeout(() => getChart(cellIndex)?.scrollToRealtime(), 50)
-      }
+    setReplayBase(null)
+    setReplayStart(null)
+    setReplayPos(0)
+    setReplayPlaying(false)
+    setSpeedOpen(false)
+    if (!replay && wasReplayRef.current && cellIndex !== null) {
+      // 전체 캔들이 다시 그려진 뒤에 옮겨야 한다.
+      window.setTimeout(() => getChart(cellIndex)?.scrollToRealtime(), 50)
     }
     wasReplayRef.current = replay
-    // 진입 시점의 캔들만 스냅샷한다.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [replay])
 
-  // 재생: 일정 간격으로 한 봉씩 전진.
+  // 스냅샷 찍기 — 진입 직후(또는 시작점 다시 선택), 그리고 리플레이 도중 종목·주기를 바꿔 새 봉이 온 뒤.
+  // 옛 종목 봉은 새 종목에 섞지 않는다. 도중에 바꿨으면 새 봉이 시작점을 품을 때 보던 시점을 이어 가고,
+  // 품지 못하면 시작점을 다시 고르게 한다.
   useEffect(() => {
-    if (!replay || replayStart === null || !replayPlaying) return
-    const total = replayBaseRef.current.length
+    if (!replay || replayBase?.key === seriesKey) return
+    if (!candlesFresh || mergedCandles.length === 0) return
+    setReplayBase({ key: seriesKey, interval, candles: mergedCandles })
+    const prevBars = replayBase?.candles ?? EMPTY_CANDLES
+    const prevBar = prevBars[Math.min(replayPos, prevBars.length - 1)]
+    if (!replayBase || !prevBar || replayStart === null) {
+      setReplayPos(0)
+      return
+    }
+    // 리플레이의 "지금" = 보이던 마지막 봉이 끝나는 시각. 새 주기에선 그때까지 끝난 봉만 보여 준다(미래가 새지 않게).
+    const now = barCloseTime(prevBar.time, replayBase.interval)
+    let idx = mergedCandles.length - 1
+    while (idx >= 0 && barCloseTime(mergedCandles[idx].time, interval) > now) idx--
+    if (mergedCandles[0].time > replayStart || idx < 0) {
+      setReplayStart(null)
+      setReplayPos(0)
+      setReplayPlaying(false)
+      return
+    }
+    setReplayPos(idx)
+  }, [replay, replayBase, seriesKey, interval, candlesFresh, mergedCandles, replayStart, replayPos])
+
+  // 재생: 일정 간격으로 한 봉씩 전진.
+  const replayTotal = replayBars.length
+  useEffect(() => {
+    if (replayTotal === 0 || replayStart === null || !replayPlaying) return
     const timer = window.setInterval(() => {
       setReplayPos((pos) => {
-        if (pos >= total - 1) {
+        if (pos >= replayTotal - 1) {
           setReplayPlaying(false)
           return pos
         }
@@ -336,15 +383,18 @@ export function ChartCell({
       })
     }, replaySpeed)
     return () => window.clearInterval(timer)
-  }, [replay, replayStart, replayPlaying, replaySpeed])
+  }, [replayTotal, replayStart, replayPlaying, replaySpeed])
 
   // 차트에 넘길 캔들 — 리플레이 중엔 잘라서, 아니면 실시간 병합본.
   const chartCandles = useMemo(() => {
     if (!replay) return mergedCandles
-    const base = replayBaseRef.current
-    if (replayStart === null) return base
-    return base.slice(0, Math.max(1, replayPos + 1))
-  }, [replay, replayStart, replayPos, mergedCandles])
+    if (replayBars.length === 0) {
+      // 아직 안 찍었다. 진입 직후엔 곧 찍을 지금 봉을, 도중에 종목·주기를 바꿨으면 새 스냅샷 전까지 비운다.
+      return !replayBase && candlesFresh ? mergedCandles : EMPTY_CANDLES
+    }
+    if (replayStart === null) return replayBars
+    return replayBars.slice(0, Math.max(1, replayPos + 1))
+  }, [replay, replayBars, replayBase, candlesFresh, replayStart, replayPos, mergedCandles])
 
   const palette = CHART_PALETTES[settings.theme]
 
@@ -392,8 +442,8 @@ export function ChartCell({
   const handleChartClick = useCallback(
     (time: number, price: number) => {
       if (replayPicking) {
-        const base = replayBaseRef.current
-        const idx = base.findIndex((c) => c.time === time)
+        // 스냅샷 전(종목·주기를 막 바꿈)엔 replayBars 가 비어 고를 봉이 없다.
+        const idx = replayBars.findIndex((c) => c.time === time)
         if (idx >= 0) {
           setReplayStart(time)
           setReplayPos(idx)
@@ -412,7 +462,7 @@ export function ChartCell({
         onAddPin({ time, price, features })
       }
     },
-    [replayPicking, pinMode, mergedCandles, onAddPin, onPinFail],
+    [replayPicking, replayBars, pinMode, mergedCandles, onAddPin, onPinFail],
   )
 
   // 맨 끝 봉 기준 실시간 지표(핀 자동 판정용).
@@ -573,6 +623,9 @@ export function ChartCell({
           onChartClick={handleChartClick}
           onCompareInfo={setCompareInfo}
           onContextMenu={onContextMenu}
+          onNotice={onNotice}
+          syncCrosshair={syncCrosshair}
+          drawingSelectRequest={drawingSelectRequest}
         />
 
         {/* 트레이딩뷰식 범례(왼쪽 위). */}
@@ -723,8 +776,31 @@ export function ChartCell({
 
         {/* 리플레이 안내 + 컨트롤러. */}
         {replayPicking && <div className="replay-hint">리플레이 시작점을 선택하세요</div>}
-        {replay && replayStart !== null && (
+        {replay && replayStart !== null && replayTotal > 0 && (
           <div className="replay-controller">
+            <button
+              type="button"
+              {...tip('시작점 다시 선택', '재생을 멈추고 리플레이를 시작할 봉을 차트에서 새로 고릅니다.')}
+              aria-label="시작점 다시 선택"
+              onClick={() => {
+                // 스냅샷도 비운다 — 진입 뒤 새로 생긴 봉·더 불러온 과거까지 포함해 다시 찍는다.
+                setReplayBase(null)
+                setReplayStart(null)
+                setReplayPos(0)
+                setReplayPlaying(false)
+                setSpeedOpen(false)
+              }}
+            >
+              <Ctl name="pick" />
+            </button>
+            <button
+              type="button"
+              {...tip('한 봉 뒤로', '마지막 봉 하나를 되돌려 감춥니다.')}
+              aria-label="한 봉 뒤로"
+              onClick={() => setReplayPos((p) => Math.max(0, p - 1))}
+            >
+              ⏮
+            </button>
             <button
               type="button"
               {...tip(replayPlaying ? '일시정지' : '재생', '고른 시점부터 봉을 정한 속도로 하나씩 보여 줍니다.')}
@@ -735,7 +811,7 @@ export function ChartCell({
             <button
               type="button"
               {...tip('한 봉 앞으로', '다음 봉 하나만 보여 줍니다.')}
-              onClick={() => setReplayPos((p) => Math.min(replayBaseRef.current.length - 1, p + 1))}
+              onClick={() => setReplayPos((p) => Math.min(replayTotal - 1, p + 1))}
             >
               ⏭
             </button>
