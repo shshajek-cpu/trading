@@ -1,0 +1,98 @@
+/* 차트 위 거래 선·라벨 오버레이 — tokens.css 변수만 쓰고, 캔버스 선 색만 시장색을 그대로 쓴다.
+   라벨은 절대 위치 레이어에 얹고 프리미티브의 updateAllViews 가 transform 으로 매 프레임 옮긴다. */
+.tv-tradeoverlay {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  z-index: 3;
+  pointer-events: none;
+}
+
+/* 선 위에 앉는 평면 라벨 상자 — 1px 테두리는 선 색(--line)과 같다. */
+.tv-tradelabel {
+  position: absolute;
+  left: 8px;
+  top: 0;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  max-width: calc(100% - 64px);
+  padding: 2px 4px;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  background: var(--tv-elevated);
+  color: var(--tv-text);
+  font-size: 12px;
+  line-height: 1.2;
+  white-space: nowrap;
+  pointer-events: auto;
+  user-select: none;
+  will-change: transform;
+}
+
+/* 끌 수 있는 라벨. */
+.tv-tradelabel.draggable {
+  cursor: ns-resize;
+}
+
+.tv-tradelabel.dragging {
+  cursor: grabbing;
+  opacity: 0.92;
+}
+
+.tv-tl-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.tv-tl-side {
+  font-weight: 700;
+}
+
+.tv-tl-btn {
+  flex: none;
+  border: 0;
+  border-radius: 3px;
+  padding: 1px 5px;
+  background: var(--tv-hover);
+  color: var(--tv-text);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.tv-tl-btn:hover {
+  background: var(--tv-active);
+}
+
+.tv-tl-btn.confirm {
+  background: var(--tv-down);
+  color: #ffffff;
+}
+
+.tv-tl-x {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--tv-text-dim);
+  cursor: pointer;
+}
+
+.tv-tl-x:hover {
+  background: var(--tv-hover);
+  color: var(--tv-text);
+}
+
+.tv-tl-text .up {
+  color: var(--tv-up);
+}
+
+.tv-tl-text .down {
+  color: var(--tv-down);
+}

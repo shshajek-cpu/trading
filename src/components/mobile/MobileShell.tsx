@@ -25,6 +25,7 @@ export type MobileSheet =
   | 'objectTree'
   | 'pins'
   | 'sync'
+  | 'trade'
 
 export interface MobileDrawingControls {
   tool: DrawingTool
@@ -55,7 +56,7 @@ export interface MobileShellProps {
   chart: ReactNode
   pages: { watchlist: ReactNode; alerts: ReactNode; explore: ReactNode; menu: ReactNode }
   /** 시트에 넣을 위젯들. */
-  panels: { templates: ReactNode; symbolInfo: ReactNode; objectTree: ReactNode; pins: ReactNode; sync: ReactNode }
+  panels: { templates: ReactNode; symbolInfo: ReactNode; objectTree: ReactNode; pins: ReactNode; sync: ReactNode; trade: ReactNode }
   symbolLabel: string
   base: string
   interval: Interval
@@ -146,6 +147,7 @@ export function MobileShell(props: MobileShellProps) {
           drawing={drawingActive}
           onSymbol={props.onOpenSymbolSearch}
           onInterval={() => open('interval')}
+          onTrade={() => open('trade')}
           onAdd={() => open('add')}
           onDraw={() => open('draw')}
           onMore={() => open('more')}
@@ -329,6 +331,9 @@ export function MobileShell(props: MobileShellProps) {
       </BottomSheet>
       <BottomSheet open={sheet === 'sync'} onClose={close} title="동기화 · 저장">
         {props.panels.sync}
+      </BottomSheet>
+      <BottomSheet open={sheet === 'trade'} onClose={close} title="거래">
+        {props.panels.trade}
       </BottomSheet>
     </div>
   )

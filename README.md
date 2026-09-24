@@ -2,7 +2,8 @@
 
 바이낸스 USDT-M 선물 실시간 차트. TradingView(tradingview.com/chart)의 화면 배치·조작·색을
 따라 만든 웹 앱이다. 코드·아이콘은 모두 직접 작성했고, 차트 엔진은 TradingView의 오픈소스
-[Lightweight Charts™](https://github.com/tradingview/lightweight-charts)를 쓴다. 계정·주문 기능은 없다.
+[Lightweight Charts™](https://github.com/tradingview/lightweight-charts)를 쓴다. 실제 거래소 계정·주문 연동은 없다 —
+대신 가상 계좌로 하는 모의 선물거래가 있다.
 
 ## 실행
 
@@ -50,6 +51,19 @@ CCI, OBV, 윌리엄스 %R, MFI, ADX. 검색·즐겨찾기 가능한 지표 창, 
 두 번 클릭해도, 누른 채 끌어도 그려진다(끄는 동안 미리보기). 켜 둔 도구 버튼을 한 번 더 누르면 꺼지고 십자선으로 돌아간다.
 피보나치는 TradingView 처럼 시작점이 1, 끝점이 0. 롱/숏 포지션은 화면 크기에 맞춘 기본 목표·손절로 시작한다.
 
+**모의 선물거래** — OKX USDT 무기한 규칙으로 바이낸스 시세에 가상 주문을 넣는다. 실제 돈·계정·API 키는 쓰지 않는다.
+- 롱/숏 모드(한 종목에 롱·숏 포지션을 따로 보유), 교차/격리, 레버리지(OKX 공개 구간표의 코인별·크기별 최대치,
+  OKX 에 없는 종목은 최대 20배·유지증거금률 2.5%), 수수료 메이커 0.02%·테이커 0.05%(바꿀 수 있음), 시작 잔고 10,000 USDT(초기화 가능).
+- 주문: 지정가·시장가·조건부(최근 체결가 또는 마크 가격 발동 → 시장가/지정가), 진입과 함께 익절·손절, 종료 주문은 포지션 줄이기 전용.
+  시장가는 바이낸스 매수1·매도1 호가로, 지정가는 가격에 닿으면 지정가로 체결한다. 호가창 깊이(미끄러짐·부분 체결)는 반영하지 않는다.
+- 강제 청산은 마크 가격 기준(격리: 그 포지션 증거금, 교차: 계좌 전체). 펀딩비는 바이낸스 펀딩 시각·비율로 정산한다.
+- 화면: 오른쪽 위젯 「거래」 주문창, 차트 아래 거래 패널(포지션·미체결·주문 내역·체결 내역·펀딩·계좌), 차트 위 진입가·익절·손절·
+  미체결 주문 선(끌어서 가격 변경, ✕ 로 종료·취소)과 청산가 선, 우클릭 「여기에 지정가 …」. 폰은 차트 도구 줄의 거래 버튼(아래 시트).
+- 앱을 꺼 둔 동안: 다시 열면 그동안의 1분봉(체결가·마크가)과 펀딩 기록으로 되짚어 체결·익절·손절·청산·펀딩을 처리한다.
+  한 봉 안에서 익절과 손절이 모두 닿았으면 손절로 본다.
+- 동기화 코드가 있으면 PC·폰이 같은 계좌를 쓴다(Cloudflare D1). 동시에 바꾸면 늦게 저장한 쪽이 서버 상태를 받아
+  자기 동작을 다시 얹는다. 코드가 없으면 이 기기에만 저장한다.
+
 **관심 목록·알림** — 심볼 검색(전체/무기한/분기물/주식·원자재), 관심 목록(정렬·끌어서 순서 변경),
 심볼 상세(24시간 통계·기간 성과), 가격 알림(교차/상향/하향/보다 큼/보다 작음 + 메시지). 알림은 브라우저
 알림 + 화면 토스트, 동기화 코드가 있으면 앱을 닫아도 웹 푸시로 온다. 지표 알림(범례 🔔 또는 알림 창의
@@ -69,10 +83,11 @@ src/
   styles/tokens.css   TradingView 색·치수 토큰(다크/라이트)
   components/         셸(TopToolbar, BottomBar, WidgetBar, MainMenuDrawer, 대화상자),
                       ChartCell/Chart, 지표·심볼·알림 대화상자, widgets/, ui/(Popover, Dialog)
-  chart/              메인 시리즈·커스텀 시리즈·지표 계산 연결, drawing/(그리기 엔진)
-  hooks/              데이터(클라인·웹소켓·시세), 알림, 관심 목록, 그리기, 동기화, 단축키
-  lib/                바이낸스 API, 지표 수식, 설정 모델(지표·차트·레이아웃·그림)
-worker/, functions/   웹 푸시 알림 백엔드(Cloudflare)
+  chart/              메인 시리즈·커스텀 시리즈·지표 계산 연결, drawing/(그리기 엔진), trade/(모의거래 차트 선)
+  hooks/              데이터(클라인·웹소켓·시세), 알림, 관심 목록, 그리기, 동기화, 단축키, 모의거래(usePaperTrading)
+  lib/                바이낸스 API, 지표 수식, 설정 모델(지표·차트·레이아웃·그림), paper/(모의거래 엔진·규칙·계약)
+  components/trade/   모의거래 주문창·거래 패널·폰 거래 시트
+worker/, functions/   웹 푸시 알림 백엔드, 설정 동기화(KV), 모의거래 계좌 저장(functions/api/paper.ts, D1 trading-paper)
 ```
 
 ## 데이터 출처
@@ -80,8 +95,10 @@ worker/, functions/   웹 푸시 알림 백엔드(Cloudflare)
 바이낸스 선물 퍼블릭 API를 브라우저에서 직접 호출한다. API 키가 없다.
 
 - 캔들 `GET /fapi/v1/klines`, 심볼 `GET /fapi/v1/exchangeInfo`, 시세 `GET /fapi/v1/ticker/24hr`
-- 실시간 `wss://fstream.binance.com/ws/{symbol}@kline_{interval}`
-- 코인 아이콘: [cryptocurrency-icons](https://github.com/spothq/cryptocurrency-icons)(CC0, jsDelivr), 없으면 머리글자 원
+- 실시간 `wss://fstream.binance.com/market/stream?streams={symbol}@kline_{interval}/{symbol}@aggTrade`
+- 모의거래: 호가 `GET /fapi/v1/ticker/bookTicker`, 마크·펀딩 `GET /fapi/v1/premiumIndex`·`GET /fapi/v1/fundingRate`,
+  되짚기 `GET /fapi/v1/markPriceKlines`·`GET /fapi/v1/aggTrades`, 실시간 `{symbol}@aggTrade`·`{symbol}@markPrice@1s`
+- 모의거래 규칙: OKX 공개 API `GET /api/v5/public/instruments?instType=SWAP`·`GET /api/v5/public/position-tiers`
 
 ## 라이선스 표기
 

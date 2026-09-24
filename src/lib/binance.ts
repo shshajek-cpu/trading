@@ -38,8 +38,8 @@ export interface ExchangeSymbol {
   deliveryDate?: number
   /** COIN | INDEX 등. 주식·원자재 분류에 쓴다. */
   underlyingType?: string
-  /** exchangeInfo 필터. 가격 자릿수(PRICE_FILTER.tickSize)를 여기서 뽑는다. */
-  filters?: { filterType: string; tickSize?: string }[]
+  /** exchangeInfo 필터. 가격(PRICE_FILTER.tickSize)·수량(LOT_SIZE.stepSize/minQty)을 여기서 뽑는다. */
+  filters?: { filterType: string; tickSize?: string; stepSize?: string; minQty?: string }[]
 }
 
 interface RawExchangeInfo {
@@ -139,6 +139,8 @@ export async function fetchKlines(
   signal?: AbortSignal,
   /** 이 시각(ms) 이전 캔들만 — 과거로 거슬러 올라갈 때 쓴다. */
   endTime?: number,
+  /** 이 시각(ms) 이후 캔들만 — 되짚기에서 앞으로 나아갈 때 쓴다. */
+  startTime?: number,
 ): Promise<Candle[]> {
   const params: Record<string, string | number> = {
     symbol: toRestSymbol(symbol),
@@ -146,6 +148,7 @@ export async function fetchKlines(
     limit,
   }
   if (endTime !== undefined) params.endTime = endTime
+  if (startTime !== undefined) params.startTime = startTime
   const raw = await getJson<RawKline[]>('/fapi/v1/klines', params, signal)
   return raw.map(normalizeKline)
 }
@@ -290,4 +293,160 @@ export function normalizeMiniTicker(t: MiniTickerEvent): Ticker24h {
     volume: Number(t.v),
     quoteVolume: Number(t.q),
   }
+}
+
+/* ── 모의 선물거래용 헬퍼 ─────────────────────────────────────── */
+
+/** 시장가 체결에 쓰는 매수1/매도1 호가. time 은 이벤트 시각(ms). */
+export interface BookTicker {
+  bid: number
+  ask: number
+  time: number
+}
+
+interface RawBookTicker {
+  bidPrice: string
+  askPrice: string
+  time: number
+}
+
+/** 매수1/매도1 호가 — 시장가 주문 체결가 산정용. */
+export async function fetchBookTicker(symbol: string, signal?: AbortSignal): Promise<BookTicker> {
+  const raw = await getJson<RawBookTicker>('/fapi/v1/ticker/bookTicker', { symbol: toRestSymbol(symbol) }, signal)
+  return { bid: Number(raw.bidPrice), ask: Number(raw.askPrice), time: raw.time }
+}
+
+/** 마크 가격·펀딩 정보. */
+export interface PremiumIndex {
+  mark: number
+  fundingRate: number
+  nextFundingTime: number
+  time: number
+}
+
+interface RawPremiumIndex {
+  markPrice: string
+  lastFundingRate: string
+  nextFundingTime: number
+  time: number
+}
+
+/** 마크 가격과 현재 펀딩비율·다음 정산 시각. */
+export async function fetchPremiumIndex(symbol: string, signal?: AbortSignal): Promise<PremiumIndex> {
+  const raw = await getJson<RawPremiumIndex>('/fapi/v1/premiumIndex', { symbol: toRestSymbol(symbol) }, signal)
+  return {
+    mark: Number(raw.markPrice),
+    fundingRate: Number(raw.lastFundingRate),
+    nextFundingTime: raw.nextFundingTime,
+    time: raw.time,
+  }
+}
+
+/** 펀딩 내역 한 건. time=정산 시각(ms), rate=펀딩비율, mark=정산 마크가. */
+export interface FundingRate {
+  time: number
+  rate: number
+  mark: number
+}
+
+interface RawFundingRate {
+  symbol: string
+  fundingTime: number
+  fundingRate: string
+  markPrice: string
+}
+
+/** 펀딩 내역(정산 이력). 되짚기에서 구간별 펀딩을 매길 때 쓴다. */
+export async function fetchFundingRates(
+  symbol: string,
+  startTime: number,
+  endTime?: number,
+  signal?: AbortSignal,
+): Promise<FundingRate[]> {
+  const params: Record<string, string | number> = {
+    symbol: toRestSymbol(symbol),
+    startTime,
+    limit: 1000,
+  }
+  if (endTime !== undefined) params.endTime = endTime
+  const raw = await getJson<RawFundingRate[]>('/fapi/v1/fundingRate', params, signal)
+  return raw.map((r) => ({ time: r.fundingTime, rate: Number(r.fundingRate), mark: Number(r.markPrice) }))
+}
+
+/** 마크 가격 캔들(강제 청산·유지증거금 되짚기용). time 은 초 단위. */
+export async function fetchMarkKlines(
+  symbol: string,
+  interval: Interval,
+  startTime: number,
+  endTime: number,
+  limit = 1500,
+  signal?: AbortSignal,
+): Promise<Candle[]> {
+  const raw = await getJson<RawKline[]>(
+    '/fapi/v1/markPriceKlines',
+    { symbol: toRestSymbol(symbol), interval, startTime, endTime, limit },
+    signal,
+  )
+  return raw.map(normalizeKline)
+}
+
+/** 집계 체결 한 건. time=체결 시각(ms). */
+export interface AggTrade {
+  id: number
+  price: number
+  qty: number
+  time: number
+}
+
+interface RawAggTrade {
+  a: number
+  p: string
+  q: string
+  T: number
+}
+
+/**
+ * 집계 체결 이력(되짚기의 부분 분봉 채우기용). 창은 최대 1시간. fromId 로 페이지를 넘긴다.
+ * fromId 를 주면 startTime/endTime 은 무시된다(바이낸스 규칙).
+ */
+export async function fetchAggTrades(
+  symbol: string,
+  startTime: number,
+  endTime: number,
+  fromId?: number,
+  signal?: AbortSignal,
+): Promise<AggTrade[]> {
+  const params: Record<string, string | number> = {
+    symbol: toRestSymbol(symbol),
+    limit: 1000,
+  }
+  if (fromId !== undefined) params.fromId = fromId
+  else {
+    params.startTime = startTime
+    params.endTime = endTime
+  }
+  const raw = await getJson<RawAggTrade[]>('/fapi/v1/aggTrades', params, signal)
+  return raw.map((t) => ({ id: t.a, price: Number(t.p), qty: Number(t.q), time: t.T }))
+}
+
+/** wss 스트림의 markPrice(@1s) 이벤트. p=마크가, r=펀딩비율, T=다음 정산 시각(ms). */
+export interface MarkPriceEvent {
+  e: 'markPriceUpdate'
+  E: number
+  s: string
+  p: string
+  r: string
+  T: number
+}
+
+/**
+ * 모의 선물거래 결합 스트림: 종목마다 체결(aggTrade)과 마크가(markPrice@1s)를 함께 받는다.
+ * 메시지의 stream 이름은 `btcusdt@aggTrade` · `btcusdt@markPrice@1s` 꼴.
+ */
+export function paperStreamUrl(symbols: string[]): string {
+  const streams = symbols.flatMap((s) => {
+    const lower = toStreamSymbol(s)
+    return [`${lower}@aggTrade`, `${lower}@markPrice@1s`]
+  })
+  return MARKET_WS + streams.join('/')
 }

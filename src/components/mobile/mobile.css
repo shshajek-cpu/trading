@@ -525,3 +525,58 @@
 .m-menu-chev {
   color: var(--tv-text-faint);
 }
+
+/* ── 거래 시트 ── */
+.m-tradesheet {
+  display: flex;
+  flex-direction: column;
+  /* 시트를 높게 — 주문·포지션이 다 보이게. */
+  min-height: 74dvh;
+  margin: -6px -14px -16px; /* 시트 본문 패딩을 상쇄해 꽉 채운다. */
+}
+
+.m-trade-tabs {
+  display: flex;
+  flex: none;
+  border-bottom: 1px solid var(--tv-border);
+}
+
+.m-trade-tab {
+  flex: 1;
+  height: 44px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: none;
+  color: var(--tv-text-dim);
+  font: inherit;
+  font-size: 15px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.m-trade-tab.active {
+  color: var(--tv-text-strong);
+  border-bottom-color: var(--tv-accent-text);
+}
+
+.m-trade-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  margin-left: 6px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: var(--tv-hover);
+  color: var(--tv-text);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.m-trade-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}

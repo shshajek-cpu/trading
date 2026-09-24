@@ -31,6 +31,7 @@ import { registerChart, type ChartHandle } from '../lib/chartRegistry'
 import type { ChartMenuRequest } from '../lib/chartMenu'
 import { loadPaneSizes, savePaneSizes } from '../lib/layoutConfig'
 import { DrawingOverlay } from '../chart/drawing/DrawingOverlay'
+import { TradeOverlay } from '../chart/trade/TradeOverlay'
 import { Coords } from '../chart/drawing/coords'
 import {
   baselineBaseValue,
@@ -1067,6 +1068,9 @@ export function Chart({
           onToolDone={onToolDone}
           onContextMenu={onContextMenu}
         />
+      )}
+      {chartRef.current && mainSeries && (
+        <TradeOverlay chart={chartRef.current} series={mainSeries} symbol={symbol} interactive={overlayEnabled} />
       )}
       <div ref={replayLineRef} className="replay-preview-line" style={{ display: 'none' }} />
       <div ref={lockLineRef} className="cursor-lock-line" style={{ display: 'none' }} />

@@ -13,6 +13,8 @@ export interface UiPrefs {
   drawingsLocked: boolean
   drawingsHidden: boolean
   favoriteIntervals: Interval[]
+  /** 차트 아래 모의거래 패널을 접어 두었는가(기기마다). */
+  tradePanelCollapsed: boolean
 }
 
 const STORAGE_KEY = 'trading.uiPrefs.v1'
@@ -23,6 +25,7 @@ const DEFAULTS: UiPrefs = {
   drawingsLocked: false,
   drawingsHidden: false,
   favoriteIntervals: DEFAULT_FAVORITE_INTERVALS,
+  tradePanelCollapsed: true,
 }
 
 function load(): UiPrefs {
@@ -39,6 +42,7 @@ function load(): UiPrefs {
       drawingsLocked: typeof parsed.drawingsLocked === 'boolean' ? parsed.drawingsLocked : false,
       drawingsHidden: typeof parsed.drawingsHidden === 'boolean' ? parsed.drawingsHidden : false,
       favoriteIntervals: favs.length > 0 ? favs : DEFAULTS.favoriteIntervals,
+      tradePanelCollapsed: typeof parsed.tradePanelCollapsed === 'boolean' ? parsed.tradePanelCollapsed : true,
     }
   } catch {
     return DEFAULTS

@@ -18,6 +18,10 @@ export interface SymbolInfo {
   pricePrecision: number
   /** 가격 최소 단위(PRICE_FILTER.tickSize). 표시 자릿수 산출에 쓴다. */
   tickSize: number
+  /** 수량 최소 단위(LOT_SIZE.stepSize). 주문 수량을 이 배수로 맞춘다. */
+  stepSize: number
+  /** 최소 주문 수량(LOT_SIZE.minQty). */
+  minQty: number
   /** 분기물 인도일(ms). */
   deliveryDate?: number
 }
@@ -26,6 +30,11 @@ export interface SymbolInfo {
 export function toSymbolInfo(s: ExchangeSymbol): SymbolInfo {
   const priceFilter = s.filters?.find((f) => f.filterType === 'PRICE_FILTER')
   const tickSize = priceFilter?.tickSize != null ? Number(priceFilter.tickSize) : 0
+  const lotFilter = s.filters?.find((f) => f.filterType === 'LOT_SIZE')
+  const stepRaw = lotFilter?.stepSize != null ? Number(lotFilter.stepSize) : 0
+  const stepSize = Number.isFinite(stepRaw) && stepRaw > 0 ? stepRaw : 0.001
+  const minRaw = lotFilter?.minQty != null ? Number(lotFilter.minQty) : 0
+  const minQty = Number.isFinite(minRaw) && minRaw > 0 ? minRaw : stepSize
   return {
     symbol: s.symbol,
     baseAsset: s.baseAsset,
@@ -34,6 +43,8 @@ export function toSymbolInfo(s: ExchangeSymbol): SymbolInfo {
     underlyingType: s.underlyingType,
     pricePrecision: s.pricePrecision,
     tickSize: Number.isFinite(tickSize) ? tickSize : 0,
+    stepSize,
+    minQty,
     deliveryDate: s.deliveryDate,
   }
 }

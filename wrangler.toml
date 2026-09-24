@@ -5,3 +5,9 @@ pages_build_output_dir = "dist"
 [[kv_namespaces]]
 binding = "SETTINGS"
 id = "43c52222dba44e2789e22ba625051e16"
+
+[[d1_databases]]
+binding = "PAPER"
+database_name = "trading-paper"
+database_id = "93bab805-3766-493b-b577-fcd81d9a86aa"
+migrations_dir = "migrations"

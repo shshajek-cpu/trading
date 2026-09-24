@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { fetchExchangeInfo } from '../lib/binance'
 import { toSymbolInfo, type SymbolInfo } from '../lib/symbols'
 
-const CACHE_KEY = 'trading.symbols.v3'
+const CACHE_KEY = 'trading.symbols.v4'
 const CACHE_TTL_MS = 12 * 60 * 60 * 1000
 
 const FALLBACK: SymbolInfo = {
@@ -13,6 +13,8 @@ const FALLBACK: SymbolInfo = {
   underlyingType: 'COIN',
   pricePrecision: 2,
   tickSize: 0.1,
+  stepSize: 0.001,
+  minQty: 0.001,
 }
 
 interface Cached {

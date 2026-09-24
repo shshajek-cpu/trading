@@ -54,6 +54,7 @@ export function MobileChartBar({
   drawing,
   onSymbol,
   onInterval,
+  onTrade,
   onAdd,
   onDraw,
   onMore,
@@ -64,6 +65,7 @@ export function MobileChartBar({
   drawing: boolean
   onSymbol: () => void
   onInterval: () => void
+  onTrade: () => void
   onAdd: () => void
   onDraw: () => void
   onMore: () => void
@@ -78,6 +80,9 @@ export function MobileChartBar({
         {intervalLabel}
       </button>
       <span className="m-chartbar-gap" />
+      <button type="button" className="m-chartbar-btn" onClick={onTrade} aria-label="거래">
+        <Icon name="trade" size={26} />
+      </button>
       <button type="button" className="m-chartbar-btn" onClick={onAdd} aria-label="추가">
         <Icon name="plus" size={26} />
       </button>

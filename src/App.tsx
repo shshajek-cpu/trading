@@ -42,6 +42,9 @@ import { SyncPanel } from './components/SyncPanel'
 import { PinPanel } from './components/PinPanel'
 import { DiscoverPanel } from './components/DiscoverPanel'
 import { MtfPanel } from './components/MtfPanel'
+import { OrderPanel, type OrderDraft } from './components/trade/OrderPanel'
+import { TradingPanel } from './components/trade/TradingPanel'
+import { MobileTrade } from './components/trade/MobileTrade'
 
 import { usePriceAlerts, type PriceAlert, type AlertCondition } from './hooks/usePriceAlerts'
 import { useIndicatorAlerts } from './hooks/useIndicatorAlerts'
@@ -65,6 +68,8 @@ import { useUiPrefs } from './hooks/useUiPrefs'
 import { useFullscreen } from './hooks/useFullscreen'
 import { useShortcuts } from './hooks/useShortcuts'
 import { useShortcutBindings } from './hooks/useShortcutBindings'
+import { usePaperTrading } from './hooks/usePaperTrading'
+import { PaperContext } from './lib/paper/context'
 
 import {
   clampSplit,
@@ -205,6 +210,12 @@ function App() {
     },
     [dismissToast],
   )
+
+  // 모의 선물거래 — 계좌는 동기화 코드로 기기끼리 공유한다(D1). 주문창·거래 패널·차트 선이 PaperContext 로 읽는다.
+  const paperName = useCallback((s: string) => displaySymbol(s, symbols), [symbols])
+  const paper = usePaperTrading({ code: sync.code, symbols, notify, toast: pushToast, displayName: paperName })
+  /** 차트 우클릭 「여기에 지정가 주문」이 주문창에 채울 가격. nonce 가 바뀔 때마다 한 번 반영된다. */
+  const [tradeDraft, setTradeDraft] = useState<OrderDraft | null>(null)
 
   // price alerts
   const handleTrigger = useCallback(
@@ -585,9 +596,20 @@ function App() {
       if (id === 'watchlist') setMobileTab('watchlist')
       else if (id === 'alerts') setMobileTab('alerts')
       else if (id === 'discover') setMobileTab('explore')
-      else if (id === 'objectTree' || id === 'pins' || id === 'sync') setMobileSheet(id)
+      else if (id === 'objectTree' || id === 'pins' || id === 'sync' || id === 'trade') setMobileSheet(id)
     },
     [isMobile],
+  )
+
+  /** 우클릭한 칸을 활성으로 두고 주문창을 연다 — 그 가격을 지정가로 채운다. */
+  const openTradeAt = useCallback(
+    (index: number, price: number) => {
+      setActive(index)
+      setTradeDraft({ price, type: 'limit', nonce: Date.now() })
+      if (isMobile) setMobileSheet('trade')
+      else setWidgetOpen('trade')
+    },
+    [isMobile, setActive],
   )
 
   // ── right-click menus: 차트 영역 · 그림 · 가격축 · 시간축 (TradingView 항목 순서) ─
@@ -694,6 +716,7 @@ function App() {
                   icon: icon('alarm'),
                   shortcut: key('createAlert'),
                 }),
+                item(`${priceText}에 지정가 주문…`, () => openTradeAt(index, price), { icon: icon('trade') }),
                 item(
                   `${priceText}에 수평선 그리기`,
                   () =>
@@ -926,6 +949,8 @@ function App() {
             timezone={settings.timezone}
           />
         )
+      case 'trade':
+        return <OrderPanel symbol={activeSymbol} symbols={symbols} compact={page} draft={tradeDraft} />
       case 'sync':
         return (
           <SyncPanel
@@ -1160,7 +1185,7 @@ function App() {
       { type: 'item', label: '범례 (심볼 · 지표 이름)', checked: legendShown(settings), onSelect: () => setSettings(toggleLegend) },
     ]
     return (
-      <>
+      <PaperContext.Provider value={paper}>
         <MobileShell
           tab={mobileTab}
           onTabChange={(next) => {
@@ -1202,6 +1227,14 @@ function App() {
             objectTree: renderWidget('objectTree', 'page'),
             pins: renderWidget('pins', 'page'),
             sync: renderWidget('sync', 'page'),
+            trade: (
+              <MobileTrade
+                symbol={activeSymbol}
+                symbols={symbols}
+                onSelectSymbol={(s) => setCellField(active, { symbol: s })}
+                draft={tradeDraft}
+              />
+            ),
           }}
           symbolLabel={displaySymbol(activeSymbol, symbols)}
           base={symbols.find((i) => i.symbol === activeSymbol)?.baseAsset ?? activeSymbol.replace(/USDT.*/, '')}
@@ -1224,12 +1257,13 @@ function App() {
           drawing={{ ...drawingToolbarProps, canUndo, canRedo, onUndo: undo, onRedo: redo }}
         />
         {dialogs}
-      </>
+      </PaperContext.Provider>
     )
   }
 
   // ── desktop layout ────────────────────────────────────────────────
   return (
+    <PaperContext.Provider value={paper}>
     <div className={`tv-app${widgetOpen ? ' widget-open' : ''}`}>
       <div className="tv-hamburger-cell">
         <button
@@ -1311,6 +1345,17 @@ function App() {
         />
       </div>
 
+      <div className="tv-trade-cell">
+        <TradingPanel
+          symbols={symbols}
+          activeSymbol={activeSymbol}
+          onSelectSymbol={(s) => setCellField(active, { symbol: s })}
+          variant="desktop"
+          collapsed={prefs.tradePanelCollapsed}
+          onCollapsedChange={(v) => patchPrefs({ tradePanelCollapsed: v })}
+        />
+      </div>
+
       <div className="tv-right-cell">
         <WidgetBar open={widgetOpen} onToggle={toggleWidget} alertCount={alertBadge}>
           {widgetOpen && <div className="tv-widget-scroll">{renderWidget(widgetOpen, 'panel')}</div>}
@@ -1319,6 +1364,7 @@ function App() {
 
       {dialogs}
     </div>
+    </PaperContext.Provider>
   )
 }
 

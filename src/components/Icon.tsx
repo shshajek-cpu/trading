@@ -34,6 +34,7 @@ export type IconName =
   | 'pin'
   | 'discover'
   | 'sync'
+  | 'trade'
   // chart types
   | 'typeBars'
   | 'typeCandles'
@@ -255,6 +256,13 @@ const PATHS: Record<IconName, ReactNode> = {
     <>
       <path d="M7 12 a7 7 0 0 1 12-3 M21 8 v3 h-3" {...S} />
       <path d="M21 16 a7 7 0 0 1-12 3 M7 20 v-3 h3" {...S} />
+    </>
+  ),
+  // 거래: 위·아래로 엇갈린 두 화살표(진입/종료).
+  trade: (
+    <>
+      <path d="M9 6 L9 22 M5 10 L9 6 L13 10" {...S} />
+      <path d="M19 22 L19 6 M15 18 L19 22 L23 18" {...S} />
     </>
   ),
   typeBars: (

@@ -6,7 +6,7 @@
   height: 100%;
   display: grid;
   grid-template-columns: var(--tv-left-w) minmax(0, 1fr) auto;
-  grid-template-rows: var(--tv-toolbar-h) minmax(0, 1fr) var(--tv-bottom-h);
+  grid-template-rows: var(--tv-toolbar-h) minmax(0, 1fr) auto var(--tv-bottom-h);
   gap: var(--tv-gap);
   background: var(--tv-gutter);
   color: var(--tv-text);
@@ -31,7 +31,7 @@
 
 .tv-left-cell {
   grid-column: 1;
-  grid-row: 2 / 4;
+  grid-row: 2 / 5;
   background: var(--tv-bg);
   overflow: hidden;
 }
@@ -44,15 +44,22 @@
   background: var(--tv-bg);
 }
 
-.tv-bottom-cell {
+.tv-trade-cell {
   grid-column: 2;
   grid-row: 3;
+  min-width: 0;
+  background: var(--tv-bg);
+}
+
+.tv-bottom-cell {
+  grid-column: 2;
+  grid-row: 4;
   background: var(--tv-bg);
 }
 
 .tv-right-cell {
   grid-column: 3;
-  grid-row: 2 / 4;
+  grid-row: 2 / 5;
   display: flex;
   gap: var(--tv-gap);
   background: var(--tv-gutter);

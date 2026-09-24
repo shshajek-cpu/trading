@@ -1,0 +1,1007 @@
+/* 모의 선물거래 주문창·거래 패널 스타일.
+   색·치수는 tokens.css 의 --tv-* 변수만 쓴다(캔버스 외 하드코딩 금지). */
+
+/* ══ 주문창(OrderPanel) ═══════════════════════════════════════════ */
+.op {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  font-size: var(--tv-fs-sm);
+  color: var(--tv-text);
+}
+
+/* ── 헤더 ── */
+.op-head {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid var(--tv-border);
+}
+
+.op-head-sym {
+  font-size: var(--tv-fs);
+  font-weight: 600;
+  color: var(--tv-text-strong);
+}
+
+.op-head-prices {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+}
+
+.op-last {
+  font-size: 16px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.op-mark {
+  color: var(--tv-text-dim);
+  font-size: var(--tv-fs-xs);
+}
+
+.op-funding {
+  display: flex;
+  gap: 6px;
+  font-size: var(--tv-fs-xs);
+  color: var(--tv-text-dim);
+}
+
+.op-funding .up {
+  color: var(--tv-up);
+}
+
+.op-funding .down {
+  color: var(--tv-down);
+}
+
+.op-funding-cd {
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── 마진 모드 · 레버리지 ── */
+.op-row {
+  display: flex;
+  gap: 6px;
+}
+
+.op-mode-btn {
+  flex: 1;
+  height: 30px;
+  border: 1px solid var(--tv-border-strong);
+  border-radius: var(--tv-radius-sm);
+  background: transparent;
+  color: var(--tv-text);
+  font: inherit;
+  cursor: pointer;
+}
+
+.op-mode-btn:hover {
+  background: var(--tv-hover);
+}
+
+.op-margin-menu {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px;
+  min-width: 140px;
+}
+
+.op-margin-opt {
+  height: 32px;
+  border: 0;
+  border-radius: var(--tv-radius-sm);
+  background: transparent;
+  color: var(--tv-text);
+  font: inherit;
+  text-align: left;
+  padding: 0 10px;
+  cursor: pointer;
+}
+
+.op-margin-opt:hover {
+  background: var(--tv-hover);
+}
+
+.op-margin-opt.active {
+  background: var(--tv-selected-bg);
+  color: var(--tv-selected-text);
+}
+
+/* ── 진입/종료 탭 ── */
+.op-tabs {
+  display: flex;
+  gap: 0;
+  border-bottom: 1px solid var(--tv-border);
+}
+
+.op-tab {
+  flex: 1;
+  height: 32px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--tv-text-dim);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.op-tab.active {
+  color: var(--tv-text-strong);
+  border-bottom-color: var(--tv-accent);
+}
+
+/* ── 세그먼트(주문 종류) ── */
+.op-seg {
+  display: flex;
+  gap: 4px;
+  padding: 2px;
+  border-radius: var(--tv-radius-sm);
+  background: var(--tv-hover);
+}
+
+.op-seg-btn {
+  flex: 1;
+  height: 28px;
+  border: 0;
+  border-radius: var(--tv-radius-sm);
+  background: transparent;
+  color: var(--tv-text-dim);
+  font: inherit;
+  cursor: pointer;
+}
+
+.op-seg-btn.active {
+  background: var(--tv-elevated);
+  color: var(--tv-text-strong);
+}
+
+.op-seg-sub .op-seg-btn.active {
+  background: var(--tv-active);
+}
+
+/* ── 입력 필드 ── */
+.op-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.op-field-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  color: var(--tv-text-dim);
+  font-size: var(--tv-fs-xs);
+}
+
+.op-input {
+  height: 34px;
+  padding: 0 10px;
+  border: 1px solid var(--tv-border-strong);
+  border-radius: var(--tv-radius-sm);
+  background: transparent;
+  color: var(--tv-text);
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  outline: none;
+  width: 100%;
+}
+
+.op-input:focus {
+  border-color: var(--tv-accent);
+}
+
+.op-input-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.op-inline-btn {
+  position: absolute;
+  right: 4px;
+  height: 24px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: var(--tv-radius-sm);
+  background: var(--tv-hover);
+  color: var(--tv-text-dim);
+  font: inherit;
+  font-size: var(--tv-fs-xs);
+  cursor: pointer;
+}
+
+.op-inline-btn:hover {
+  background: var(--tv-active);
+  color: var(--tv-text);
+}
+
+.op-select {
+  height: 34px;
+  padding: 0 8px;
+  border: 1px solid var(--tv-border-strong);
+  border-radius: var(--tv-radius-sm);
+  background: var(--tv-bg);
+  color: var(--tv-text);
+  font: inherit;
+}
+
+/* ── 수량 단위 토글 ── */
+.op-unit-toggle {
+  display: inline-flex;
+  gap: 2px;
+}
+
+.op-unit {
+  height: 20px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: var(--tv-radius-sm);
+  background: transparent;
+  color: var(--tv-text-dim);
+  font: inherit;
+  font-size: var(--tv-fs-xs);
+  cursor: pointer;
+}
+
+.op-unit.active {
+  background: var(--tv-hover);
+  color: var(--tv-text-strong);
+}
+
+/* ── 슬라이더 ── */
+.op-slider {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.op-slider input[type='range'] {
+  width: 100%;
+  accent-color: var(--tv-accent);
+}
+
+.op-marks {
+  display: flex;
+  justify-content: space-between;
+}
+
+.op-mark-btn {
+  border: 0;
+  background: transparent;
+  color: var(--tv-text-dim);
+  font: inherit;
+  font-size: var(--tv-fs-xs);
+  cursor: pointer;
+  padding: 0 2px;
+}
+
+.op-mark-btn:hover {
+  color: var(--tv-text);
+}
+
+.op-maxrow {
+  display: flex;
+  justify-content: space-between;
+  color: var(--tv-text-dim);
+  font-size: var(--tv-fs-xs);
+}
+
+.op-maxrow b {
+  color: var(--tv-text);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── 익절/손절 ── */
+.op-tpsl {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.op-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+}
+
+.op-tpsl-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* ── 예상 정보 ── */
+.op-info {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 8px;
+  border-radius: var(--tv-radius-sm);
+  background: var(--tv-hover);
+}
+
+.op-info-row {
+  display: flex;
+  justify-content: space-between;
+  color: var(--tv-text-dim);
+}
+
+.op-info-row b {
+  color: var(--tv-text);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+.op-info-row .up {
+  color: var(--tv-up);
+}
+
+.op-info-row .down {
+  color: var(--tv-down);
+}
+
+.op-info-close + .op-info-close {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid var(--tv-border);
+}
+
+.op-empty,
+.op-error {
+  color: var(--tv-text-dim);
+  font-size: var(--tv-fs-xs);
+  margin: 0;
+}
+
+.op-error {
+  color: var(--tv-down);
+}
+
+.op-error-lg {
+  font-size: var(--tv-fs-sm);
+}
+
+/* 손익 색 — 거래 UI 안으로만 한정한다. */
+.tp .up,
+.op b.up {
+  color: var(--tv-up);
+}
+
+.tp .down,
+.op b.down {
+  color: var(--tv-down);
+}
+
+/* ── 진입/종료 버튼 ── */
+.op-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.op-submit {
+  flex: 1;
+  height: 40px;
+  border: 0;
+  border-radius: var(--tv-radius);
+  color: #fff;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.op-submit.up {
+  background: var(--tv-up);
+}
+
+.op-submit.down {
+  background: var(--tv-down);
+}
+
+.op-submit:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* ── 뱃지 ── */
+.op-badge {
+  display: inline-block;
+  padding: 0 5px;
+  border-radius: var(--tv-radius-sm);
+  font-size: var(--tv-fs-xs);
+  font-weight: 600;
+  color: #fff;
+}
+
+/* 손익 글자색(.up/.down)이 뒤에서 덮어쓰지 않게 두 클래스로 글자색을 다시 준다. */
+.op-badge.up {
+  background: var(--tv-up);
+  color: #fff;
+}
+
+.op-badge.down {
+  background: var(--tv-down);
+  color: #fff;
+}
+
+/* ── 계좌 요약 · 동기화 ── */
+.op-foot {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 8px;
+  border-top: 1px solid var(--tv-border);
+}
+
+.op-foot-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 4px 12px;
+}
+
+.op-foot-grid > div {
+  display: flex;
+  justify-content: space-between;
+  color: var(--tv-text-dim);
+  font-size: var(--tv-fs-xs);
+}
+
+.op-foot-grid b {
+  color: var(--tv-text);
+  font-variant-numeric: tabular-nums;
+}
+
+.op-foot-grid b.up {
+  color: var(--tv-up);
+}
+
+.op-foot-grid b.down {
+  color: var(--tv-down);
+}
+
+.op-sync {
+  margin: 0;
+  color: var(--tv-text-faint);
+  font-size: var(--tv-fs-xs);
+  line-height: 1.4;
+}
+
+/* ── 폰 시트(compact) ── */
+.op-compact {
+  gap: 12px;
+  padding: 14px;
+  font-size: var(--tv-fs);
+}
+
+.op-compact .op-input,
+.op-compact .op-select {
+  height: 44px;
+  font-size: 16px;
+}
+
+.op-compact .op-mode-btn,
+.op-compact .op-seg-btn,
+.op-compact .op-tab {
+  height: 40px;
+}
+
+.op-compact .op-submit {
+  height: 48px;
+  font-size: 16px;
+}
+
+.op-compact .op-margin-opt {
+  height: 44px;
+}
+
+/* ══ 레버리지 대화상자 ═════════════════════════════════════════════ */
+.lev-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px 20px;
+}
+
+.lev-value {
+  text-align: center;
+  font-size: 28px;
+  font-weight: 700;
+  color: var(--tv-text-strong);
+}
+
+.lev-body input[type='range'] {
+  width: 100%;
+  accent-color: var(--tv-accent);
+}
+
+.lev-input-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.lev-input-row .op-input {
+  width: 90px;
+  text-align: center;
+}
+
+.lev-max {
+  color: var(--tv-text-dim);
+  font-size: var(--tv-fs-sm);
+}
+
+.lev-tiers {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--tv-fs-sm);
+}
+
+.lev-tiers th,
+.lev-tiers td {
+  padding: 6px 8px;
+  text-align: right;
+  border-bottom: 1px solid var(--tv-border);
+  font-variant-numeric: tabular-nums;
+}
+
+.lev-tiers th:first-child,
+.lev-tiers td:first-child {
+  text-align: left;
+}
+
+.lev-tiers thead th {
+  color: var(--tv-text-dim);
+  font-weight: 500;
+}
+
+.lev-empty {
+  text-align: center !important;
+  color: var(--tv-text-dim);
+}
+
+.lev-note {
+  margin: 0;
+  color: var(--tv-warn);
+  font-size: var(--tv-fs-xs);
+}
+
+/* ══ 계좌 대화상자(초기화·수수료·TP/SL·증거금) ════════════════════ */
+.acc-dialog {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 16px 20px;
+}
+
+.acc-warn {
+  margin: 0;
+  color: var(--tv-down);
+  font-size: var(--tv-fs-sm);
+}
+
+/* ══ 거래 패널(TradingPanel) ══════════════════════════════════════ */
+.tp {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--tv-bg);
+  color: var(--tv-text);
+  font-size: var(--tv-fs-sm);
+}
+
+.tp-desktop {
+  height: 100%;
+}
+
+/* 헤더는 항상 32px 로 보인다. */
+.tp-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 32px;
+  flex: none;
+  padding: 0 8px;
+  border-bottom: 1px solid var(--tv-border);
+  gap: 8px;
+}
+
+.tp-tabs {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.tp-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.tp-tab {
+  height: 28px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: var(--tv-radius-sm);
+  background: transparent;
+  color: var(--tv-text-dim);
+  font: inherit;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.tp-tab:hover {
+  background: var(--tv-hover);
+}
+
+.tp-tab.active {
+  color: var(--tv-text-strong);
+  font-weight: 600;
+}
+
+.tp-count {
+  font-style: normal;
+  color: var(--tv-text-dim);
+}
+
+.tp-head-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+}
+
+.tp-chev-up {
+  transform: rotate(180deg);
+}
+
+.tp-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+.tp-desktop .tp-body {
+  max-height: 188px;
+}
+
+.tp-empty {
+  padding: 24px;
+  text-align: center;
+  color: var(--tv-text-dim);
+}
+
+/* ── 표 ── */
+.tp-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+
+.tp-table th,
+.tp-table td {
+  padding: 5px 8px;
+  text-align: right;
+  white-space: nowrap;
+  border-bottom: 1px solid var(--tv-border);
+}
+
+.tp-table th.tp-l,
+.tp-table td.tp-l {
+  text-align: left;
+}
+
+.tp-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--tv-bg);
+  color: var(--tv-text-dim);
+  font-weight: 500;
+}
+
+.tp-table tr.tp-active td {
+  background: var(--tv-row-active);
+}
+
+.tp-sym-link {
+  border: 0;
+  background: transparent;
+  color: var(--tv-accent-text);
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+  padding: 0;
+}
+
+.tp-sym-link:hover {
+  text-decoration: underline;
+}
+
+.tp-lev {
+  margin-left: 6px;
+  color: var(--tv-text-dim);
+  font-size: var(--tv-fs-xs);
+}
+
+.tp-roe {
+  margin-left: 4px;
+  font-style: normal;
+  font-size: var(--tv-fs-xs);
+}
+
+.tp-time {
+  color: var(--tv-text-dim);
+}
+
+.tp-tpsl {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  justify-content: flex-end;
+}
+
+.tp-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  color: var(--tv-text);
+  font-size: var(--tv-fs-xs);
+}
+
+.tp-x {
+  border: 0;
+  background: transparent;
+  color: var(--tv-text-dim);
+  cursor: pointer;
+  font-size: var(--tv-fs-xs);
+  padding: 0 2px;
+}
+
+.tp-x:hover {
+  color: var(--tv-down);
+}
+
+.tp-mini-btn {
+  height: 24px;
+  padding: 0 8px;
+  border: 1px solid var(--tv-border-strong);
+  border-radius: var(--tv-radius-sm);
+  background: transparent;
+  color: var(--tv-text);
+  font: inherit;
+  font-size: var(--tv-fs-xs);
+  cursor: pointer;
+}
+
+.tp-mini-btn:hover {
+  background: var(--tv-hover);
+}
+
+.tp-icon {
+  margin-left: 4px;
+  border: 0;
+  background: transparent;
+  color: var(--tv-text-dim);
+  cursor: pointer;
+  vertical-align: middle;
+}
+
+.tp-icon:hover {
+  color: var(--tv-text);
+}
+
+.tp-close-cell {
+  display: flex;
+  gap: 4px;
+  justify-content: flex-end;
+}
+
+.tp-price-edit {
+  border: 0;
+  background: transparent;
+  color: var(--tv-text);
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  border-bottom: 1px dashed var(--tv-border-strong);
+  padding: 0;
+}
+
+.tp-price-edit:hover {
+  color: var(--tv-accent-text);
+}
+
+.tp-edit {
+  height: 26px;
+  width: 100px;
+}
+
+.tp-status {
+  color: var(--tv-text-dim);
+}
+
+.tp-status-filled {
+  color: var(--tv-up);
+}
+
+.tp-status-canceled {
+  color: var(--tv-text-dim);
+}
+
+.tp-status-rejected {
+  color: var(--tv-down);
+}
+
+.tp-note-inline {
+  margin-left: 6px;
+  font-style: normal;
+  color: var(--tv-text-dim);
+  font-size: var(--tv-fs-xs);
+}
+
+/* ── 종료 지정가 팝오버 ── */
+.tp-close-pop {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  min-width: 200px;
+}
+
+.tp-pop-submit {
+  width: 100%;
+}
+
+/* ── 계좌 탭 ── */
+.tp-account {
+  padding: 12px;
+}
+
+.tp-acc-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px 16px;
+}
+
+.tp-acc-grid > div {
+  display: flex;
+  justify-content: space-between;
+  color: var(--tv-text-dim);
+}
+
+.tp-acc-grid b {
+  color: var(--tv-text);
+  font-variant-numeric: tabular-nums;
+}
+
+.tp-acc-grid b.up {
+  color: var(--tv-up);
+}
+
+.tp-acc-grid b.down {
+  color: var(--tv-down);
+}
+
+.tp-acc-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+/* ══ 모바일 카드 ══════════════════════════════════════════════════ */
+.tp-mobile .tp-head {
+  height: 44px;
+}
+
+.tp-mobile .tp-tab {
+  height: 36px;
+  font-size: var(--tv-fs);
+}
+
+.tp-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+}
+
+.tp-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--tv-border);
+  border-radius: var(--tv-radius);
+  background: var(--tv-elevated);
+}
+
+.tp-card.tp-active {
+  border-color: var(--tv-accent);
+}
+
+.tp-card-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.tp-card-sym {
+  font-weight: 600;
+  color: var(--tv-text-strong);
+}
+
+.tp-card-head .tp-x {
+  margin-left: auto;
+  font-size: var(--tv-fs);
+}
+
+.tp-card-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px 12px;
+}
+
+.tp-card-grid > div {
+  display: flex;
+  justify-content: space-between;
+  color: var(--tv-text-dim);
+}
+
+.tp-card-grid b {
+  color: var(--tv-text);
+  font-variant-numeric: tabular-nums;
+}
+
+.tp-card-tpsl {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--tv-text-dim);
+  font-size: var(--tv-fs-xs);
+}
+
+.tp-card-tpsl .tp-mini-btn {
+  margin-left: auto;
+  height: 32px;
+}
+
+.tp-card-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.tp-card-actions .tv-btn {
+  flex: 1;
+  height: 44px;
+}
+
+.tp-card-line {
+  gap: 4px;
+}
+
+.tp-card-line-sub {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  color: var(--tv-text-dim);
+  font-variant-numeric: tabular-nums;
+}
+
+.tp-note {
+  color: var(--tv-text-dim);
+  font-size: var(--tv-fs-xs);
+}
+
+.tp-mobile .tp-acc-actions .tv-btn {
+  flex: 1;
+  height: 44px;
+}
