@@ -2,7 +2,8 @@ import type { ReactNode } from 'react'
 import type { Interval } from '../../lib/binance'
 import { INTERVALS, INTERVAL_GROUPS, INTERVAL_INFO } from '../../lib/intervals'
 import { CHART_TYPES, type ChartType } from '../../lib/chartTypes'
-import { CHART_TYPE_ICON } from '../../lib/chartTypeIcons'
+import { CHART_TYPE_ICON, LAYOUT_ICON } from '../../lib/chartTypeIcons'
+import { LAYOUT_MODES, LAYOUT_SYNC_ITEMS, type LayoutMode, type LayoutSync, type LayoutSyncKey } from '../../lib/layoutConfig'
 import { DATE_RANGES, rangeBounds } from '../../lib/dateRanges'
 import { DRAWING_LABELS, TOOL_GROUPS, type DrawingTool, type MagnetMode } from '../../lib/drawings'
 import { ToolIcon, type IconName as ToolIconName } from '../../chart/drawing/toolIcons'
@@ -26,6 +27,7 @@ export type MobileSheet =
   | 'pins'
   | 'sync'
   | 'trade'
+  | 'layout'
 
 export interface MobileDrawingControls {
   tool: DrawingTool
@@ -81,6 +83,14 @@ export interface MobileShellProps {
   /** ⚙ 가격축 시트 항목(데스크톱 가격축 우클릭 메뉴와 같다). */
   scaleEntries: MenuEntry[]
   drawing: MobileDrawingControls
+  /** 분할 레이아웃 — 데스크톱과 같은 레이아웃(동기화)을 쓴다. */
+  layout: LayoutMode
+  onLayoutChange: (mode: LayoutMode) => void
+  layoutSync: LayoutSync
+  onLayoutSyncChange: (key: LayoutSyncKey, on: boolean) => void
+  /** 분할 중 활성 칸 하나만 크게 보기. */
+  maximized: boolean
+  onToggleMaximize: () => void
 }
 
 const CURSOR_TOOLS: Partial<Record<DrawingTool, string>> = { cross: '십자선', dot: '점', arrow: '화살표' }
@@ -195,6 +205,7 @@ export function MobileShell(props: MobileShellProps) {
         <SheetTiles
           tiles={[
             { key: 'symbolInfo', label: '심볼 정보', icon: tileIcon('info'), onSelect: () => open('symbolInfo') },
+            { key: 'layout', label: '레이아웃', icon: tileIcon(LAYOUT_ICON[props.layout]), onSelect: () => open('layout') },
             { key: 'chartType', label: '차트 유형', icon: tileIcon(CHART_TYPE_ICON[props.chartType]), onSelect: () => open('chartType') },
             { key: 'alerts', label: '알림 관리', icon: tileIcon('bell'), onSelect: then(() => onTabChange('alerts')) },
             { key: 'range', label: '기간', icon: tileIcon('calendar'), onSelect: () => open('range') },
@@ -219,6 +230,50 @@ export function MobileShell(props: MobileShellProps) {
             onSelect: then(() => props.onChartTypeChange(t.id)),
           }))}
         />
+      </BottomSheet>
+
+      <BottomSheet open={sheet === 'layout'} onClose={close} title="레이아웃">
+        <SheetTiles
+          columns={3}
+          tiles={LAYOUT_MODES.map((o) => ({
+            key: String(o.mode),
+            label: o.label,
+            icon: tileIcon(LAYOUT_ICON[o.mode]),
+            active: o.mode === props.layout,
+            onSelect: then(() => props.onLayoutChange(o.mode)),
+          }))}
+        />
+        {props.layout > 1 && (
+          <>
+            <SheetSection title="보기">
+              <SheetTiles
+                columns={3}
+                tiles={[
+                  {
+                    key: 'maximize',
+                    label: props.maximized ? '분할로 돌아가기' : '이 칸 크게 보기',
+                    icon: tileIcon(props.maximized ? LAYOUT_ICON[props.layout] : 'layout1'),
+                    active: props.maximized,
+                    onSelect: then(props.onToggleMaximize),
+                  },
+                ]}
+              />
+            </SheetSection>
+            <SheetSection title="모든 칸에 같이 적용">
+              {LAYOUT_SYNC_ITEMS.map((s) => (
+                <label key={s.key} className="m-setting">
+                  <span>{s.label}</span>
+                  <input
+                    className="tv-switch"
+                    type="checkbox"
+                    checked={props.layoutSync[s.key]}
+                    onChange={(e) => props.onLayoutSyncChange(s.key, e.target.checked)}
+                  />
+                </label>
+              ))}
+            </SheetSection>
+          </>
+        )}
       </BottomSheet>
 
       <BottomSheet open={sheet === 'range'} onClose={close} title="기간">

@@ -6,7 +6,7 @@ import type { LayoutMode, LayoutSync, LayoutSyncKey } from '../lib/layoutConfig'
 import type { IndicatorInstance } from '../lib/indicatorConfig'
 import { IndicatorTemplatesMenu } from './IndicatorTemplatesMenu'
 import { ChartTypeMenu } from './menus/ChartTypeMenu'
-import { CHART_TYPE_ICON } from '../lib/chartTypeIcons'
+import { CHART_TYPE_ICON, LAYOUT_ICON } from '../lib/chartTypeIcons'
 import { IntervalMenu } from './menus/IntervalMenu'
 import { LayoutMenu } from './menus/LayoutMenu'
 import { SnapshotMenu } from './menus/SnapshotMenu'
@@ -280,7 +280,7 @@ export function TopToolbar(props: TopToolbarProps) {
         aria-label="레이아웃"
         onClick={() => setLayoutOpen((v) => !v)}
       >
-        <Icon name={layout === 1 ? 'layout1' : layout === 2 ? 'layout2' : 'layout4'} size={22} />
+        <Icon name={LAYOUT_ICON[layout]} size={22} />
       </button>
       <LayoutMenu
         anchor={layoutRef.current}

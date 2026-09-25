@@ -577,12 +577,12 @@ export function ChartCell({
   }
 
   return (
-    // 칸 어디를 눌러도 활성 칸이 되게 하는 래퍼.
+    // 칸 어디를 눌러도 활성 칸이 되게 하는 래퍼. 폰에서 차트를 끌면 mousedown 이 오지 않으므로 pointerdown 으로 잡는다.
     // eslint-disable-next-line jsx-a11y/no-static-element-interactions, jsx-a11y/click-events-have-key-events
     <section
-      className={`chart-cell${active ? ' active' : ''}${highlightActive ? ' highlight' : ''}`}
+      className={`chart-cell${active ? ' active' : ''}${highlightActive && active ? ' highlight' : ''}`}
       style={gridStyle}
-      onMouseDownCapture={onActivate}
+      onPointerDownCapture={onActivate}
     >
       <div className="cell-chart" ref={chartWrapRef}>
         <Chart

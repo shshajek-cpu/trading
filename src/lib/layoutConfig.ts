@@ -41,6 +41,20 @@ export function layoutSync(state: LayoutState): LayoutSync {
   return { chartType: state.syncChartType, symbol: state.syncSymbol, crosshair: state.syncCrosshair }
 }
 
+/** 레이아웃 고르기 — 데스크톱 레이아웃 메뉴와 폰 레이아웃 시트가 같은 목록을 쓴다. */
+export const LAYOUT_MODES: { mode: LayoutMode; label: string }[] = [
+  { mode: 1, label: '단일 차트' },
+  { mode: 2, label: '2분할' },
+  { mode: 4, label: '4분할' },
+]
+
+/** "모든 칸에 같이 적용" 항목. */
+export const LAYOUT_SYNC_ITEMS: { key: LayoutSyncKey; label: string }[] = [
+  { key: 'symbol', label: '심볼' },
+  { key: 'chartType', label: '차트 종류' },
+  { key: 'crosshair', label: '십자선' },
+]
+
 const STORAGE_KEY = 'trading.layout.v1'
 
 function cell(symbol: string, interval: Interval): CellConfig {

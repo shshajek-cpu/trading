@@ -74,6 +74,7 @@ import {
   type LayoutState,
   type LayoutSyncKey,
 } from './lib/layoutConfig'
+import { LAYOUT_ICON } from './lib/chartTypeIcons'
 import {
   createIndicator,
   loadIndicators,
@@ -346,12 +347,12 @@ function App() {
   const activeSymbol = activeCell.symbol
   const activeSymbolRef = useRef(activeSymbol)
   activeSymbolRef.current = activeSymbol
-  // Alt+Enter 로 최대화하면 분할 화면에서도 활성 칸 하나만 보인다(나머지 칸은 가린 채 마운트해 둔다).
-  const maximizedNow = maximized && !isMobile && layout > 1
+  // 한 칸 크게 보기(데스크톱 Alt+Enter, 폰 레이아웃 시트): 분할 화면에서도 활성 칸 하나만 보인다(나머지 칸은 가린 채 마운트해 둔다).
+  const maximizedNow = maximized && layout > 1
   /** 지금 눈에 보이는 칸의 종목들. */
-  const shownSymbols = isMobile || maximizedNow ? [activeSymbol] : cells.slice(0, layout).map((c) => c.symbol)
+  const shownSymbols = maximizedNow ? [activeSymbol] : cells.slice(0, layout).map((c) => c.symbol)
   /** 실시간 틱을 받는 칸(가린 칸 포함)의 종목들. PiP 는 활성 종목이라 여기에 들어 있다. */
-  const feedKey = (isMobile ? [activeSymbol] : cells.slice(0, layout).map((c) => c.symbol)).join(',')
+  const feedKey = cells.slice(0, layout).map((c) => c.symbol).join(',')
 
   // 모의 선물거래 — 계좌는 동기화 코드로 기기끼리 공유한다(D1). 주문창·거래 패널·차트 선이 PaperContext 로 읽는다.
   const paperName = useCallback((s: string) => displaySymbol(s, symbols), [symbols])
@@ -562,8 +563,8 @@ function App() {
     setLayoutState((prev) => ({ ...prev, layout: mode, active: Math.min(prev.active, mode - 1) }))
   }, [])
 
-  // 폰은 활성 칸 하나만 보이므로 버튼은 그 칸의 리플레이를 켜고 끈다.
-  const replayOn = isMobile ? replayCell === active : replayCell !== null
+  // 리플레이 중인 칸이 하나라도 있으면 켜진 것 — 버튼을 다시 누르면 끈다(폰도 분할 칸이 함께 보인다).
+  const replayOn = replayCell !== null
   const toggleReplay = () => setReplayCell(replayOn ? null : active)
 
   // ── drawings / indicators (삭제는 '되돌리기' 토스트를 띄운다) ────────
@@ -804,6 +805,8 @@ function App() {
 
   // 폰: 차트가 아닌 탭에서 뒤로가기를 누르면 앱을 나가지 않고 차트 탭으로 돌아온다.
   useBackClose(isMobile && mobileTab !== 'chart', () => setMobileTab('chart'))
+  // 폰: 한 칸을 크게 보던 중이면 뒤로가기로 분할 화면으로 돌아온다.
+  useBackClose(isMobile && mobileTab === 'chart' && maximizedNow, () => setMaximized(false))
 
   // ── date range ────────────────────────────────────────────────────
   const applyDateRange = useCallback(
@@ -839,7 +842,7 @@ function App() {
   }
 
   const toggleMaximize = () => {
-    if (isMobile || layout === 1) return
+    if (layout === 1) return
     setMaximized((v) => !v)
   }
 
@@ -1101,10 +1104,10 @@ function App() {
             : []),
           divider,
           item('날짜로 이동…', () => setGoToOpen(true), { icon: icon('calendar'), shortcut: key('goToDate') }),
-          ...(!isMobile && layout > 1
+          ...(layout > 1
             ? [
                 item(maximized ? '차트 복원' : '차트 최대화', toggleMaximize, {
-                  icon: icon(maximized ? (layout === 2 ? 'layout2' : 'layout4') : 'layout1'),
+                  icon: icon(maximized ? LAYOUT_ICON[layout] : 'layout1'),
                   shortcut: key('toggleMaximize'),
                 }),
               ]
@@ -1193,7 +1196,7 @@ function App() {
         replay={replayCell === index}
         onReplayExit={() => setReplayCell((c) => (c === index ? null : c))}
         active={isActive}
-        highlightActive={!isMobile && layout > 1}
+        highlightActive={layout > 1 && !maximizedNow}
         onActivate={() => setActive(index)}
         onPrice={handlePrice}
         onContextMenu={(req) => setChartMenu({ ...req, cellIndex: index })}
@@ -1201,7 +1204,7 @@ function App() {
         onEditIndicator={setEditIndicatorId}
         onScaleMenu={isMobile ? () => setMobileSheet('scale') : undefined}
         onNotice={pushToast}
-        syncCrosshair={!isMobile && layoutState.syncCrosshair}
+        syncCrosshair={layoutState.syncCrosshair}
         drawingSelectRequest={drawingSelect?.cell === index ? drawingSelect.req : null}
       />
       </ErrorBoundary>
@@ -1596,7 +1599,14 @@ function App() {
           sheet={mobileSheet}
           onSheetChange={setMobileSheet}
           alertCount={alertBadge}
-          chart={renderCell(activeCell, active)}
+          chart={
+            // 데스크톱과 같은 레이아웃. 폰은 칸 경계를 끌지 않고 똑같이 나눈다(세로 화면은 2분할을 위아래로).
+            <div className={`m-chart-grid grid-${maximizedNow ? 1 : layout}`}>
+              {cells
+                .slice(0, layout)
+                .map((cell, i) => renderCell(cell, i, maximizedNow && i !== active ? HIDDEN_CELL : undefined))}
+            </div>
+          }
           pages={{
             watchlist: renderWidget('watchlist', 'page'),
             alerts: renderWidget('alerts', 'page'),
@@ -1671,6 +1681,12 @@ function App() {
             onUndo: undoDrawing,
             onRedo: redoDrawing,
           }}
+          layout={layout}
+          onLayoutChange={setLayout}
+          layoutSync={layoutSync(layoutState)}
+          onLayoutSyncChange={setLayoutSync}
+          maximized={maximizedNow}
+          onToggleMaximize={toggleMaximize}
         />
         {dialogs}
       </PaperContext.Provider>
