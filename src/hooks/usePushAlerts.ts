@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { PriceAlert } from './usePriceAlerts'
+import { armOf, type AlertArm, type PriceAlert } from './usePriceAlerts'
 
 export type PushState = 'unsupported' | 'off' | 'on' | 'working' | 'error'
 
@@ -78,7 +78,15 @@ function errorText(error: unknown, fallback: string): string {
 
 /** 서버에 올리는 감시 목록. 켜진 가격 알림(메모 포함)과 아직 안 울린 수평선 알림. */
 interface WatchPayload {
-  alerts: { id: string; symbol: string; condition: PriceAlert['condition']; price: number; message?: string }[]
+  alerts: {
+    id: string
+    symbol: string
+    condition: PriceAlert['condition']
+    price: number
+    message?: string
+    /** 아직 걸리지 않은 교차 알림 — 감시기가 가격이 먼저 이쪽에 있는 것을 본 뒤에 건다. */
+    arm?: AlertArm
+  }[]
   lines: LineWatch[]
 }
 
@@ -86,9 +94,17 @@ function buildWatch(alerts: PriceAlert[], lines: LineWatch[]): WatchPayload {
   return {
     alerts: alerts
       .filter((alert) => alert.active)
-      .map(({ id, symbol, condition, price, message }) => {
+      .map(({ id, symbol, condition, price, message, kind, pending }) => {
         const note = message?.trim().slice(0, MESSAGE_MAX)
-        return note ? { id, symbol, condition, price, message: note } : { id, symbol, condition, price }
+        const arm = pending ? armOf({ kind }) : null
+        return {
+          id,
+          symbol,
+          condition,
+          price,
+          ...(note ? { message: note } : {}),
+          ...(arm ? { arm } : {}),
+        }
       }),
     lines: lines
       .filter((line) => Number.isFinite(line.price))

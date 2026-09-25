@@ -4,7 +4,7 @@ import { CHART_TYPES, type ChartType } from '../lib/chartTypes'
 import { INTERVALS } from '../lib/intervals'
 import { DRAWING_LABELS, type DrawingKind, type DrawingTool } from '../lib/drawings'
 import type { LayoutMode } from '../lib/layoutConfig'
-import { ALL_INDICATOR_KINDS, INDICATOR_DEFS, type IndicatorKind } from '../lib/indicatorConfig'
+import { ALL_INDICATOR_KINDS, INDICATOR_DEFS, indicatorSearchTerms, type IndicatorKind } from '../lib/indicatorConfig'
 import { describeSymbol, displaySymbol, type SymbolInfo } from '../lib/symbols'
 import { rankSymbol } from '../hooks/useSymbols'
 import { Dialog } from './ui/Dialog'
@@ -93,9 +93,9 @@ export function QuickSearchDialog(props: QuickSearchDialogProps) {
       const groupHit = group.includes(q)
       for (const kind of ALL_INDICATOR_KINDS) {
         const def = INDICATOR_DEFS[kind]
-        const nameScore = textScore(def.name, q)
-        const shortScore = textScore(def.shortName, q)
-        const s = nameScore < 0 ? shortScore : shortScore < 0 ? nameScore : Math.min(nameScore, shortScore)
+        // 이름·짧은 이름·종류 키(sma·ema…) 가운데 가장 잘 맞는 것.
+        const scores = indicatorSearchTerms(kind).map((t) => textScore(t, q)).filter((v) => v >= 0)
+        const s = scores.length > 0 ? Math.min(...scores) : -1
         if (s < 0 && !groupHit) continue
         const label = def.shortName && def.shortName !== def.name ? `${def.name} (${def.shortName})` : def.name
         filtered.push({ id: `add-ind-${kind}`, group, label, run: () => onAddIndicator(kind), score: s < 0 ? 3 : s })

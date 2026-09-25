@@ -1,5 +1,10 @@
 import { useState } from 'react'
-import type { AlertCondition, PriceAlert } from '../../hooks/usePriceAlerts'
+import {
+  PRICE_ALERT_KIND_LABELS,
+  type AlertCondition,
+  type PriceAlert,
+  type PriceAlertExtra,
+} from '../../hooks/usePriceAlerts'
 import type { Drawing } from '../../lib/drawings'
 import type { Interval } from '../../lib/binance'
 import type { IndicatorInstance } from '../../lib/indicatorConfig'
@@ -24,7 +29,9 @@ interface AlertsWidgetProps {
   alerts: PriceAlert[]
   lineAlerts: Drawing[]
   symbols: SymbolInfo[]
-  onAdd: (symbol: string, condition: AlertCondition, price: number, message?: string) => void
+  onAdd: (symbol: string, condition: AlertCondition, price: number, message?: string, extra?: PriceAlertExtra) => void
+  /** 가격 알림을 고친다(연필 버튼). 없으면 편집 버튼을 두지 않는다. */
+  onUpdateAlert?: (id: string, patch: { condition: AlertCondition; price: number; message?: string } & PriceAlertExtra) => void
   onRemove: (id: string) => void
   onDisableLineAlert: (id: string) => void
   indicatorAlerts: IndicatorAlert[]
@@ -60,6 +67,7 @@ export function AlertsWidget({
   lineAlerts,
   symbols,
   onAdd,
+  onUpdateAlert,
   onRemove,
   onDisableLineAlert,
   indicatorAlerts,
@@ -78,6 +86,7 @@ export function AlertsWidget({
   onReactivateLine,
 }: AlertsWidgetProps) {
   const [createOpen, setCreateOpen] = useState(false)
+  const [editing, setEditing] = useState<PriceAlert | null>(null)
   const isPage = variant === 'page'
   const rowClass = (fired: boolean) => `aw-row${fired ? ' fired' : ''}${onPickSymbol ? ' pick' : ''}`
 
@@ -124,7 +133,9 @@ export function AlertsWidget({
         <ul className="aw-rows">
           {alerts.map((a) => {
             const up = a.condition === 'above'
-            const color = up ? 'var(--tv-up)' : 'var(--tv-down)'
+            // 아직 걸리지 않은 교차 알림은 방향이 없다 — 기본색으로 둔다.
+            const color = a.pending ? 'var(--tv-text-dim)' : up ? 'var(--tv-up)' : 'var(--tv-down)'
+            const cond = a.kind ? PRICE_ALERT_KIND_LABELS[a.kind] : up ? '이상' : '이하'
             return (
               <li key={a.id} className={rowClass(!a.active)} onClick={onPickSymbol && (() => onPickSymbol(a.symbol))}>
                 <span className="aw-dir" style={{ color }}>
@@ -132,11 +143,21 @@ export function AlertsWidget({
                 </span>
                 <div className="aw-main">
                   <span className="aw-sym">{displaySymbol(a.symbol, symbols)}</span>
-                  <span className="aw-cond">{`${fmtAlertPrice(a.price, priceDecimals(a.symbol, symbols))} ${a.condition === 'above' ? '이상' : '이하'}`}</span>
+                  <span className="aw-cond">{`${fmtAlertPrice(a.price, priceDecimals(a.symbol, symbols))} ${cond}`}</span>
                   {a.message && <span className="aw-msg">{a.message}</span>}
                 </div>
                 <span className={`aw-status${a.active ? '' : ' fired'}`}>{a.active ? '활성' : '발동됨'}</span>
                 {!a.active && onReactivateAlert && reactivateButton('가격 알림 다시 켜기', () => onReactivateAlert(a.id))}
+                {onUpdateAlert && (
+                  <button
+                    type="button"
+                    className="tv-icon-btn aw-remove"
+                    aria-label="알림 편집"
+                    onClick={rowButton(() => setEditing(a))}
+                  >
+                    <Icon name="pencil" size={15} />
+                  </button>
+                )}
                 <button
                   type="button"
                   className="tv-icon-btn aw-remove"
@@ -237,6 +258,18 @@ export function AlertsWidget({
         indicators={indicators}
         onCreateIndicatorAlert={onAddIndicatorAlert}
       />
+      {onUpdateAlert && (
+        <CreateAlertDialog
+          open={editing !== null}
+          onClose={() => setEditing(null)}
+          symbol={editing?.symbol ?? symbol}
+          // 실시간 가격은 지금 차트 종목 것뿐 — 다른 종목 알림은 모른다고 두면 교차 방향을 첫 가격으로 정한다.
+          livePrice={editing && editing.symbol === symbol ? livePrice : null}
+          onCreate={onAdd}
+          editing={editing}
+          onUpdate={onUpdateAlert}
+        />
+      )}
     </section>
   )
 }

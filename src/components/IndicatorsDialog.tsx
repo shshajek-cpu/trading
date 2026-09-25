@@ -5,6 +5,7 @@ import {
   INDICATOR_CATEGORIES,
   INDICATOR_DEFS,
   createIndicator,
+  indicatorSearchTerms,
   type IndicatorCategory,
   type IndicatorInstance,
   type IndicatorKind,
@@ -56,10 +57,7 @@ export function IndicatorsDialog({ open, onClose, indicators, onChange }: Indica
     const q = query.trim().toLowerCase()
     let kinds = ALL_INDICATOR_KINDS
     if (q) {
-      kinds = kinds.filter((k) => {
-        const def = INDICATOR_DEFS[k]
-        return def.name.toLowerCase().includes(q) || def.shortName.toLowerCase().includes(q)
-      })
+      kinds = kinds.filter((k) => indicatorSearchTerms(k).some((t) => t.toLowerCase().includes(q)))
     } else if (section === 'fav') {
       kinds = kinds.filter((k) => favorites.includes(k))
     } else if (section !== 'all') {

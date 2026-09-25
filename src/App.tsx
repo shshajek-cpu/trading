@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import './App.css'
 
@@ -10,7 +10,6 @@ import { WidgetBar } from './components/WidgetBar'
 import type { WidgetId } from './lib/widgets'
 import { MainMenuDrawer } from './components/MainMenuDrawer'
 import { SettingsDialog } from './components/SettingsDialog'
-import { IndicatorSettingsDialog } from './components/IndicatorSettingsDialog'
 import { TooltipLayer } from './components/ui/TooltipLayer'
 import { tip } from './lib/tooltip'
 import { QuickSearchDialog } from './components/QuickSearchDialog'
@@ -30,23 +29,14 @@ import { IndicatorTemplatesMenu } from './components/IndicatorTemplatesMenu'
 import { MobileShell, type MobileSheet } from './components/mobile/MobileShell'
 import { MobileMenuPage } from './components/mobile/MobileMenuPage'
 import type { MobileTab } from './components/mobile/MobileBars'
-import { ObjectTree } from './components/ObjectTree'
 import { IndicatorsDialog } from './components/IndicatorsDialog'
 import { SymbolSearchDialog } from './components/SymbolSearchDialog'
 import { CreateAlertDialog } from './components/CreateAlertDialog'
-import { WatchlistWidget } from './components/widgets/WatchlistWidget'
-import { SymbolDetails } from './components/widgets/SymbolDetails'
-import { AlertsWidget } from './components/widgets/AlertsWidget'
 
-import { SyncPanel } from './components/SyncPanel'
-import { PinPanel } from './components/PinPanel'
-import { DiscoverPanel } from './components/DiscoverPanel'
-import { MtfPanel } from './components/MtfPanel'
-import { OrderPanel, type OrderDraft } from './components/trade/OrderPanel'
+import type { OrderDraft } from './components/trade/OrderPanel'
 import { TradingPanel } from './components/trade/TradingPanel'
-import { MobileTrade } from './components/trade/MobileTrade'
 
-import { usePriceAlerts, type PriceAlert, type AlertCondition } from './hooks/usePriceAlerts'
+import { usePriceAlerts, type PriceAlert, type AlertCondition, type PriceAlertExtra } from './hooks/usePriceAlerts'
 import { useIndicatorAlerts } from './hooks/useIndicatorAlerts'
 import {
   describeIndicatorAlert,
@@ -109,6 +99,7 @@ import type { Interval } from './lib/binance'
 import type { ChartMenuRequest } from './lib/chartMenu'
 import { INTERVAL_SECONDS } from './lib/intervals'
 import { TOOL_SHORTCUTS, type ShortcutId } from './lib/shortcuts'
+import { createLiveStore, useLiveStore, type LiveStore } from './lib/liveStore'
 
 const TOAST_MS = 6000
 /** 최대화 중 가린 칸. 언마운트하지 않아야 되돌렸을 때 보던 위치·불러온 옛 봉·리플레이가 그대로 남는다. */
@@ -116,6 +107,42 @@ const HIDDEN_CELL: React.CSSProperties = { display: 'none' }
 const COMPARE_SCALE_MSG = '비교 중에는 퍼센트 눈금만 쓸 수 있습니다'
 /** 바이낸스 선물 심볼 모양 — 주소(?symbol=)·알림 클릭으로 들어온 값을 거른다. */
 const SYMBOL_RE = /^[A-Z0-9]{2,30}$/
+
+/**
+ * 시작 화면에 없는 위젯 패널·폰 시트·지표 설정 창은 따로 떼어 처음 열 때 받아 온다(첫 화면 번들을 줄인다).
+ * 모두 보일 때만 마운트되던 것들이라 닫힌 동안 들고 있던 상태가 없다. 그대로 두는 것: 닫힌 채 상태를 들고 있는 창
+ * (설정 탭·지표 검색어·빠른 검색어), 다른 겹침이 닫히는 같은 커밋에 열려 뒤로가기 기록을 물려받아야 하는 창
+ * (단축키·날짜로 이동 — useBackClose), 치는 글자를 바로 받아야 하는 심볼 검색.
+ */
+const LAZY = {
+  watchlist: () => import('./components/widgets/WatchlistWidget'),
+  symbolDetails: () => import('./components/widgets/SymbolDetails'),
+  alerts: () => import('./components/widgets/AlertsWidget'),
+  objectTree: () => import('./components/ObjectTree'),
+  sync: () => import('./components/SyncPanel'),
+  pins: () => import('./components/PinPanel'),
+  discover: () => import('./components/DiscoverPanel'),
+  mtf: () => import('./components/MtfPanel'),
+  order: () => import('./components/trade/OrderPanel'),
+  mobileTrade: () => import('./components/trade/MobileTrade'),
+  indicatorSettings: () => import('./components/IndicatorSettingsDialog'),
+}
+const WatchlistWidget = lazy(() => LAZY.watchlist().then((m) => ({ default: m.WatchlistWidget })))
+const SymbolDetails = lazy(() => LAZY.symbolDetails().then((m) => ({ default: m.SymbolDetails })))
+const AlertsWidget = lazy(() => LAZY.alerts().then((m) => ({ default: m.AlertsWidget })))
+const ObjectTree = lazy(() => LAZY.objectTree().then((m) => ({ default: m.ObjectTree })))
+const SyncPanel = lazy(() => LAZY.sync().then((m) => ({ default: m.SyncPanel })))
+const PinPanel = lazy(() => LAZY.pins().then((m) => ({ default: m.PinPanel })))
+const DiscoverPanel = lazy(() => LAZY.discover().then((m) => ({ default: m.DiscoverPanel })))
+const MtfPanel = lazy(() => LAZY.mtf().then((m) => ({ default: m.MtfPanel })))
+const OrderPanel = lazy(() => LAZY.order().then((m) => ({ default: m.OrderPanel })))
+const MobileTrade = lazy(() => LAZY.mobileTrade().then((m) => ({ default: m.MobileTrade })))
+const IndicatorSettingsDialog = lazy(() => LAZY.indicatorSettings().then((m) => ({ default: m.IndicatorSettingsDialog })))
+/**
+ * 첫 화면을 그리고 이만큼 뒤에 떼어 둔 조각을 미리 받아 둔다. 처음 열 때 빈 자리가 덜 보이고, 열어 둔 탭이 새 배포를
+ * 받은 뒤(서비스워커가 옛 파일을 지운다)에도 아직 안 연 위젯이 열린다.
+ */
+const LAZY_PREFETCH_MS = 3000
 
 /** 지운 지표를 원래 순서 자리로 되돌린다. 그사이 바꾼 설정·새로 더한 지표는 그대로 둔다. */
 function restoreIndicators(
@@ -131,6 +158,36 @@ function restoreIndicators(
     ...before.filter((i) => now.has(i.id) || back.has(i.id)).map((i) => now.get(i.id) ?? i),
     ...cur.filter((i) => !known.has(i.id)),
   ]
+}
+
+/** 활성 종목의 마지막 가격. 종목을 함께 들고 있어 종목이 바뀌면 바로 무효가 된다. */
+type LiveQuote = { symbol: string; price: number } | null
+
+/**
+ * 활성 종목 실시간 가격을 구독해 children 에 넘긴다. 가격은 초당 몇 번 바뀐다 — App 상태로 두면 틱마다 화면 전체가
+ * 다시 그려지므로, 가격을 쓰는 자리(알림 위젯·알림 만들기 창)만 여기서 다시 그린다.
+ */
+function LivePrice({
+  store,
+  symbol,
+  children,
+}: {
+  store: LiveStore<LiveQuote>
+  symbol: string
+  children: (price: number | null) => React.ReactNode
+}) {
+  // 종목을 바꾸면 새 종목의 첫 틱 전까지는 가격을 모른다 — 옛 종목 가격을 알림 창·알림 위젯에 쓰지 않는다.
+  const price = useLiveStore(store, (q) => (q && q.symbol === symbol ? q.price : null))
+  return children(price)
+}
+
+/** 떼어 둔 조각의 자리. 받는 동안은 비워 두고(깜빡이는 표시 없음), 받지 못하면 앱 전체가 아니라 이 자리만 오류로 보인다. */
+function LazySlot({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <ErrorBoundary label={label}>
+      <Suspense fallback={null}>{children}</Suspense>
+    </ErrorBoundary>
+  )
 }
 
 function App() {
@@ -203,8 +260,8 @@ function App() {
   const [tool, setTool] = useState<DrawingTool>('cross')
   /** 리플레이 중인 칸. 시작한 칸에 머문다 — 다른 칸을 눌러 활성이 바뀌어도 옮겨 가지 않는다. */
   const [replayCell, setReplayCell] = useState<number | null>(null)
-  /** 마지막으로 받은 활성 종목 가격. 종목을 함께 들고 있어 종목이 바뀌면 바로 무효가 된다. */
-  const [live, setLive] = useState<{ symbol: string; price: number } | null>(null)
+  /** 마지막으로 받은 활성 종목 가격. 틱마다 바뀌어 상태가 아니라 저장소에 둔다 — 쓰는 자리(LivePrice)만 다시 그린다. */
+  const [live] = useState(() => createLiveStore<LiveQuote>(null))
   const [liveFeatures, setLiveFeatures] = useState<FeatureSet | null>(null)
   const [pinMode, setPinMode] = useState(false)
   const [pinSide, setPinSide] = useState<PinSide>('long')
@@ -258,6 +315,18 @@ function App() {
   const pinStore = usePins()
   const sync = useSync({ onNotice: pushToast })
 
+  // 떼어 둔 조각(LAZY)을 첫 화면 뒤에 미리 받아 둔다.
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      for (const load of Object.values(LAZY)) {
+        load().catch(() => {
+          /* 미리 받기는 덤이다 — 실패해도 열 때 lazy 가 다시 부른다 */
+        })
+      }
+    }, LAZY_PREFETCH_MS)
+    return () => window.clearTimeout(timer)
+  }, [])
+
   // 칸마다 그 종목·주기의 핀. 렌더마다 새 배열을 넘기면 차트가 초당 몇 번씩 마커를 다시 건다.
   const pinsFor = useMemo(() => {
     const cache = new Map<string, typeof pinStore.pins>()
@@ -277,8 +346,6 @@ function App() {
   const activeSymbol = activeCell.symbol
   const activeSymbolRef = useRef(activeSymbol)
   activeSymbolRef.current = activeSymbol
-  // 종목을 바꾸면 새 종목의 첫 틱 전까지는 가격을 모른다 — 옛 종목 가격을 알림 창·알림 위젯에 쓰지 않는다.
-  const livePrice = live && live.symbol === activeSymbol ? live.price : null
   // Alt+Enter 로 최대화하면 분할 화면에서도 활성 칸 하나만 보인다(나머지 칸은 가린 채 마운트해 둔다).
   const maximizedNow = maximized && !isMobile && layout > 1
   /** 지금 눈에 보이는 칸의 종목들. */
@@ -306,6 +373,7 @@ function App() {
   const {
     alerts,
     addAlert,
+    updateAlert,
     removeAlert,
     checkPrice,
     markFired,
@@ -330,9 +398,9 @@ function App() {
     if (permission === 'default') void requestPermission()
   }, [permission, requestPermission])
   const createPriceAlert = useCallback(
-    (symbol: string, condition: AlertCondition, price: number, message?: string) => {
+    (symbol: string, condition: AlertCondition, price: number, message?: string, extra?: PriceAlertExtra) => {
       askNotifyPermission()
-      addAlert(symbol, condition, price, message)
+      addAlert(symbol, condition, price, message, extra)
     },
     [askNotifyPermission, addAlert],
   )
@@ -387,10 +455,11 @@ function App() {
       checkPrice(symbol, price)
       checkDrawings(symbol, price)
       if (symbol === activeSymbolRef.current) {
-        setLive((prev) => (prev && prev.symbol === symbol && prev.price === price ? prev : { symbol, price }))
+        const prev = live.get()
+        if (!prev || prev.symbol !== symbol || prev.price !== price) live.set({ symbol, price })
       }
     },
-    [checkPrice, checkDrawings],
+    [checkPrice, checkDrawings, live],
   )
 
   // 화면(칸·PiP)에 없는 종목의 가격 알림·수평선 알림도 울려야 한다 — 그 종목만 미니 티커로 따로 받아 같은 판정에 흘린다.
@@ -1140,7 +1209,7 @@ function App() {
   }
 
   // ── widget content ────────────────────────────────────────────────
-  const renderWidget = (id: WidgetId, variant: 'panel' | 'page'): React.ReactNode => {
+  const widgetContent = (id: WidgetId, variant: 'panel' | 'page'): React.ReactNode => {
     const page = variant === 'page'
     switch (id) {
       case 'watchlist':
@@ -1148,7 +1217,7 @@ function App() {
           <>
             <WatchlistWidget
               symbols={watchlist.symbols}
-              rows={watchlist.rows}
+              rowsStore={watchlist.rows}
               infos={symbols}
               current={activeSymbol}
               onPick={(s) => {
@@ -1166,30 +1235,35 @@ function App() {
         )
       case 'alerts':
         return (
-          <AlertsWidget
-            symbol={activeSymbol}
-            livePrice={livePrice}
-            alerts={alerts}
-            lineAlerts={drawings.filter((d) => d.alert)}
-            symbols={symbols}
-            onAdd={createPriceAlert}
-            onRemove={removeAlert}
-            onDisableLineAlert={(lineId) => updateDrawing(lineId, { alert: false })}
-            onPickSymbol={showSymbol}
-            onReactivateAlert={(alertId) => setAlertActive(alertId, true)}
-            onReactivateLine={(lineId) => updateDrawing(lineId, { alert: true, fired: false })}
-            indicatorAlerts={indicatorAlerts.alerts}
-            onRemoveIndicatorAlert={indicatorAlerts.removeAlert}
-            interval={activeCell.interval}
-            indicators={indicators}
-            onAddIndicatorAlert={createIndicatorAlert}
-            permission={permission}
-            onRequestPermission={() => void requestPermission()}
-            push={push}
-            hasSyncCode={Boolean(sync.code)}
-            onCreateSyncCode={createSyncCode}
-            variant={variant}
-          />
+          <LivePrice store={live} symbol={activeSymbol}>
+            {(livePrice) => (
+              <AlertsWidget
+                symbol={activeSymbol}
+                livePrice={livePrice}
+                alerts={alerts}
+                lineAlerts={drawings.filter((d) => d.alert)}
+                symbols={symbols}
+                onAdd={createPriceAlert}
+                onUpdateAlert={updateAlert}
+                onRemove={removeAlert}
+                onDisableLineAlert={(lineId) => updateDrawing(lineId, { alert: false })}
+                onPickSymbol={showSymbol}
+                onReactivateAlert={(alertId) => setAlertActive(alertId, true)}
+                onReactivateLine={(lineId) => updateDrawing(lineId, { alert: true, fired: false })}
+                indicatorAlerts={indicatorAlerts.alerts}
+                onRemoveIndicatorAlert={indicatorAlerts.removeAlert}
+                interval={activeCell.interval}
+                indicators={indicators}
+                onAddIndicatorAlert={createIndicatorAlert}
+                permission={permission}
+                onRequestPermission={() => void requestPermission()}
+                push={push}
+                hasSyncCode={Boolean(sync.code)}
+                onCreateSyncCode={createSyncCode}
+                variant={variant}
+              />
+            )}
+          </LivePrice>
         )
       case 'objectTree':
         return (
@@ -1276,6 +1350,13 @@ function App() {
         )
     }
   }
+
+  // 위젯 내용은 처음 열 때 받아 온다(LAZY) — 받는 동안은 빈 자리.
+  const renderWidget = (id: WidgetId, variant: 'panel' | 'page') => (
+    <LazySlot key={id} label="위젯">
+      {widgetContent(id, variant)}
+    </LazySlot>
+  )
 
   // shared toolbar props
   const toolbarProps = {
@@ -1366,22 +1447,26 @@ function App() {
         onChange={changeIndicators}
       />
 
-      <CreateAlertDialog
-        open={alertOpen}
-        onClose={() => {
-          setAlertOpen(false)
-          setAlertPrice(null)
-          setAlertIndicatorId(null)
-        }}
-        symbol={activeSymbol}
-        livePrice={livePrice}
-        initialPrice={alertPrice}
-        interval={activeCell.interval}
-        indicators={indicators}
-        initialIndicatorId={alertIndicatorId}
-        onCreateIndicatorAlert={createIndicatorAlert}
-        onCreate={createPriceAlert}
-      />
+      <LivePrice store={live} symbol={activeSymbol}>
+        {(livePrice) => (
+          <CreateAlertDialog
+            open={alertOpen}
+            onClose={() => {
+              setAlertOpen(false)
+              setAlertPrice(null)
+              setAlertIndicatorId(null)
+            }}
+            symbol={activeSymbol}
+            livePrice={livePrice}
+            initialPrice={alertPrice}
+            interval={activeCell.interval}
+            indicators={indicators}
+            initialIndicatorId={alertIndicatorId}
+            onCreateIndicatorAlert={createIndicatorAlert}
+            onCreate={createPriceAlert}
+          />
+        )}
+      </LivePrice>
 
       <GoToDateDialog
         open={goToOpen}
@@ -1395,11 +1480,15 @@ function App() {
 
       <SettingsDialog open={settingsOpen} onClose={() => setSettingsOpen(false)} settings={settings} onChange={setSettings} />
 
-      <IndicatorSettingsDialog
-        instance={editIndicatorId ? indicators.find((i) => i.id === editIndicatorId) ?? null : null}
-        onChange={(next) => setIndicators((prev) => prev.map((i) => (i.id === next.id ? next : i)))}
-        onClose={() => setEditIndicatorId(null)}
-      />
+      {editIndicatorId !== null && (
+        <LazySlot label="지표 설정">
+          <IndicatorSettingsDialog
+            instance={indicators.find((i) => i.id === editIndicatorId) ?? null}
+            onChange={(next) => setIndicators((prev) => prev.map((i) => (i.id === next.id ? next : i)))}
+            onClose={() => setEditIndicatorId(null)}
+          />
+        </LazySlot>
+      )}
 
       <QuickSearchDialog
         open={quickOpen}
@@ -1535,18 +1624,24 @@ function App() {
                 onClose={() => setMobileSheet(null)}
               />
             ),
-            symbolInfo: <SymbolDetails symbol={activeSymbol} infos={symbols} />,
+            symbolInfo: (
+              <LazySlot label="심볼 정보">
+                <SymbolDetails symbol={activeSymbol} infos={symbols} />
+              </LazySlot>
+            ),
             objectTree: renderWidget('objectTree', 'page'),
             pins: renderWidget('pins', 'page'),
             sync: renderWidget('sync', 'page'),
             trade: (
-              <MobileTrade
-                symbol={activeSymbol}
-                symbols={symbols}
-                onSelectSymbol={setCellSymbol}
-                draft={tradeDraft}
-                onDraftApplied={() => setTradeDraft(null)}
-              />
+              <LazySlot label="거래">
+                <MobileTrade
+                  symbol={activeSymbol}
+                  symbols={symbols}
+                  onSelectSymbol={setCellSymbol}
+                  draft={tradeDraft}
+                  onDraftApplied={() => setTradeDraft(null)}
+                />
+              </LazySlot>
             ),
           }}
           symbolLabel={displaySymbol(activeSymbol, symbols)}

@@ -27,6 +27,8 @@ interface WatchAlert {
   price: number
   /** 사용자 메모. 푸시 본문에 붙인다. */
   message?: string
+  /** 아직 걸리지 않은 교차 알림 — 가격이 먼저 이쪽(away = 선에서 벗어남)에 있어야 건다. /api/push 와 같은 뜻. */
+  arm?: 'below' | 'above' | 'away'
 }
 
 /** 수평선 알림. 처음 본 현재가 쪽(lineSides)을 기준으로, 가격이 선을 지나 반대쪽으로 가면 울린다. */
@@ -48,6 +50,8 @@ interface WatchRecord {
   linesBy?: Record<string, WatchLine[]>
   // 수평선마다 처음 본 현재가 쪽. 키는 lineKey — /api/push 와 형식이 같아야 한다.
   lineSides?: Record<string, Side>
+  // 걸린 교차 알림이 기다리는 쪽. 키는 armKey — /api/push 와 형식이 같아야 한다.
+  alertArms?: Record<string, Side>
   firedIds: string[]
 }
 
@@ -73,6 +77,19 @@ function unionLines(record: WatchRecord): WatchLine[] {
 /** lineSides 키. 선을 옮기면(가격이 바뀌면) 기준 쪽을 새로 잡는다. /api/push 와 형식이 같아야 한다. */
 function lineKey(line: WatchLine): string {
   return `${line.id}@${line.price}`
+}
+
+/** alertArms 키. /api/push 와 형식이 같아야 한다. */
+function armKey(alert: WatchAlert): string {
+  return `${alert.id}@${alert.price}@${alert.arm ?? ''}`
+}
+
+/** 거는 조건이 맞으면 이제 기다릴 쪽, 아직이면 null. 앱(usePriceAlerts.armedTarget)과 같은 규칙. */
+function armedTarget(arm: NonNullable<WatchAlert['arm']>, now: number, level: number): Side | null {
+  if (arm === 'below') return now < level ? 'above' : null
+  if (arm === 'above') return now > level ? 'below' : null
+  if (now === level) return null
+  return now > level ? 'below' : 'above'
 }
 
 /** 감시할 동기화 코드 목록. /api/push 가 구독·알림이 바뀔 때 맞춘다. */
@@ -104,8 +121,8 @@ async function fetchPrices(): Promise<Map<string, number>> {
 }
 
 /** 조건을 만족하면 울린다. 한 번 울린 알림은 firedIds 에 남아 다시 울리지 않는다. */
-function meets(alert: WatchAlert, now: number): boolean {
-  return alert.condition === 'above' ? now >= alert.price : now <= alert.price
+function meets(condition: Side, price: number, now: number): boolean {
+  return condition === 'above' ? now >= price : now <= price
 }
 
 /** 이번 분에 보낼 푸시 하나. */
@@ -154,13 +171,35 @@ async function checkAll(env: Env, rebuild: boolean): Promise<void> {
 
     const fired = new Set(record.firedIds)
     const hits: Hit[] = []
+    // 교차 알림 걸기: 가격이 먼저 반대편에 있는 것을 본 뒤에 넘어갈 쪽을 적는다(한 번만 쓴다).
+    const arms: Record<string, Side> = { ...(record.alertArms ?? {}) }
+    let armsChanged = false
     for (const alert of alerts) {
       const now = prices.get(alert.symbol)
-      if (now === undefined || fired.has(alert.id) || !meets(alert, now)) continue
+      if (now === undefined || fired.has(alert.id)) continue
+      let condition: Side = alert.condition
+      if (alert.arm) {
+        const ak = armKey(alert)
+        const armed = arms[ak]
+        if (!armed) {
+          const target = armedTarget(alert.arm, now, alert.price)
+          if (target) {
+            arms[ak] = target
+            armsChanged = true
+          }
+          continue
+        }
+        condition = armed
+      }
+      if (!meets(condition, alert.price, now)) continue
+      if (alert.arm) {
+        delete arms[armKey(alert)]
+        armsChanged = true
+      }
       hits.push({
         id: alert.id,
         payload: JSON.stringify({
-          title: `${alert.symbol} ${alert.condition === 'above' ? '▲' : '▼'} ${alert.price}`,
+          title: `${alert.symbol} ${condition === 'above' ? '▲' : '▼'} ${alert.price}`,
           body: alert.message ? `${alert.message}\n현재가 ${now}` : `현재가 ${now}`,
           // 로컬 시스템 알림과 같은 태그를 써 OS 가 하나로 합치게 한다.
           tag: `price-${alert.id}`,
@@ -200,7 +239,7 @@ async function checkAll(env: Env, rebuild: boolean): Promise<void> {
       })
     }
     // 울릴 것도, 새로 적을 기준도 없으면 아무것도 쓰지 않는다 — 무료 한도의 대부분이 여기서 아껴진다.
-    if (hits.length === 0 && !sidesChanged) continue
+    if (hits.length === 0 && !sidesChanged && !armsChanged) continue
 
     const dead = new Set<string>()
     for (const hit of hits) {
@@ -238,6 +277,7 @@ async function checkAll(env: Env, rebuild: boolean): Promise<void> {
         ...(record.alerts ? { alerts: record.alerts } : {}),
         linesBy,
         lineSides: sides,
+        alertArms: arms,
         firedIds: [...fired],
       } satisfies WatchRecord),
     )

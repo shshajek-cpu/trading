@@ -44,4 +44,20 @@ export default defineConfig({
       },
     }),
   ],
+  build: {
+    rolldownOptions: {
+      output: {
+        // 첫 화면 번들을 셋으로 나눈다. 라이브러리(react·차트)는 배포마다 거의 안 바뀌어 서비스워커가 새 버전을 받을 때
+        // 다시 내려받지 않는다. 처음 열 때 받는 위젯·시트(App 의 LAZY)와 함께 쓰는 앱 모듈은 작은 조각으로 흩어지지 않게
+        // 첫 화면 묶음($initial)에 모은다 — 안 그러면 첫 화면이 작은 파일 여러 개를 따로 받는다.
+        codeSplitting: {
+          groups: [
+            { name: 'react', test: /[\\/]node_modules[\\/](react|react-dom|scheduler)[\\/]/, priority: 30 },
+            { name: 'charts', test: /[\\/]node_modules[\\/](lightweight-charts|fancy-canvas)[\\/]/, priority: 20 },
+            { name: 'app', tags: ['$initial'], priority: 10 },
+          ],
+        },
+      },
+    },
+  },
 })

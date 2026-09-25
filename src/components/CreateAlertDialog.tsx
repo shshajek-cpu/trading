@@ -1,6 +1,13 @@
 import { useEffect, useId, useMemo, useRef, useState } from 'react'
 import { Dialog } from './ui/Dialog'
-import type { AlertCondition } from '../hooks/usePriceAlerts'
+import {
+  PRICE_ALERT_KINDS,
+  PRICE_ALERT_KIND_LABELS,
+  type AlertCondition,
+  type PriceAlert,
+  type PriceAlertExtra,
+  type PriceAlertKind,
+} from '../hooks/usePriceAlerts'
 import { useSymbols } from '../hooks/useSymbols'
 import { displaySymbol, priceDecimals } from '../lib/symbols'
 import type { Interval } from '../lib/binance'
@@ -28,7 +35,10 @@ interface CreateAlertDialogProps {
   livePrice: number | null
   /** 우클릭 "…에 알림 추가"처럼 가격을 정해 열 때. 없으면 현재가로 시작한다. */
   initialPrice?: number | null
-  onCreate: (symbol: string, condition: AlertCondition, price: number, message?: string) => void
+  onCreate: (symbol: string, condition: AlertCondition, price: number, message?: string, extra?: PriceAlertExtra) => void
+  /** 이 가격 알림을 고친다(가격 알림만). 있으면 제목·버튼이 편집으로 바뀌고 저장하면 onUpdate 를 부른다. */
+  editing?: PriceAlert | null
+  onUpdate?: (id: string, patch: { condition: AlertCondition; price: number; message?: string } & PriceAlertExtra) => void
   /** 지표 알림: 지금 차트의 주기와 지표 목록. 없으면 가격 알림만 만든다. */
   interval?: Interval
   indicators?: IndicatorInstance[]
@@ -37,23 +47,24 @@ interface CreateAlertDialogProps {
   onCreateIndicatorAlert?: (alert: NewIndicatorAlert) => void
 }
 
-type PriceKind = 'cross' | 'crossUp' | 'crossDown' | 'gt' | 'lt'
-
-const PRICE_KIND_LABELS: Record<PriceKind, string> = {
-  cross: '교차',
-  crossUp: '상향 교차',
-  crossDown: '하향 교차',
-  gt: '보다 큼',
-  lt: '보다 작음',
-}
-
-const PRICE_KIND_ORDER: PriceKind[] = ['cross', 'crossUp', 'crossDown', 'gt', 'lt']
-
-/** 조건을 푸시 워커가 이해하는 above/below 로 환원. 교차는 현재가 기준으로 방향을 정한다. */
-function resolveCondition(kind: PriceKind, value: number, livePrice: number | null): AlertCondition {
-  if (kind === 'crossUp' || kind === 'gt') return 'above'
-  if (kind === 'crossDown' || kind === 'lt') return 'below'
-  return livePrice != null && value < livePrice ? 'below' : 'above'
+/**
+ * 고른 조건을 판정용 이상/이하로 바꾼다. 교차는 현재가 쪽을 보고 넘어갈 쪽을 정한다.
+ * 현재가와 같은 가격이거나 현재가를 모르면 아직 정할 수 없다 — pending 으로 두면 가격이 먼저 한쪽에 선 뒤에 건다
+ * (그러지 않으면 만들자마자 다음 틱에 울린다).
+ */
+function resolveAlert(
+  kind: PriceAlertKind,
+  value: number,
+  livePrice: number | null,
+  tick: number,
+): { condition: AlertCondition; pending: boolean } {
+  if (kind === 'gt') return { condition: 'above', pending: false }
+  if (kind === 'lt') return { condition: 'below', pending: false }
+  if (kind === 'crossUp') return { condition: 'above', pending: livePrice == null }
+  if (kind === 'crossDown') return { condition: 'below', pending: livePrice == null }
+  const eps = tick > 0 ? tick / 2 : 1e-12
+  if (livePrice == null || Math.abs(value - livePrice) < eps) return { condition: 'above', pending: true }
+  return { condition: value < livePrice ? 'below' : 'above', pending: false }
 }
 
 /** 값 크기에 맞춘 스테퍼 증분. */
@@ -99,6 +110,8 @@ export function CreateAlertDialog({
   livePrice,
   initialPrice,
   onCreate,
+  editing,
+  onUpdate,
   interval,
   indicators = [],
   initialIndicatorId,
@@ -107,10 +120,11 @@ export function CreateAlertDialog({
   const infos = useSymbols()
   const dec = priceDecimals(symbol, infos)
   const tick = infos.find((i) => i.symbol === symbol)?.tickSize ?? 0
-  const canIndicator = Boolean(interval && onCreateIndicatorAlert && indicators.length > 0)
+  const isEdit = Boolean(editing && onUpdate)
+  const canIndicator = Boolean(!isEdit && interval && onCreateIndicatorAlert && indicators.length > 0)
 
   const [source, setSource] = useState<string>(PRICE)
-  const [priceKind, setPriceKind] = useState<PriceKind>('cross')
+  const [priceKind, setPriceKind] = useState<PriceAlertKind>('cross')
   const [lineKey, setLineKey] = useState('')
   const [indicatorCondition, setIndicatorCondition] = useState<IndicatorCondition>('crossing')
   const [trigger, setTrigger] = useState<AlertTrigger>('once')
@@ -169,13 +183,27 @@ export function CreateAlertDialog({
 
   useEffect(() => {
     if (!open) return
+    if (editing && onUpdate) {
+      // 편집: 그 알림의 값으로 채운다(대상은 가격 고정).
+      setSource(PRICE)
+      setError('')
+      setPriceKind(editing.kind ?? 'cross')
+      const initial = fmt(editing.price, dec)
+      setValue(initial)
+      // 저장된 메모가 자동 문구 그대로면 직접 쓴 것이 아니다 — 가격을 고치면 문구도 따라 바뀌게 둔다.
+      const auto = autoMessage(initial, null)
+      setMessage(editing.message ?? auto)
+      setMessageDirty(Boolean(editing.message) && editing.message !== auto)
+      selectOnOpen.current = initial
+      return
+    }
     setMessageDirty(false)
     setPriceKind('cross')
     const preset = initialIndicatorId && indicators.some((i) => i.id === initialIndicatorId) ? initialIndicatorId : PRICE
     selectOnOpen.current = pickSource(canIndicator ? preset : PRICE, true)
     // 열린 순간의 값만 초기값으로 쓴다.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, symbol, initialIndicatorId])
+  }, [open, symbol, initialIndicatorId, editing?.id])
 
   // Dialog 는 첫 칸(대상·조건 선택)에 포커스를 준다. 알림은 거의 늘 가격을 고치므로 값 칸으로 옮긴다.
   useEffect(() => {
@@ -229,7 +257,10 @@ export function CreateAlertDialog({
         setError('현재가가 이미 이 가격 아래에 있어 바로 울립니다. 더 낮은 가격을 넣거나 "보다 작음"을 고르세요.')
         return
       }
-      onCreate(symbol, resolveCondition(priceKind, num, livePrice), num, message)
+      const { condition, pending } = resolveAlert(priceKind, num, livePrice, tick)
+      const extra: PriceAlertExtra = { kind: priceKind, pending }
+      if (editing && onUpdate) onUpdate(editing.id, { condition, price: num, message, ...extra })
+      else onCreate(symbol, condition, num, message, extra)
     }
     onClose()
   }
@@ -238,7 +269,7 @@ export function CreateAlertDialog({
     <Dialog
       open={open}
       onClose={onClose}
-      title={`${displaySymbol(symbol, infos)}에 알림 만들기`}
+      title={isEdit ? `${displaySymbol(symbol, infos)} 알림 편집` : `${displaySymbol(symbol, infos)}에 알림 만들기`}
       width={480}
       className="ca-dialog"
       footer={
@@ -247,7 +278,7 @@ export function CreateAlertDialog({
             취소
           </button>
           <button type="submit" form={formId} className="tv-btn primary">
-            만들기
+            {isEdit ? '저장' : '만들기'}
           </button>
         </>
       }
@@ -308,10 +339,10 @@ export function CreateAlertDialog({
               ))}
             </select>
           ) : (
-            <select className="tv-input ca-select" value={priceKind} onChange={(e) => setPriceKind(e.target.value as PriceKind)}>
-              {PRICE_KIND_ORDER.map((k) => (
+            <select className="tv-input ca-select" value={priceKind} onChange={(e) => setPriceKind(e.target.value as PriceAlertKind)}>
+              {PRICE_ALERT_KINDS.map((k) => (
                 <option key={k} value={k}>
-                  {PRICE_KIND_LABELS[k]}
+                  {PRICE_ALERT_KIND_LABELS[k]}
                 </option>
               ))}
             </select>

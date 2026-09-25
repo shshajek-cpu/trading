@@ -34,6 +34,11 @@ export interface WatchAlert {
   price: number
   /** 사용자 메모. 푸시 본문에 붙는다. */
   message?: string
+  /**
+   * 아직 걸리지 않은 교차 알림. 감시기가 가격이 먼저 이쪽(below/above, away = 선에서 벗어남)에 있는 것을
+   * 본 뒤 넘어갈 쪽을 alertArms 에 적고, 그쪽으로 넘어가면 울린다. 없으면 condition 으로 바로 판정한다.
+   */
+  arm?: 'below' | 'above' | 'away'
 }
 
 /** 수평선 알림. 감시기가 처음 본 현재가 쪽을 기준으로, 가격이 선을 지나 반대쪽으로 가면 울린다. */
@@ -56,6 +61,8 @@ export interface WatchRecord {
   linesBy?: Record<string, WatchLine[]>
   /** 수평선마다 감시기가 처음 본 현재가 쪽. 키는 lineKey — 선을 옮기면 기준을 새로 잡는다. */
   lineSides?: Record<string, 'above' | 'below'>
+  /** 걸린 교차 알림이 기다리는 쪽. 키는 armKey — 가격·거는 조건을 바꾸면 새로 건다. */
+  alertArms?: Record<string, 'above' | 'below'>
   firedIds: string[]
 }
 
@@ -81,6 +88,11 @@ export function unionLines(record: Pick<WatchRecord, 'linesBy'>): WatchLine[] {
 /** lineSides 키. 감시기(worker/index.ts)와 형식이 같아야 한다. */
 export function lineKey(line: WatchLine): string {
   return `${line.id}@${line.price}`
+}
+
+/** alertArms 키. 감시기(worker/index.ts)와 형식이 같아야 한다. */
+export function armKey(alert: WatchAlert): string {
+  return `${alert.id}@${alert.price}@${alert.arm ?? ''}`
 }
 
 /** 감시기(worker/index.ts)가 매분 읽는 감시 대상 코드 목록. 두 곳의 키 이름이 같아야 한다. */
@@ -119,12 +131,19 @@ function readAlerts(input: unknown): WatchAlert[] {
   for (const value of input) {
     if (out.length >= LIST_MAX) break
     if (typeof value !== 'object' || value === null) continue
-    const { id, symbol, condition, price, message } = value as Record<string, unknown>
+    const { id, symbol, condition, price, message, arm } = value as Record<string, unknown>
     if (typeof id !== 'string' || typeof symbol !== 'string') continue
     if (condition !== 'above' && condition !== 'below') continue
     if (typeof price !== 'number' || !Number.isFinite(price)) continue
     const note = typeof message === 'string' ? message.trim().slice(0, MESSAGE_MAX) : ''
-    out.push(note ? { id, symbol, condition, price, message: note } : { id, symbol, condition, price })
+    out.push({
+      id,
+      symbol,
+      condition,
+      price,
+      ...(note ? { message: note } : {}),
+      ...(arm === 'below' || arm === 'above' || arm === 'away' ? { arm } : {}),
+    })
   }
   return out
 }
@@ -163,6 +182,9 @@ function buildRecord(
   const liveKeys = new Set(lines.map(lineKey))
   const lineSides: Record<string, 'above' | 'below'> = {}
   for (const [key, side] of Object.entries(prev?.lineSides ?? {})) if (liveKeys.has(key)) lineSides[key] = side
+  const armKeys = new Set(alerts.filter((a) => a.arm).map(armKey))
+  const alertArms: Record<string, 'above' | 'below'> = {}
+  for (const [key, side] of Object.entries(prev?.alertArms ?? {})) if (armKeys.has(key)) alertArms[key] = side
 
   return {
     record: {
@@ -170,6 +192,7 @@ function buildRecord(
       alertsBy,
       linesBy,
       lineSides,
+      alertArms,
       // 사라진 알림의 발동 흔적은 같이 지운다.
       firedIds: (prev?.firedIds ?? []).filter((id) => alive.has(id)),
     },

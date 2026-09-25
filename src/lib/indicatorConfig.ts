@@ -419,6 +419,15 @@ export const INDICATOR_CATEGORIES: IndicatorCategory[] = [
 
 export const ALL_INDICATOR_KINDS = Object.keys(INDICATOR_DEFS) as IndicatorKind[]
 
+/**
+ * 지표 검색에 쓰는 말 — 이름·짧은 이름·종류 키. 종류 키가 흔한 영문 약칭(sma·ema·wma·vwma·macd…)이라
+ * 짧은 이름이 'MA' 인 단순 이동평균도 "SMA" 로 찾힌다.
+ */
+export function indicatorSearchTerms(kind: IndicatorKind): string[] {
+  const def = INDICATOR_DEFS[kind]
+  return [def.name, def.shortName, kind]
+}
+
 function newId(): string {
   try {
     return crypto.randomUUID()

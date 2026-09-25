@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import type { WatchRow } from '../../hooks/useWatchlist'
+import { useLiveStore, type LiveStore } from '../../lib/liveStore'
 import { CoinIcon } from '../CoinIcon'
 import { Icon } from '../Icon'
 import { Popover, MenuItem } from '../ui/Popover'
@@ -9,7 +10,8 @@ import './widgets.css'
 
 interface WatchlistWidgetProps {
   symbols: string[]
-  rows: Record<string, WatchRow>
+  /** 1~2초마다 바뀌는 시세. 여기서 구독해 틱마다 이 위젯만 다시 그린다. */
+  rowsStore: LiveStore<Record<string, WatchRow>>
   infos: SymbolInfo[]
   current: string
   onPick: (s: string) => void
@@ -37,7 +39,7 @@ function fmtPct(n: number): string {
 
 export function WatchlistWidget({
   symbols,
-  rows,
+  rowsStore,
   infos,
   current,
   onPick,
@@ -46,6 +48,7 @@ export function WatchlistWidget({
   onReorder,
   variant,
 }: WatchlistWidgetProps) {
+  const rows = useLiveStore(rowsStore)
   const [sortCol, setSortCol] = useState<SortCol>('symbol')
   const [sortDir, setSortDir] = useState<SortDir>('none')
   const [addOpen, setAddOpen] = useState(false)

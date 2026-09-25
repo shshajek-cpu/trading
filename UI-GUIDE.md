@@ -108,6 +108,8 @@ CSS 그리드 한 판(`.tv-app`), 칸 사이는 `--tv-gap` 거터.
 - 손가락 표적은 모바일에서 최소 44px. 입력 글자는 16px 이상(iOS 확대 방지).
 - 기기별로 달라야 하는 값(즐겨찾기 간격·그리기 토글·단축키)은 `useUiPrefs`·`trading.shortcuts.v1`(동기화 제외)에, 공유값은 동기화 키에 둔다.
 - 아이콘 버튼에는 `title` 대신 `{...tip(이름, 설명, 단축키, 방향)}`(`lib/tooltip`)을 단다. `TooltipLayer` 가 마우스를 올렸을 때 이름·단축키·설명을 띄운다. 단축키는 `shortcutKeys.label(id)` 로 사용자가 바꾼 키를 쓴다. 왼쪽 툴바는 `'right'`, 오른쪽 위젯 탭은 `'left'`.
+- `App` 에는 시세 틱마다 바뀌는 상태를 두지 않는다 — `App` 이 다시 그리면 화면 전체가 다시 그려진다. 틱 값은 `lib/liveStore`(관심 목록 행, 활성 종목 현재가)나 모의거래 라이브 스토어(`usePaperLive`)에 두고, 쓰는 컴포넌트만 `useSyncExternalStore` 로 구독한다.
+- 닫힌 채 시작하는 위젯 페이지·대화상자는 `React.lazy` 로 나눠 열 때 불러온다(닫혀 있는 동안 상태를 들고 있어야 하는 것은 제외).
 
 ---
 
@@ -141,6 +143,7 @@ src/
   lib/
     layoutConfig.ts         CellConfig·레이아웃·분할·칸 동기화(심볼·차트 종류·십자선)·MTF·pane 크기
     chartRegistry.ts        차트 명령 핸들
+    liveStore.ts            틱 값 스토어(구독자만 다시 그림)
     timezone.ts             차트 시간대 계산(Intl 인자·검증·벽시계↔epoch)
     paper/                  모의거래 계약(types)·엔진(engine, 순수 함수)·OKX 규칙(rules)·명령(commands)·context
   chart/trade/              차트 위 거래 선(TradeOverlay)

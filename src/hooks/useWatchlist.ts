@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { notifySettingsChanged } from '../lib/syncBus'
 import { fetchAll24hTickers, rateLimitedUntil } from '../lib/binance'
+import { createLiveStore } from '../lib/liveStore'
 import { useMiniTickers } from './useMiniTickers'
 
 const STORAGE_KEY = 'trading.watchlist.v1'
@@ -40,19 +41,23 @@ function saveList(list: string[]): void {
   }
 }
 
-/** 관심 종목 시세판. 전 종목 시세를 한 번에 받아 필요한 것만 골라 쓴다. */
+/**
+ * 관심 종목 시세판. 전 종목 시세를 한 번에 받아 필요한 것만 골라 쓴다.
+ * 시세(rows)는 1~2초마다 바뀐다 — React 상태가 아니라 저장소에 두어 이 훅을 쓰는 App 은 다시 그리지 않고,
+ * 관심 목록 위젯만 구독해 다시 그린다.
+ */
 export function useWatchlist() {
   const [symbols, setSymbols] = useState<string[]>(loadList)
-  const [rows, setRows] = useState<Record<string, WatchRow>>({})
+  const [rows] = useState(() => createLiveStore<Record<string, WatchRow>>({}))
   const symbolsRef = useRef(symbols)
   symbolsRef.current = symbols
 
   // 바이낸스 화면처럼 1~2초마다 갱신되는 실시간 시세. liveRef 가 true 면 REST 예비는 쉰다.
   const wsLive = useMiniTickers(symbols, (t) => {
-    setRows((prev) => ({
-      ...prev,
+    rows.set({
+      ...rows.get(),
       [t.symbol]: { symbol: t.symbol, price: t.lastPrice, changePercent: t.priceChangePercent, change: t.priceChange },
-    }))
+    })
   })
 
   // 웹소켓이 값을 주기 전(첫 화면)·끊겼을 때만 도는 REST 예비 조회. 숨은 탭·한도 초과 중엔 건너뛴다.
@@ -75,7 +80,7 @@ export function useWatchlist() {
               change: t.priceChange,
             }
           }
-          setRows((prev) => ({ ...prev, ...next }))
+          rows.set({ ...rows.get(), ...next })
         })
         .catch(() => {
           /* 폴링이라 다음 주기에 회복된다 */
@@ -91,7 +96,7 @@ export function useWatchlist() {
       clearInterval(timer)
       document.removeEventListener('visibilitychange', load)
     }
-  }, [wsLive])
+  }, [wsLive, rows])
 
   // 다음 목록을 ref 로 계산해 상태를 갱신하고 저장한다 — setState 갱신 함수 안에서
   // 부작용(localStorage 쓰기·이벤트)을 내지 않는다(StrictMode 중복 실행 대비).

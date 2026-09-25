@@ -3,6 +3,19 @@ import { notifySettingsChanged } from '../lib/syncBus'
 
 export type AlertCondition = 'above' | 'below'
 
+/** 알림 창에서 고른 조건 — 표시·편집용. 판정은 condition(이상/이하)으로 한다. */
+export type PriceAlertKind = 'cross' | 'crossUp' | 'crossDown' | 'gt' | 'lt'
+
+export const PRICE_ALERT_KINDS: PriceAlertKind[] = ['cross', 'crossUp', 'crossDown', 'gt', 'lt']
+
+export const PRICE_ALERT_KIND_LABELS: Record<PriceAlertKind, string> = {
+  cross: '교차',
+  crossUp: '상향 교차',
+  crossDown: '하향 교차',
+  gt: '보다 큼',
+  lt: '보다 작음',
+}
+
 export interface PriceAlert {
   id: string
   symbol: string
@@ -12,6 +25,42 @@ export interface PriceAlert {
   createdAt: number
   /** 발동 시 함께 보여줄 메모. 선택. */
   message?: string
+  /** 고른 조건(예전 알림에는 없다 — 그때는 condition 으로 이상/이하를 보인다). */
+  kind?: PriceAlertKind
+  /**
+   * 교차 알림이 아직 걸리지 않았다 — 현재가와 같은 가격에 만들었거나, 울린 뒤 다시 켰을 때. 가격이 먼저
+   * 반대편(armOf)에 있어야 걸리고, 그때 넘어갈 쪽을 condition 으로 정한다. 그전에는 울리지 않는다.
+   */
+  pending?: boolean
+}
+
+/** 새 알림·편집에 함께 넘기는 조건 정보. */
+export interface PriceAlertExtra {
+  kind?: PriceAlertKind
+  pending?: boolean
+}
+
+/**
+ * 교차 알림을 걸기 전에 가격이 먼저 있어야 할 쪽. 상향 교차는 아래(below), 하향 교차는 위(above),
+ * 방향 없는 교차는 선에서 벗어나기만 하면(away) 된다. 보다 큼/작음은 교차가 아니라 null.
+ * 서버 감시기(worker)도 같은 값을 받아 같은 규칙으로 건다.
+ */
+export type AlertArm = 'below' | 'above' | 'away'
+
+export function armOf(alert: Pick<PriceAlert, 'kind'>): AlertArm | null {
+  const kind = alert.kind ?? 'cross' // 예전 알림은 대부분 기본값(교차)으로 만들었다
+  if (kind === 'crossUp') return 'below'
+  if (kind === 'crossDown') return 'above'
+  if (kind === 'cross') return 'away'
+  return null
+}
+
+/** 걸 조건이 맞으면 이제 기다릴 쪽(넘어가면 울릴 쪽), 아직이면 null. */
+function armedTarget(arm: AlertArm | null, price: number, level: number): AlertCondition | null {
+  if (arm === 'below') return price < level ? 'above' : null
+  if (arm === 'above') return price > level ? 'below' : null
+  if (price === level) return null
+  return price > level ? 'below' : 'above'
 }
 
 const STORAGE_KEY = 'trading.priceAlerts.v1'
@@ -27,7 +76,9 @@ function isAlert(value: unknown): value is PriceAlert {
     Number.isFinite(a.price) &&
     typeof a.active === 'boolean' &&
     typeof a.createdAt === 'number' &&
-    (a.message === undefined || typeof a.message === 'string')
+    (a.message === undefined || typeof a.message === 'string') &&
+    (a.kind === undefined || PRICE_ALERT_KINDS.includes(a.kind as PriceAlertKind)) &&
+    (a.pending === undefined || typeof a.pending === 'boolean')
   )
 }
 
@@ -44,7 +95,12 @@ function loadAlerts(): PriceAlert[] {
 
 export interface UsePriceAlertsResult {
   alerts: PriceAlert[]
-  addAlert: (symbol: string, condition: AlertCondition, price: number, message?: string) => void
+  addAlert: (symbol: string, condition: AlertCondition, price: number, message?: string, extra?: PriceAlertExtra) => void
+  /** 알림을 고치고 다시 켠다(가격·조건·메모). */
+  updateAlert: (
+    id: string,
+    patch: { condition: AlertCondition; price: number; message?: string } & PriceAlertExtra,
+  ) => void
   removeAlert: (id: string) => void
   /** 최신 가격을 흘려보내면 조건 충족 알림을 발동시킨다. */
   checkPrice: (symbol: string, price: number) => void
@@ -88,7 +144,7 @@ export function usePriceAlerts(
   }, [replace])
 
   const addAlert = useCallback(
-    (symbol: string, condition: AlertCondition, price: number, message?: string) => {
+    (symbol: string, condition: AlertCondition, price: number, message?: string, extra?: PriceAlertExtra) => {
       if (!Number.isFinite(price) || price <= 0) return
       const trimmed = message?.trim()
       replace([
@@ -101,8 +157,34 @@ export function usePriceAlerts(
           active: true,
           createdAt: Date.now(),
           ...(trimmed ? { message: trimmed } : {}),
+          ...(extra?.kind ? { kind: extra.kind } : {}),
+          ...(extra?.pending ? { pending: true } : {}),
         },
       ])
+    },
+    [replace],
+  )
+
+  const updateAlert = useCallback<UsePriceAlertsResult['updateAlert']>(
+    (id, patch) => {
+      if (!Number.isFinite(patch.price) || patch.price <= 0) return
+      const trimmed = patch.message?.trim()
+      replace(
+        current.current.map((a) => {
+          if (a.id !== id) return a
+          // 선택 필드는 새로 정한 값만 남긴다(메모를 지웠으면 빠진다).
+          const { message: _m, kind: _k, pending: _p, ...base } = a
+          return {
+            ...base,
+            condition: patch.condition,
+            price: patch.price,
+            active: true,
+            ...(trimmed ? { message: trimmed } : {}),
+            ...(patch.kind ? { kind: patch.kind } : {}),
+            ...(patch.pending ? { pending: true } : {}),
+          }
+        }),
+      )
     },
     [replace],
   )
@@ -135,7 +217,9 @@ export function usePriceAlerts(
       const next = current.current.map((a) => {
         if (a.id !== id || a.active === active) return a
         changed = true
-        return { ...a, active }
+        const { pending: _p, ...rest } = a
+        // 교차 알림을 다시 켜면 새로 교차할 때 울린다 — 이미 넘어가 있는 가격으로 곧바로 울리지 않게 다시 건다.
+        return active && armOf(a) !== null ? { ...rest, active, pending: true } : { ...rest, active }
       })
       if (changed) replace(next)
     },
@@ -146,20 +230,30 @@ export function usePriceAlerts(
     (symbol: string, price: number) => {
       if (!Number.isFinite(price)) return
       const fired: PriceAlert[] = []
+      let changed = false
       const next = current.current.map((alert) => {
         if (!alert.active || alert.symbol !== symbol) return alert
+        if (alert.pending) {
+          // 아직 걸리지 않았다 — 가격이 먼저 반대편에 있어야 교차로 본다. 걸리면 넘어갈 쪽을 condition 으로 정한다.
+          const target = armedTarget(armOf(alert), price, alert.price)
+          if (target === null) return alert
+          changed = true
+          const { pending: _p, ...rest } = alert
+          return { ...rest, condition: target } satisfies PriceAlert
+        }
         const hit = alert.condition === 'above' ? price >= alert.price : price <= alert.price
         if (!hit) return alert
         const updated = { ...alert, active: false }
         fired.push(updated)
+        changed = true
         return updated
       })
-      if (fired.length === 0) return
+      if (!changed) return
       replace(next)
       for (const alert of fired) triggerRef.current(alert, price)
     },
     [replace],
   )
 
-  return { alerts, addAlert, removeAlert, checkPrice, markFired, setActive }
+  return { alerts, addAlert, updateAlert, removeAlert, checkPrice, markFired, setActive }
 }
