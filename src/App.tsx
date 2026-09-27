@@ -51,7 +51,7 @@ import { useDrawings } from './hooks/useDrawings'
 import { useIsMobile } from './hooks/useIsMobile'
 import { useInstallPrompt } from './hooks/useInstallPrompt'
 import { useSync } from './hooks/useSync'
-import { usePushAlerts, type LineWatch } from './hooks/usePushAlerts'
+import { usePushAlerts } from './hooks/usePushAlerts'
 import { useMiniTickers } from './hooks/useMiniTickers'
 import { useBackClose } from './hooks/useBackClose'
 import { useWatchlist } from './hooks/useWatchlist'
@@ -439,17 +439,21 @@ function App() {
     canRedo,
   } = useDrawings(handleCross)
 
-  // 앱을 닫아도 울리게 서버(푸시 워커)가 지켜볼 수평선 알림. 그림을 끌 때마다 새 배열을 주지 않게 내용이 같으면 그대로 둔다.
-  const lineWatchList = drawings.filter(
+  // 아직 울리지 않은 수평선 알림 — 화면 밖 종목 시세 구독과 알림 배지에 쓴다. 그림을 끌 때마다 다시 구독하지 않게 내용으로 비교한다.
+  const lineAlertList = drawings.filter(
     (d) => d.kind === 'horizontal' && d.alert && !d.fired && Number.isFinite(d.points[0]?.price),
   )
-  const lineWatchKey = lineWatchList.map((d) => `${d.id}|${d.symbol}|${d.points[0].price}`).join(',')
-  const lineWatches = useMemo<LineWatch[]>(
-    () => lineWatchList.map((d) => ({ id: d.id, symbol: d.symbol, price: d.points[0].price })),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [lineWatchKey],
+  const lineAlertKey = lineAlertList.map((d) => `${d.id}|${d.symbol}|${d.points[0].price}`).join(',')
+
+  // 서버(푸시 워커)가 먼저 울린 알림·수평선을 로컬에서도 울린 것으로 표시한다. 두 목록 모두 모르는 id 는 그냥 넘긴다.
+  const handleServerFired = useCallback(
+    (ids: string[]) => {
+      markFired(ids)
+      markLinesFired(ids)
+    },
+    [markFired, markLinesFired],
   )
-  const push = usePushAlerts(sync.code, alerts, markFired, lineWatches, markLinesFired)
+  const push = usePushAlerts(sync.code, handleServerFired)
 
   const handlePrice = useCallback(
     (symbol: string, price: number) => {
@@ -469,10 +473,10 @@ function App() {
     const fed = new Set(feedKey.split(','))
     const out = new Set<string>()
     for (const a of alerts) if (a.active && !fed.has(a.symbol)) out.add(a.symbol)
-    for (const d of lineWatchList) if (!fed.has(d.symbol)) out.add(d.symbol)
+    for (const d of lineAlertList) if (!fed.has(d.symbol)) out.add(d.symbol)
     return [...out]
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [alerts, lineWatchKey, feedKey])
+  }, [alerts, lineAlertKey, feedKey])
   useMiniTickers(alertOnlySymbols, (t) => handlePrice(t.symbol, t.lastPrice))
 
   // ── cell mutation helpers ─────────────────────────────────────────
@@ -1126,7 +1130,7 @@ function App() {
   // 울린 수평선 알림은 목록에 '다시 켜기'로 남지만 배지에는 세지 않는다(가격·지표 알림과 같게).
   const alertBadge =
     alerts.filter((a) => a.active).length +
-    lineWatchList.length +
+    lineAlertList.length +
     indicatorAlerts.alerts.filter((a) => a.active).length
 
   // Indicators mapped for the object tree.

@@ -2,20 +2,27 @@
  * 가격 알림 감시기 (Cron, 1분마다).
  *
  * 앱이 꺼져 있어도 알림이 가야 하므로 서버가 대신 시세를 본다.
+ * 감시 목록은 모든 기기가 함께 쓰는 동기화 설정(s:<code>)에서 매분 새로 뽑는다 — 어느 기기에서 만들거나 고치거나 옮긴
+ * 알림이든 설정이 동기화되면 그대로 감시한다. /api/push 는 푸시를 보낼 구독만 w:<code> 에 둔다.
+ *
  * 시세는 앱과 같은 바이낸스 USDT-M 1분봉을 먼저 읽는다. 바이낸스가 데이터센터 IP·지역을 막거나(403/451)
  * 요청 한도에 걸리면(418/429) 이번 호출 동안은 다시 부르지 않고 같은 무기한 선물의 gate.io 1분봉으로 대신한다
  * (가격차는 0.01% 미만). 봉을 못 읽은 종목은 gate.io 전체 시세의 현재가 하나로 본다.
  *
  * 현재가 하나만 보면 두 점검 사이에 닿았다 돌아온 가격을 놓친다. 그래서 봉마다 시가·고가·저가·종가를
  * 시간순 경로로 펼쳐(pathSince) 앱과 같은 규칙으로 한 점씩 판정한다.
- * 지난 점검 시각은 따로 적지 않는다 — 알림마다 /api/push 가 붙인 감시 시작 시각(since)과
- * 기록해 둔 기준 시각(SideMark.at) 뒤의 봉만 본다. 그래서 알림을 만들기 전의 움직임으로는 울리지 않는다.
+ * 지난 점검 시각은 따로 적지 않는다 — 가격 알림은 만들거나 고치거나 다시 켠 시각(createdAt·updatedAt) 뒤의 봉만,
+ * 수평선은 기준 쪽을 잡은 시각(SideMark.at) 뒤의 봉만 본다. 그래서 알림을 만들거나 고치기 전의 움직임으로는 울리지 않는다.
+ *
+ * 울린 알림은 앱이 확인할 때까지 firedIds 에 두고 다시 울리지 않는다. 동기화 설정에서 감시 대상이 아니게 됐거나
+ * (가격 알림을 껐다·지웠다, 수평선이 울렸다·알림을 껐다·지웠다) 앱이 받았다고 알린(acks) 뒤에 설정이 다시 저장됐으면
+ * 확인된 것으로 보고 뺀다. 그 뒤 다시 켜면 다시 울린다.
  *
  * Workers 무료 플랜 한도 안에서 돈다:
- * - KV(하루 목록 조회 1,000회·쓰기 1,000회): 매분 목록을 조회하지 않고 감시 대상 코드 목록 키(`w-index`) 하나만 읽는다.
- *   목록 조회는 정각마다 한 번(하루 24회) 색인을 다시 맞출 때만 쓴다.
- * - 기록은 알림이 실제로 울렸을 때만 한다(예전에는 매분 모든 코드를 다시 썼다).
- *   예외로 교차 알림이 걸리거나 수평선의 기준 쪽을 처음 잡을 때 한 번 기록한다.
+ * - KV(하루 목록 조회 1,000회·쓰기 1,000회): 매분 목록을 조회하지 않고 감시 대상 코드 목록 키(`w-index`)와
+ *   코드마다 구독 기록(w:)·동기화 설정(s:) 두 개만 읽는다. 목록 조회는 정각마다 한 번(하루 24회) 색인을 다시 맞출 때만 쓴다.
+ * - 기록은 바뀐 것이 있을 때만 한다 — 푸시를 보냈을 때, 교차 알림이 걸리거나 수평선의 기준 쪽을 처음 잡았을 때,
+ *   감시에서 빠진 항목의 기준을 지울 때, firedIds 가 바뀔 때. 조용한 분에는 쓰지 않는다.
  * - 외부 요청(호출 하나당 50회): 종목별 봉 조회는 CANDLE_FETCH_MAX 번까지만 하고 나머지는 전체 시세 한 번으로 본다.
  *   푸시 발송도 이 한도에 들어가므로, 넘칠 것 같은 알림은 발동으로 적지 않고 다음 분으로 미룬다.
  */
@@ -28,29 +35,33 @@ interface Env {
   VAPID_SUBJECT: string
 }
 
+type Side = 'above' | 'below'
+
+/** 교차 알림을 걸기 전에 가격이 먼저 있어야 할 쪽(away = 선에서 벗어나기만 하면 된다). 앱(usePriceAlerts.AlertArm)과 같은 뜻. */
+type Arm = 'below' | 'above' | 'away'
+
+/** 동기화 설정에서 뽑은 켜진 가격 알림. */
 interface WatchAlert {
   id: string
   symbol: string
-  condition: 'above' | 'below'
+  condition: Side
   price: number
   /** 사용자 메모. 푸시 본문에 붙인다. */
   message?: string
-  /** 아직 걸리지 않은 교차 알림 — 가격이 먼저 이쪽(away = 선에서 벗어남)에 있어야 건다. /api/push 와 같은 뜻. */
-  arm?: 'below' | 'above' | 'away'
-  /** /api/push 가 이 내용(가격·조건)을 처음 받은 시각(ms). 이 시각 전의 움직임으로는 울리지 않는다. 예전 기록에는 없다. */
-  since?: number
+  /** 아직 걸리지 않은 교차 알림(pending) — 가격이 먼저 이쪽에 있는 것을 본 뒤에 건다. */
+  arm?: Arm
+  /** 감시 시작 시각(ms) — 앱이 알림을 만들거나 고치거나 다시 켠 때(createdAt·updatedAt 중 늦은 것). 이 전의 움직임으로는 울리지 않는다. */
+  since: number
 }
 
-/** 수평선 알림. 처음 잡은 기준 쪽(lineMarks)에서 가격이 선을 지나 반대쪽으로 가면 울린다. */
+/** 동기화 설정에서 뽑은 아직 안 울린 수평선 알림. 처음 잡은 기준 쪽(lineMarks)에서 가격이 선을 지나 반대쪽으로 가면 울린다. */
 interface WatchLine {
   id: string
   symbol: string
   price: number
-  /** /api/push 가 이 선(가격)을 처음 받은 시각(ms). 예전 기록에는 없다. */
-  since?: number
+  /** 그린 시각(createdAt, ms). 선을 옮겨도 그대로다 — 기준 쪽을 처음 잡을 때는 설정이 저장된 시각도 함께 본다(judgeLine). */
+  since: number
 }
-
-type Side = 'above' | 'below'
 
 /** 적어 둔 기준 쪽과 그것을 확인한 시각(ms). 이 시각 뒤의 움직임만 본다. /api/push 와 모양이 같아야 한다. */
 interface SideMark {
@@ -58,38 +69,131 @@ interface SideMark {
   at: number
 }
 
+/**
+ * 코드마다의 감시 기록(w:<code>). 구독은 /api/push 가, 나머지는 감시기가 쓴다 — 두 곳의 모양이 같아야 한다.
+ * 예전 기록의 기기별 감시 목록(alertsBy·linesBy·alerts)은 읽지 않고, 다음에 쓸 때 빠진다.
+ */
 interface WatchRecord {
   subs: PushSubscription[]
-  // 기기별 알림 버킷. /api/push 가 각 기기 endpoint 로 나눠 담는다.
-  alertsBy?: Record<string, WatchAlert[]>
-  // 버킷 도입 전 레거시 평면 목록. 감시기는 건드리지 않고 첫 PUT 에서 정리된다.
-  alerts?: WatchAlert[]
-  // 기기별 수평선 버킷. 예전 기록에는 없다.
-  linesBy?: Record<string, WatchLine[]>
-  // 수평선마다 처음 잡은 기준 쪽. 키는 lineKey — /api/push 와 형식이 같아야 한다.
+  /** 수평선마다 처음 잡은 기준 쪽. 키는 lineKey — 선을 옮기면 새로 잡는다. */
   lineMarks?: Record<string, SideMark>
-  // 걸린 교차 알림이 기다리는 쪽. 키는 armKey — /api/push 와 형식이 같아야 한다.
+  /** 걸린 교차 알림이 기다리는 쪽. 키는 armKey — 가격·거는 조건을 바꾸면 새로 건다. */
   armMarks?: Record<string, SideMark>
+  /** 감시기가 울렸고 앱이 아직 확인하지 않은 알림·수평선 id. 여기 있는 동안은 다시 울리지 않는다. */
   firedIds: string[]
+  /** 앱이 받았다고 알린 시각(ms, id 별). 이 뒤에 저장된 설정은 그 확인을 반영한 것으로 본다. */
+  acks?: Record<string, number>
 }
 
-/** alertsBy 버킷과 레거시 목록을 합쳐 알림 id 로 중복을 제거한다. */
-function unionAlerts(record: WatchRecord): WatchAlert[] {
-  const byId = new Map<string, WatchAlert>()
-  for (const list of Object.values(record.alertsBy ?? {})) {
-    for (const a of list) byId.set(a.id, a)
-  }
-  for (const a of record.alerts ?? []) if (!byId.has(a.id)) byId.set(a.id, a)
-  return [...byId.values()]
+/** 동기화 설정에서 감시 목록을 꺼내는 키. 앱의 localStorage 키(syncMerge.SYNCED_KEYS)와 같아야 한다. */
+const PRICE_ALERTS_KEY = 'trading.priceAlerts.v1'
+const DRAWINGS_KEY = 'trading.drawings.v2'
+
+/** 푸시 본문에 붙이는 메모 길이 한도. */
+const MESSAGE_MAX = 200
+
+/** 앱(usePriceAlerts.PRICE_ALERT_KINDS)이 아는 조건. 모르는 조건의 알림은 앱이 버리므로 감시하지 않는다. */
+const ALERT_KINDS: Record<string, true> = { cross: true, crossUp: true, crossDown: true, gt: true, lt: true }
+
+/** 동기화 설정의 저장 시각(ms)과 거기서 뽑은 감시 목록. */
+interface Watch {
+  at: number
+  alerts: WatchAlert[]
+  lines: WatchLine[]
 }
 
-/** 기기별 수평선 버킷을 합쳐 id 로 중복을 제거한다. */
-function unionLines(record: WatchRecord): WatchLine[] {
-  const byId = new Map<string, WatchLine>()
-  for (const list of Object.values(record.linesBy ?? {})) {
-    for (const l of list) byId.set(l.id, l)
+/** 설정 한 키(JSON 문자열)의 목록. 없거나 깨졌으면 빈 목록. */
+function readList(data: Record<string, unknown>, key: string): unknown[] {
+  const raw = data[key]
+  if (typeof raw !== 'string') return []
+  try {
+    const parsed: unknown = JSON.parse(raw)
+    return Array.isArray(parsed) ? parsed : []
+  } catch {
+    return []
   }
-  return [...byId.values()]
+}
+
+/** 교차 알림을 걸기 전에 가격이 먼저 있어야 할 쪽. 앱(usePriceAlerts.armOf)과 같은 규칙 — 조건이 없는 예전 알림은 교차다. */
+function armOf(kind: unknown): Arm | undefined {
+  const k = kind ?? 'cross'
+  if (k === 'crossUp') return 'below'
+  if (k === 'crossDown') return 'above'
+  if (k === 'cross') return 'away'
+  return undefined
+}
+
+/** 켜진 가격 알림. 모양 검사는 앱(usePriceAlerts.isAlert)과 같다 — 앱이 버리는 항목은 감시하지 않는다. */
+function readAlerts(list: unknown[]): WatchAlert[] {
+  const out: WatchAlert[] = []
+  for (const value of list) {
+    if (typeof value !== 'object' || value === null) continue
+    const { id, symbol, condition, price, active, createdAt, updatedAt, message, kind, pending } = value as Record<
+      string,
+      unknown
+    >
+    if (typeof id !== 'string' || typeof symbol !== 'string') continue
+    if (condition !== 'above' && condition !== 'below') continue
+    if (typeof price !== 'number' || !Number.isFinite(price)) continue
+    if (typeof createdAt !== 'number') continue
+    if (updatedAt !== undefined && typeof updatedAt !== 'number') continue
+    if (message !== undefined && typeof message !== 'string') continue
+    if (kind !== undefined && (typeof kind !== 'string' || ALERT_KINDS[kind] !== true)) continue
+    if (pending !== undefined && typeof pending !== 'boolean') continue
+    if (active !== true) continue
+    const note = typeof message === 'string' ? message.trim().slice(0, MESSAGE_MAX) : ''
+    const arm = pending === true ? armOf(kind) : undefined
+    out.push({
+      id,
+      symbol,
+      condition,
+      price,
+      ...(note ? { message: note } : {}),
+      ...(arm ? { arm } : {}),
+      // updatedAt 이 없는 예전 알림은 만든 시각을 쓴다.
+      since: Math.max(createdAt, typeof updatedAt === 'number' ? updatedAt : 0),
+    })
+  }
+  return out
+}
+
+/** 아직 안 울린 수평선 알림. 앱의 감시 조건과 같다 — 수평선이고, 알림이 켜져 있고, 울리지 않았고, 가격이 있다. */
+function readLines(list: unknown[]): WatchLine[] {
+  const out: WatchLine[] = []
+  for (const value of list) {
+    if (typeof value !== 'object' || value === null) continue
+    const { id, symbol, kind, alert, fired, points, createdAt } = value as Record<string, unknown>
+    if (typeof id !== 'string' || typeof symbol !== 'string') continue
+    if (kind !== 'horizontal' || alert !== true || fired === true) continue
+    const first: unknown = Array.isArray(points) ? points[0] : undefined
+    const price = typeof first === 'object' && first !== null && 'price' in first ? first.price : undefined
+    if (typeof price !== 'number' || !Number.isFinite(price)) continue
+    out.push({ id, symbol, price, since: typeof createdAt === 'number' ? createdAt : 0 })
+  }
+  return out
+}
+
+/** 동기화 설정을 읽어 감시 목록을 뽑는다. 기록이 없거나 깨졌으면 null — 그 코드는 이번 분에 건너뛴다(확인 흔적도 그대로 둔다). */
+async function readWatch(env: Env, code: string): Promise<Watch | null> {
+  const raw = await env.SETTINGS.get(`s:${code}`)
+  if (!raw) return null
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(raw)
+  } catch {
+    return null
+  }
+  if (typeof parsed !== 'object' || parsed === null || !('data' in parsed)) return null
+  const { data } = parsed
+  if (typeof data !== 'object' || data === null) return null
+  // 설정 API(/api/settings)가 저장하는 모양: localStorage 키 → 저장된 문자열. 값은 readList 가 하나씩 검사한다.
+  const snapshot = data as Record<string, unknown>
+  const at = 'at' in parsed ? parsed.at : undefined
+  return {
+    at: typeof at === 'number' ? at : 0,
+    alerts: readAlerts(readList(snapshot, PRICE_ALERTS_KEY)),
+    lines: readLines(readList(snapshot, DRAWINGS_KEY)),
+  }
 }
 
 /** lineMarks 키. 선을 옮기면(가격이 바뀌면) 기준 쪽을 새로 잡는다. /api/push 와 형식이 같아야 한다. */
@@ -103,19 +207,19 @@ function armKey(alert: WatchAlert): string {
 }
 
 /** 거는 조건이 맞으면 이제 기다릴 쪽, 아직이면 null. 앱(usePriceAlerts.armedTarget)과 같은 규칙. */
-function armedTarget(arm: NonNullable<WatchAlert['arm']>, now: number, level: number): Side | null {
+function armedTarget(arm: Arm, now: number, level: number): Side | null {
   if (arm === 'below') return now < level ? 'above' : null
   if (arm === 'above') return now > level ? 'below' : null
   if (now === level) return null
   return now > level ? 'below' : 'above'
 }
 
-/** 조건을 만족하면 울린다. 한 번 울린 알림은 firedIds 에 남아 다시 울리지 않는다. */
+/** 조건을 만족하면 울린다. 울린 알림은 앱이 확인할 때까지 firedIds 에 남아 다시 울리지 않는다. */
 function meets(condition: Side, price: number, now: number): boolean {
   return condition === 'above' ? now >= price : now <= price
 }
 
-/** 감시할 동기화 코드 목록. /api/push 가 구독·알림이 바뀔 때 맞춘다. */
+/** 감시할 동기화 코드 목록 — 구독이 있는 코드. /api/push 가 구독이 바뀔 때 맞춘다. */
 const INDEX_KEY = 'w-index'
 
 const KLINES_URL = 'https://fapi.binance.com/fapi/v1/klines'
@@ -335,9 +439,11 @@ type Verdict = { fire: { price: number; side: Side } } | { mark: SideMark } | nu
  */
 function judgeAlert(alert: WatchAlert, armed: SideMark | undefined, bars: Bar[]): Verdict {
   const { arm } = alert
-  let target: Side | null = arm ? (armed?.side ?? null) : alert.condition
+  // 고치거나 다시 켜기 전에 걸린 기준은 쓰지 않는다 — 앱처럼 다시 걸어야 한다.
+  const valid = armed && armed.at >= alert.since ? armed : undefined
+  let target: Side | null = arm ? (valid?.side ?? null) : alert.condition
   let mark: SideMark | null = null
-  for (const { price, bar } of pathSince(bars, Math.max(alert.since ?? 0, armed?.at ?? 0))) {
+  for (const { price, bar } of pathSince(bars, Math.max(alert.since, valid?.at ?? 0))) {
     if (target === null) {
       // 거는 점에서는 울리지 않는다(앱도 거는 틱에는 울리지 않는다).
       target = arm ? armedTarget(arm, price, alert.price) : alert.condition
@@ -350,11 +456,15 @@ function judgeAlert(alert: WatchAlert, armed: SideMark | undefined, bars: Bar[])
   return mark ? { mark } : null
 }
 
-/** 수평선 하나를 앱(useDrawings)과 같은 기준(선 이상이면 위, 미만이면 아래)으로 판정한다. 첫 점은 기준 쪽만 잡는다. */
-function judgeLine(line: WatchLine, seen: SideMark | undefined, bars: Bar[]): Verdict {
+/**
+ * 수평선 하나를 앱(useDrawings)과 같은 기준(선 이상이면 위, 미만이면 아래)으로 판정한다. 첫 점은 기준 쪽만 잡는다.
+ * 기준 쪽을 아직 못 잡았으면 설정이 저장된 시각(savedAt) 뒤부터 본다 — 선을 옮겨도 그린 시각(since)은 그대로라,
+ * 옮기기 전의 움직임으로 기준을 잡거나 울리지 않게 한다. 옮긴 선은 lineKey 가 달라 기준 없이 여기서 다시 시작한다.
+ */
+function judgeLine(line: WatchLine, seen: SideMark | undefined, bars: Bar[], savedAt: number): Verdict {
   let side = seen?.side
   let mark: SideMark | null = null
-  for (const { price, bar } of pathSince(bars, Math.max(line.since ?? 0, seen?.at ?? 0))) {
+  for (const { price, bar } of pathSince(bars, Math.max(line.since, seen ? seen.at : savedAt))) {
     const now: Side = price >= line.price ? 'above' : 'below'
     if (side === undefined) {
       side = now
@@ -386,17 +496,45 @@ interface Hit {
   payload: string
 }
 
-/** 이번 분에 볼 기록 하나. 이미 울린 알림·수평선은 뺐다. */
+/** 이번 분에 볼 코드 하나. */
 interface Entry {
   key: string
   record: WatchRecord
-  alerts: WatchAlert[]
-  lines: WatchLine[]
+  watch: Watch
+  /** 확인된 발동을 뺀 firedIds 와, 그 가운데 앱이 받았다고 알린 것의 시각. */
+  firedIds: string[]
+  acks: Record<string, number>
+}
+
+/**
+ * 앱이 확인한 발동을 firedIds 에서 뺀다. 설정에서 감시 대상이 아니게 됐거나(가격 알림 끔·지움, 수평선 울림·알림 끔·지움),
+ * 앱이 받았다고 알린 뒤에 설정이 다시 저장됐으면 확인된 것이다 — 그래도 켜져 있으면 다시 켠 것이라 다시 감시한다.
+ */
+function unackedFired(record: WatchRecord, watch: Watch): Pick<Entry, 'firedIds' | 'acks'> {
+  const live = new Set([...watch.alerts, ...watch.lines].map((w) => w.id))
+  const prev = record.acks ?? {}
+  const firedIds = record.firedIds.filter((id) => {
+    const ackedAt = prev[id]
+    return live.has(id) && !(ackedAt !== undefined && watch.at > ackedAt)
+  })
+  const acks: Record<string, number> = {}
+  for (const id of firedIds) if (prev[id] !== undefined) acks[id] = prev[id]
+  return { firedIds, acks }
+}
+
+/** 지금 감시하는 항목(keys)의 기준만 남긴다. 지운 것이 있으면 pruned — 기록해야 옛 기준이 되살아나지 않는다. */
+function liveMarks(
+  marks: Record<string, SideMark> | undefined,
+  keys: string[],
+): { marks: Record<string, SideMark>; pruned: boolean } {
+  const out: Record<string, SideMark> = {}
+  for (const k of keys) if (marks?.[k]) out[k] = marks[k]
+  return { marks: out, pruned: Object.keys(marks ?? {}).length !== Object.keys(out).length }
 }
 
 /**
  * 목록 조회로 감시 대상 색인을 다시 만든다(색인이 없을 때, 그리고 정각마다 — 동시 수정으로 어긋난 색인을 바로잡는다).
- * 구독과 알림이 모두 있는 코드만 넣어 매분 읽을 기록 수를 줄인다.
+ * 구독이 있는 코드만 넣는다 — 무엇을 감시할지는 매분 동기화 설정에서 뽑는다.
  */
 async function rebuildIndex(env: Env, current: string[] | null): Promise<string[]> {
   const codes: string[] = []
@@ -405,9 +543,7 @@ async function rebuildIndex(env: Env, current: string[] | null): Promise<string[
     const page = await env.SETTINGS.list({ prefix: 'w:', cursor })
     for (const key of page.keys) {
       const record = await env.SETTINGS.get<WatchRecord>(key.name, 'json')
-      if (record && record.subs.length > 0 && unionAlerts(record).length + unionLines(record).length > 0) {
-        codes.push(key.name.slice(2))
-      }
+      if (record && record.subs.length > 0) codes.push(key.name.slice(2))
     }
     cursor = page.list_complete ? undefined : page.cursor
   } while (cursor)
@@ -427,28 +563,37 @@ async function checkAll(env: Env, rebuild: boolean): Promise<void> {
   for (const code of codes) {
     const key = `w:${code}`
     const record = await env.SETTINGS.get<WatchRecord>(key, 'json')
+    // 구독이 없으면 보낼 곳이 없다 — 설정은 읽지 않는다.
     if (!record || record.subs.length === 0) continue
-    const fired = new Set(record.firedIds)
-    const alerts = unionAlerts(record).filter((a) => !fired.has(a.id))
-    const lines = unionLines(record).filter((l) => !fired.has(l.id))
-    if (alerts.length + lines.length > 0) entries.push({ key, record, alerts, lines })
+    const watch = await readWatch(env, code)
+    if (watch) entries.push({ key, record, watch, ...unackedFired(record, watch) })
   }
   if (entries.length === 0) return
 
   const budget: Budget = { used: 0 }
-  const symbols = entries.flatMap(({ alerts, lines }) => [...alerts, ...lines].map((w) => w.symbol))
+  const symbols = entries.flatMap(({ watch, firedIds }) =>
+    [...watch.alerts, ...watch.lines].filter((w) => !firedIds.includes(w.id)).map((w) => w.symbol),
+  )
   const quotes = await loadQuotes(symbols, budget)
   for (const entry of entries) await checkRecord(env, entry, quotes, budget)
 }
 
 async function checkRecord(env: Env, entry: Entry, quotes: Map<string, Quote>, budget: Budget): Promise<void> {
-  const { key, record, alerts, lines } = entry
-  const hits: Hit[] = []
-  // 교차 알림 걸기·수평선 기준 잡기는 처음 한 번만 적는다 — 매분 쓰지 않는다.
-  const armMarks: Record<string, SideMark> = { ...(record.armMarks ?? {}) }
-  const lineMarks: Record<string, SideMark> = { ...(record.lineMarks ?? {}) }
-  let marked = false
+  const { key, record, watch } = entry
+  const fired = new Set(entry.firedIds)
+  // 울렸고 아직 확인되지 않은 것은 판정하지 않는다.
+  const alerts = watch.alerts.filter((a) => !fired.has(a.id))
+  const lines = watch.lines.filter((l) => !fired.has(l.id))
+  // 확인된 발동을 뺐으면 적는다.
+  let dirty =
+    entry.firedIds.length !== record.firedIds.length ||
+    Object.keys(entry.acks).length !== Object.keys(record.acks ?? {}).length
+  // 감시에서 빠졌다가(울림·끔·지움) 같은 모습으로 돌아온 항목이 옛 기준으로 곧바로 울리지 않게, 빠진 항목의 기준은 지워 적는다.
+  const { marks: armMarks, pruned: armPruned } = liveMarks(record.armMarks, alerts.filter((a) => a.arm).map(armKey))
+  const { marks: lineMarks, pruned: linePruned } = liveMarks(record.lineMarks, lines.map(lineKey))
+  if (armPruned || linePruned) dirty = true
 
+  const hits: Hit[] = []
   for (const alert of alerts) {
     const quote = quotes.get(alert.symbol)
     if (!quote) continue
@@ -457,7 +602,7 @@ async function checkRecord(env: Env, entry: Entry, quotes: Map<string, Quote>, b
     if (!verdict) continue
     if ('mark' in verdict) {
       armMarks[ak] = verdict.mark
-      marked = true
+      dirty = true
       continue
     }
     const note = priceNote(quote, verdict.fire.price)
@@ -478,11 +623,11 @@ async function checkRecord(env: Env, entry: Entry, quotes: Map<string, Quote>, b
     const quote = quotes.get(line.symbol)
     if (!quote) continue
     const lk = lineKey(line)
-    const verdict = judgeLine(line, lineMarks[lk], quote.bars)
+    const verdict = judgeLine(line, lineMarks[lk], quote.bars, watch.at)
     if (!verdict) continue
     if ('mark' in verdict) {
       lineMarks[lk] = verdict.mark
-      marked = true
+      dirty = true
       continue
     }
     hits.push({
@@ -496,15 +641,13 @@ async function checkRecord(env: Env, entry: Entry, quotes: Map<string, Quote>, b
     })
   }
 
-  const fired = new Set(record.firedIds)
   const dead = new Set<string>()
-  let sent = false
   for (const hit of hits) {
     const targets = record.subs.filter((s) => !dead.has(s.endpoint))
     // 외부 요청 한도를 넘기면 이 알림은 발동으로 적지 않고 다음 분으로 미룬다(기준도 그대로 둔다).
     if (budget.used + targets.length > SUBREQUEST_MAX) continue
     fired.add(hit.id)
-    sent = true
+    dirty = true
     for (const sub of targets) {
       budget.used++
       // 한 기기의 발송 실패(네트워크 등)가 나머지 기기와 발동 기록을 막지 않게 한다.
@@ -522,30 +665,22 @@ async function checkRecord(env: Env, entry: Entry, quotes: Map<string, Quote>, b
       }
     }
   }
-  // 울린 것도, 새로 적을 기준도 없으면 아무것도 쓰지 않는다 — 무료 한도의 대부분이 여기서 아껴진다.
-  if (!sent && !marked) return
+  // 바뀐 것이 없으면 아무것도 쓰지 않는다 — 무료 한도의 대부분이 여기서 아껴진다.
+  if (!dirty) return
 
-  // 울린 교차 알림·수평선은 기준을 지운다 — 다시 켜면 그때 새로 잡는다.
+  // 울린 교차 알림·수평선은 기준을 지운다 — 확인된 뒤 다시 켜면 그때 새로 잡는다.
   for (const alert of alerts) if (fired.has(alert.id)) delete armMarks[armKey(alert)]
   for (const line of lines) if (fired.has(line.id)) delete lineMarks[lineKey(line)]
 
-  // 죽은 구독은 그 버킷까지 지운다. 레거시 목록은 감시기가 건드리지 않는다(첫 PUT 에서 정리).
-  const alertsBy = { ...(record.alertsBy ?? {}) }
-  const linesBy = { ...(record.linesBy ?? {}) }
-  for (const ep of dead) {
-    delete alertsBy[ep]
-    delete linesBy[ep]
-  }
+  // 예전 기록의 기기별 목록(alertsBy·linesBy·alerts)은 여기서 빠진다. 키 순서는 /api/push 와 같게 둔다(같은 내용이면 다시 쓰지 않게).
   await env.SETTINGS.put(
     key,
     JSON.stringify({
       subs: record.subs.filter((s) => !dead.has(s.endpoint)),
-      alertsBy,
-      ...(record.alerts ? { alerts: record.alerts } : {}),
-      linesBy,
       lineMarks,
       armMarks,
       firedIds: [...fired],
+      ...(Object.keys(entry.acks).length > 0 ? { acks: entry.acks } : {}),
     } satisfies WatchRecord),
   )
 }
@@ -575,17 +710,21 @@ export default {
       const code = url.searchParams.get('code')
       if (!code) return new Response('code 가 필요합니다', { status: 400 })
       const rec = await env.SETTINGS.get<WatchRecord>(`w:${code}`, 'json')
-      const watch = rec ? unionAlerts(rec) : []
-      const lines = rec ? unionLines(rec) : []
-      const quotes = await loadQuotes([...watch, ...lines].map((w) => w.symbol), { used: 0 })
+      const watch = await readWatch(env, code)
+      const items = watch ? [...watch.alerts, ...watch.lines] : []
+      const quotes = await loadQuotes(items.map((w) => w.symbol), { used: 0 })
       return Response.json({
         subs: rec?.subs.length ?? 0,
-        alerts: watch,
-        lines,
+        watched: ((await env.SETTINGS.get<string[]>(INDEX_KEY, 'json')) ?? []).includes(code),
+        // 감시 목록을 뽑은 동기화 설정(s:<code>)의 저장 시각. null 이면 설정이 없거나 깨졌다.
+        settingsAt: watch?.at ?? null,
+        // 동기화 설정에서 뽑은 감시 목록(since: 감시 시작 시각, arm: 아직 안 걸린 교차 알림).
+        alerts: watch?.alerts ?? [],
+        lines: watch?.lines ?? [],
         lineMarks: rec?.lineMarks ?? {},
         armMarks: rec?.armMarks ?? {},
-        watched: ((await env.SETTINGS.get<string[]>(INDEX_KEY, 'json')) ?? []).includes(code),
         firedIds: rec?.firedIds ?? [],
+        acks: rec?.acks ?? {},
         // 판정에 쓰는 시세(출처와 1분봉).
         quotes: Object.fromEntries(quotes),
       })

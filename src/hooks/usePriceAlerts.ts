@@ -23,6 +23,11 @@ export interface PriceAlert {
   price: number
   active: boolean
   createdAt: number
+  /**
+   * 마지막으로 고치거나 다시 켜거나 교차 알림이 걸린 시각. 서버 감시기(worker)는 이 시각(없으면 createdAt) 뒤의
+   * 움직임만 본다 — 고치기 전에 지나간 가격으로 울리지 않게. 예전 알림에는 없다.
+   */
+  updatedAt?: number
   /** 발동 시 함께 보여줄 메모. 선택. */
   message?: string
   /** 고른 조건(예전 알림에는 없다 — 그때는 condition 으로 이상/이하를 보인다). */
@@ -43,11 +48,11 @@ export interface PriceAlertExtra {
 /**
  * 교차 알림을 걸기 전에 가격이 먼저 있어야 할 쪽. 상향 교차는 아래(below), 하향 교차는 위(above),
  * 방향 없는 교차는 선에서 벗어나기만 하면(away) 된다. 보다 큼/작음은 교차가 아니라 null.
- * 서버 감시기(worker)도 같은 값을 받아 같은 규칙으로 건다.
+ * 서버 감시기(worker)도 동기화된 알림에서 같은 규칙으로 건다.
  */
-export type AlertArm = 'below' | 'above' | 'away'
+type AlertArm = 'below' | 'above' | 'away'
 
-export function armOf(alert: Pick<PriceAlert, 'kind'>): AlertArm | null {
+function armOf(alert: Pick<PriceAlert, 'kind'>): AlertArm | null {
   const kind = alert.kind ?? 'cross' // 예전 알림은 대부분 기본값(교차)으로 만들었다
   if (kind === 'crossUp') return 'below'
   if (kind === 'crossDown') return 'above'
@@ -76,6 +81,7 @@ function isAlert(value: unknown): value is PriceAlert {
     Number.isFinite(a.price) &&
     typeof a.active === 'boolean' &&
     typeof a.createdAt === 'number' &&
+    (a.updatedAt === undefined || typeof a.updatedAt === 'number') &&
     (a.message === undefined || typeof a.message === 'string') &&
     (a.kind === undefined || PRICE_ALERT_KINDS.includes(a.kind as PriceAlertKind)) &&
     (a.pending === undefined || typeof a.pending === 'boolean')
@@ -147,15 +153,17 @@ export function usePriceAlerts(
     (symbol: string, condition: AlertCondition, price: number, message?: string, extra?: PriceAlertExtra) => {
       if (!Number.isFinite(price) || price <= 0) return
       const trimmed = message?.trim()
+      const now = Date.now()
       replace([
         ...current.current,
         {
-          id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+          id: `${now}-${Math.random().toString(36).slice(2, 8)}`,
           symbol,
           condition,
           price,
           active: true,
-          createdAt: Date.now(),
+          createdAt: now,
+          updatedAt: now,
           ...(trimmed ? { message: trimmed } : {}),
           ...(extra?.kind ? { kind: extra.kind } : {}),
           ...(extra?.pending ? { pending: true } : {}),
@@ -179,6 +187,7 @@ export function usePriceAlerts(
             condition: patch.condition,
             price: patch.price,
             active: true,
+            updatedAt: Date.now(),
             ...(trimmed ? { message: trimmed } : {}),
             ...(patch.kind ? { kind: patch.kind } : {}),
             ...(patch.pending ? { pending: true } : {}),
@@ -219,7 +228,9 @@ export function usePriceAlerts(
         changed = true
         const { pending: _p, ...rest } = a
         // 교차 알림을 다시 켜면 새로 교차할 때 울린다 — 이미 넘어가 있는 가격으로 곧바로 울리지 않게 다시 건다.
-        return active && armOf(a) !== null ? { ...rest, active, pending: true } : { ...rest, active }
+        // 다시 켠 시각을 적어 서버 감시기가 그 뒤의 움직임만 보게 한다.
+        const on = active ? { ...rest, active, updatedAt: Date.now() } : { ...rest, active }
+        return active && armOf(a) !== null ? { ...on, pending: true } : on
       })
       if (changed) replace(next)
     },
@@ -239,7 +250,8 @@ export function usePriceAlerts(
           if (target === null) return alert
           changed = true
           const { pending: _p, ...rest } = alert
-          return { ...rest, condition: target } satisfies PriceAlert
+          // 걸린 시각을 적는다 — 서버 감시기도 이 뒤의 움직임으로만 울린다(걸기 전에 지나간 가격으로 울리지 않게).
+          return { ...rest, condition: target, updatedAt: Date.now() } satisfies PriceAlert
         }
         const hit = alert.condition === 'above' ? price >= alert.price : price <= alert.price
         if (!hit) return alert

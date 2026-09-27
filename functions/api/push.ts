@@ -3,6 +3,12 @@
  *
  * 앱을 닫아도 알림이 오게 하려면 브라우저 푸시 서비스에 보낼 주소(subscription)를
  * 서버가 들고 있어야 한다. 동기화 코드를 그대로 열쇠로 쓴다.
+ * 무엇을 감시할지는 여기서 받지 않는다 — 감시기(worker/index.ts)가 동기화 설정(s:<code>)에서 매분 뽑는다.
+ *
+ *   GET    /api/push?key=1                     → 구독을 만들 때 쓰는 VAPID 공개키
+ *   GET    /api/push?code=xxx[&endpoint=…]     → 구독 여부, 이 기기 등록 여부, 서버가 울렸고 아직 아무 기기도 받지 않은 id
+ *   PUT    /api/push?code=xxx  { subs?, ack? } → 구독 등록, 서버가 울린 알림을 받았다는 확인
+ *   DELETE /api/push?code=xxx&endpoint=…       → 이 기기 구독 해제(endpoint 가 없으면 모든 기기)
  */
 
 interface Env {
@@ -18,41 +24,12 @@ const JSON_HEADERS = {
   'Cache-Control': 'no-store',
 }
 
-/** 기기 하나가 올릴 수 있는 알림·수평선 수, 메모 길이. 앱(usePushAlerts)도 메모를 같은 길이로 자른다. */
-const LIST_MAX = 100
-const MESSAGE_MAX = 200
+/** 한 코드에 둘 수 있는 구독(기기) 수. */
+const SUBS_MAX = 10
 
 export interface PushSubscriptionRecord {
   endpoint: string
   keys: { p256dh: string; auth: string }
-}
-
-export interface WatchAlert {
-  id: string
-  symbol: string
-  condition: 'above' | 'below'
-  price: number
-  /** 사용자 메모. 푸시 본문에 붙는다. */
-  message?: string
-  /**
-   * 아직 걸리지 않은 교차 알림. 감시기가 가격이 먼저 이쪽(below/above, away = 선에서 벗어남)에 있는 것을
-   * 본 뒤 넘어갈 쪽을 armMarks 에 적고, 그쪽으로 넘어가면 울린다. 없으면 condition 으로 바로 판정한다.
-   */
-  arm?: 'below' | 'above' | 'away'
-  /**
-   * 감시 시작 시각(ms) — 서버가 이 내용(가격·조건·거는 조건)을 처음 받은 때. 감시기는 그 전의 움직임으로 울리지 않는다.
-   * 앱의 createdAt 은 알림을 고치거나 다시 켜도 그대로라 쓰지 않고 서버가 붙인다(stampSince). 예전 기록에는 없다.
-   */
-  since?: number
-}
-
-/** 수평선 알림. 감시기가 처음 잡은 기준 쪽에서 가격이 선을 지나 반대쪽으로 가면 울린다. */
-export interface WatchLine {
-  id: string
-  symbol: string
-  price: number
-  /** 감시 시작 시각(ms) — 서버가 이 선(가격)을 처음 받은 때. 예전 기록에는 없다. */
-  since?: number
 }
 
 /** 감시기가 적어 둔 기준 쪽과 그것을 확인한 시각(ms). 감시기(worker/index.ts)와 모양이 같아야 한다. */
@@ -62,75 +39,27 @@ export interface SideMark {
 }
 
 /**
- * 기기별 알림을 각 기기 구독 endpoint 로 나눠 담는다(alertsBy). 한 동기화 코드를
- * 여러 기기가 공유해도 서로의 알림을 덮어쓰지 않는다.
- * `alerts` 는 버킷 구조 도입 전의 레거시 평면 목록으로, 아무 기기의 첫 PUT 까지만 남는다.
- * 수평선은 `linesBy` 에 따로 둔다 — 이 필드를 모르는 예전 감시기가 수평선을 가격 알림으로 잘못 울리지 않게.
+ * 코드마다의 감시 기록(w:<code>). 구독은 여기서, 나머지는 감시기가 쓴다 — 감시기(worker/index.ts)와 모양이 같아야 한다.
+ * 예전 기록의 기기별 감시 목록(alertsBy·linesBy·alerts 등)은 다음에 쓸 때 빠진다. 예전 앱이 PUT 에 함께 보내는
+ * 감시 목록(alerts·lines)은 받기만 하고 버린다.
  */
 export interface WatchRecord {
   subs: PushSubscriptionRecord[]
-  alertsBy: Record<string, WatchAlert[]>
-  alerts?: WatchAlert[]
-  linesBy?: Record<string, WatchLine[]>
-  /** 수평선마다 감시기가 처음 잡은 기준 쪽. 키는 lineKey — 선을 옮기면 기준을 새로 잡는다. */
+  /** 수평선마다 감시기가 처음 잡은 기준 쪽. */
   lineMarks?: Record<string, SideMark>
-  /** 걸린 교차 알림이 기다리는 쪽. 키는 armKey — 가격·거는 조건을 바꾸면 새로 건다. */
+  /** 걸린 교차 알림이 기다리는 쪽. */
   armMarks?: Record<string, SideMark>
+  /** 감시기가 울렸고 앱이 아직 확인하지 않은 알림·수평선 id. 감시기는 여기 있는 동안 다시 울리지 않는다. */
   firedIds: string[]
-}
-
-/** alertsBy 버킷과 레거시 목록을 합쳐 알림 id 로 중복을 제거한다. 감시기가 보는 감시 목록. */
-export function unionAlerts(record: Pick<WatchRecord, 'alertsBy' | 'alerts'>): WatchAlert[] {
-  const byId = new Map<string, WatchAlert>()
-  for (const list of Object.values(record.alertsBy ?? {})) {
-    for (const a of list) byId.set(a.id, a)
-  }
-  for (const a of record.alerts ?? []) if (!byId.has(a.id)) byId.set(a.id, a)
-  return [...byId.values()]
-}
-
-/** 기기별 수평선 버킷을 합쳐 id 로 중복을 제거한다. */
-export function unionLines(record: Pick<WatchRecord, 'linesBy'>): WatchLine[] {
-  const byId = new Map<string, WatchLine>()
-  for (const list of Object.values(record.linesBy ?? {})) {
-    for (const l of list) byId.set(l.id, l)
-  }
-  return [...byId.values()]
-}
-
-/** lineMarks 키. 감시기(worker/index.ts)와 형식이 같아야 한다. */
-export function lineKey(line: WatchLine): string {
-  return `${line.id}@${line.price}`
-}
-
-/** armMarks 키. 감시기(worker/index.ts)와 형식이 같아야 한다. */
-export function armKey(alert: WatchAlert): string {
-  return `${alert.id}@${alert.price}@${alert.arm ?? ''}`
-}
-
-/**
- * 감시 시작 시각(since)을 붙인다. 같은 내용(key)이 예전 기록의 어느 버킷에든 있으면 그 시각을 이어받고,
- * 새로 왔거나 바뀐 것(가격·조건을 고쳤거나, 울린 뒤 목록에서 빠졌다가 다시 켠 것)은 지금 시각을 쓴다.
- * 내용이 그대로면 기록도 그대로라 다시 쓰지 않는다. 예전 기록에서 시각 없이 이어받은 것은 시각 없이 둔다.
- */
-function stampSince<T extends { since?: number }>(items: T[], prev: T[], key: (item: T) => string, now: number): T[] {
-  const known = new Map<string, number | undefined>()
-  for (const item of prev) {
-    const k = key(item)
-    if (!known.has(k)) known.set(k, item.since)
-  }
-  return items.map((item) => {
-    const k = key(item)
-    const since = known.has(k) ? known.get(k) : now
-    return since === undefined ? item : { ...item, since }
-  })
+  /** 앱이 받았다고 알린 시각(ms, id 별). 감시기는 이 뒤에 설정이 저장되면 확인된 것으로 보고 firedIds 에서 뺀다. */
+  acks?: Record<string, number>
 }
 
 /** 감시기(worker/index.ts)가 매분 읽는 감시 대상 코드 목록. 두 곳의 키 이름이 같아야 한다. */
 const INDEX_KEY = 'w-index'
 
 /**
- * 구독과 알림이 모두 있는 코드만 색인에 둔다. 바뀔 때만 쓴다(무료 플랜 KV 쓰기 한도 아끼기).
+ * 구독이 있는 코드만 색인에 둔다. 바뀔 때만 쓴다(무료 플랜 KV 쓰기 한도 아끼기).
  * 동시에 두 코드가 바뀌어 한쪽이 빠져도 감시기가 정각마다 목록 조회로 색인을 바로잡는다.
  */
 async function syncIndex(env: Env, code: string, watching: boolean): Promise<void> {
@@ -155,88 +84,33 @@ function readRecord(raw: string | null): WatchRecord | null {
   }
 }
 
-/** 들어온 알림 목록을 검사해 모양이 맞는 것만 남긴다. 메모는 잘라 둔다. */
-function readAlerts(input: unknown): WatchAlert[] {
-  if (!Array.isArray(input)) return []
-  const out: WatchAlert[] = []
-  for (const value of input) {
-    if (out.length >= LIST_MAX) break
-    if (typeof value !== 'object' || value === null) continue
-    const { id, symbol, condition, price, message, arm } = value as Record<string, unknown>
-    if (typeof id !== 'string' || typeof symbol !== 'string') continue
-    if (condition !== 'above' && condition !== 'below') continue
-    if (typeof price !== 'number' || !Number.isFinite(price)) continue
-    const note = typeof message === 'string' ? message.trim().slice(0, MESSAGE_MAX) : ''
-    out.push({
-      id,
-      symbol,
-      condition,
-      price,
-      ...(note ? { message: note } : {}),
-      ...(arm === 'below' || arm === 'above' || arm === 'away' ? { arm } : {}),
-    })
-  }
-  return out
-}
-
-function readLines(input: unknown): WatchLine[] {
-  if (!Array.isArray(input)) return []
-  const out: WatchLine[] = []
-  for (const value of input) {
-    if (out.length >= LIST_MAX) break
-    if (typeof value !== 'object' || value === null) continue
-    const { id, symbol, price } = value as Record<string, unknown>
-    if (typeof id !== 'string' || typeof symbol !== 'string') continue
-    if (typeof price !== 'number' || !Number.isFinite(price)) continue
-    out.push({ id, symbol, price })
-  }
-  return out
-}
-
 /**
- * 살아 있는 구독의 버킷만 남기고, 사라진 알림·수평선의 발동 흔적과 기준 쪽을 정리해 기록을 만든다.
- * 감시할 것이 있는지(watching)도 함께 돌려준다.
+ * 지금 모양의 기록을 만든다. 예전 필드는 빠지고 기준 쪽·발동 흔적은 그대로 잇는다.
+ * 키 순서는 감시기가 쓰는 것과 같다 — 내용이 같으면 문자열도 같아 다시 쓰지 않는다.
  */
-function buildRecord(
-  prev: WatchRecord | null,
-  subs: PushSubscriptionRecord[],
-  alertsBy: Record<string, WatchAlert[]>,
-  linesBy: Record<string, WatchLine[]>,
-): { record: WatchRecord; watching: boolean } {
-  const live = new Set(subs.map((s) => s.endpoint))
-  for (const ep of Object.keys(alertsBy)) if (!live.has(ep)) delete alertsBy[ep]
-  for (const ep of Object.keys(linesBy)) if (!live.has(ep)) delete linesBy[ep]
-
-  const alerts = unionAlerts({ alertsBy })
-  const lines = unionLines({ linesBy })
-  const alive = new Set([...alerts.map((a) => a.id), ...lines.map((l) => l.id)])
-  const liveKeys = new Set(lines.map(lineKey))
-  const lineMarks: Record<string, SideMark> = {}
-  for (const [key, mark] of Object.entries(prev?.lineMarks ?? {})) if (liveKeys.has(key)) lineMarks[key] = mark
-  const armKeys = new Set(alerts.filter((a) => a.arm).map(armKey))
-  const armMarks: Record<string, SideMark> = {}
-  for (const [key, mark] of Object.entries(prev?.armMarks ?? {})) if (armKeys.has(key)) armMarks[key] = mark
-
+function buildRecord(prev: WatchRecord | null, subs: PushSubscriptionRecord[], acks: Record<string, number>): WatchRecord {
   return {
-    record: {
-      subs,
-      alertsBy,
-      linesBy,
-      lineMarks,
-      armMarks,
-      // 사라진 알림의 발동 흔적은 같이 지운다.
-      firedIds: (prev?.firedIds ?? []).filter((id) => alive.has(id)),
-    },
-    watching: subs.length > 0 && alive.size > 0,
+    subs,
+    ...(prev?.lineMarks ? { lineMarks: prev.lineMarks } : {}),
+    ...(prev?.armMarks ? { armMarks: prev.armMarks } : {}),
+    firedIds: prev?.firedIds ?? [],
+    ...(Object.keys(acks).length > 0 ? { acks } : {}),
   }
 }
 
-/** 부르는 기기의 버킷만 갈아끼운다. 다른 기기의 알림은 그대로 둔다. */
+/** 서버가 울렸고 아직 아무 기기도 받았다고 알리지 않은 id. 앱이 로컬에서 끄는 데 쓴다 — 받은 것은 다시 주지 않는다(다시 켠 것을 또 끄지 않게). */
+function unacked(record: WatchRecord | null): string[] {
+  const acks = record?.acks ?? {}
+  return (record?.firedIds ?? []).filter((id) => acks[id] === undefined)
+}
+
+/** 구독을 더하고, 앱이 받았다고 알린 발동에 그 시각을 적는다. */
 export const onRequestPut: PagesFunction<Env> = async ({ request, env }) => {
   const code = new URL(request.url).searchParams.get('code')
   if (!code || !CODE_RE.test(code)) return bad('동기화 코드가 올바르지 않습니다', 400)
 
-  let body: { subs?: PushSubscriptionRecord[]; alerts?: unknown; lines?: unknown }
+  // 예전 앱은 감시 목록(alerts·lines)도 함께 보낸다 — 감시 목록은 동기화 설정에서 뽑으므로 읽지 않는다.
+  let body: { subs?: PushSubscriptionRecord[]; ack?: unknown }
   try {
     body = (await request.json()) as typeof body
   } catch {
@@ -249,35 +123,24 @@ export const onRequestPut: PagesFunction<Env> = async ({ request, env }) => {
 
   // 구독은 누적하되 같은 endpoint 는 하나만 남긴다(기기 여러 대 지원).
   const subs = [...(prev?.subs ?? []), ...(body.subs ?? [])]
-  const uniqueSubs = [...new Map(subs.map((s) => [s.endpoint, s])).values()].slice(0, 10)
+  const uniqueSubs = [...new Map(subs.map((s) => [s.endpoint, s])).values()].slice(0, SUBS_MAX)
 
-  // 레거시 평면 목록은 첫 PUT 에서 버킷 구조로 넘어가며 버려진다(alertsBy 만 넘긴다).
-  const alertsBy: Record<string, WatchAlert[]> = { ...(prev?.alertsBy ?? {}) }
-  const linesBy: Record<string, WatchLine[]> = { ...(prev?.linesBy ?? {}) }
-  const endpoint = body.subs?.[0]?.endpoint
-  if (endpoint) {
+  // 받았다는 확인은 처음 받은 시각만 둔다. 감시기는 이 뒤에 저장된 설정을 보고 firedIds 에서 뺀다.
+  const acks: Record<string, number> = { ...(prev?.acks ?? {}) }
+  if (Array.isArray(body.ack)) {
+    const firedIds = prev?.firedIds ?? []
     const now = Date.now()
-    const prevAlerts = [...Object.values(prev?.alertsBy ?? {}).flat(), ...(prev?.alerts ?? [])]
-    alertsBy[endpoint] = stampSince(readAlerts(body.alerts), prevAlerts, (a) => `${armKey(a)}@${a.condition}`, now)
-    // 수평선을 모르는 예전 앱은 lines 를 보내지 않는다 — 그때는 이 기기의 수평선 버킷을 그대로 둔다.
-    if (Array.isArray(body.lines)) {
-      linesBy[endpoint] = stampSince(readLines(body.lines), Object.values(prev?.linesBy ?? {}).flat(), lineKey, now)
+    for (const id of body.ack) {
+      if (typeof id === 'string' && firedIds.includes(id) && acks[id] === undefined) acks[id] = now
     }
   }
 
-  const { record, watching } = buildRecord(prev, uniqueSubs, alertsBy, linesBy)
+  const record = buildRecord(prev, uniqueSubs, acks)
   const next = JSON.stringify(record)
   // 같은 내용을 다시 올리면 쓰지 않는다 — 무료 플랜 KV 쓰기 한도(하루 1,000회) 아끼기.
   if (next !== prevRaw) await env.SETTINGS.put(key, next)
-  await syncIndex(env, code, watching)
-  return new Response(
-    JSON.stringify({
-      ok: true,
-      watching: unionAlerts(record).length + unionLines(record).length,
-      firedIds: record.firedIds,
-    }),
-    { headers: JSON_HEADERS },
-  )
+  await syncIndex(env, code, record.subs.length > 0)
+  return new Response(JSON.stringify({ ok: true, firedIds: unacked(record) }), { headers: JSON_HEADERS })
 }
 
 export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
@@ -298,11 +161,10 @@ export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
   return new Response(
     JSON.stringify({
       subscribed: (record?.subs.length ?? 0) > 0,
-      // endpoint 를 주면 그 기기가 등록돼 있는지 알려 준다 — 앱이 같은 목록을 다시 쓰지 않고 확인만 하는 데 쓴다.
+      // endpoint 를 주면 그 기기가 등록돼 있는지 알려 준다 — 앱이 구독을 다시 쓰지 않고 확인만 하는 데 쓴다.
       registered: endpoint ? (record?.subs ?? []).some((s) => s.endpoint === endpoint) : undefined,
-      watching: record ? unionAlerts(record).length + unionLines(record).length : 0,
-      // 클라이언트가 앱을 열 때 서버가 먼저 울린 알림을 로컬에서 끄는 데 쓴다.
-      firedIds: record?.firedIds ?? [],
+      // 앱을 열거나 탭으로 돌아올 때 서버가 먼저 울린 알림을 로컬에서 끄는 데 쓴다.
+      firedIds: unacked(record),
     }),
     { headers: JSON_HEADERS },
   )
@@ -318,12 +180,11 @@ export const onRequestDelete: PagesFunction<Env> = async ({ request, env }) => {
   const prev = readRecord(prevRaw)
   if (!prev) return new Response(JSON.stringify({ ok: true }), { headers: JSON_HEADERS })
 
-  // endpoint 를 주면 그 기기만, 없으면 모든 기기의 구독과 알림을 지운다.
+  // endpoint 를 주면 그 기기만, 없으면 모든 기기의 구독을 지운다.
   const endpoint = url.searchParams.get('endpoint')
   const subs = endpoint ? prev.subs.filter((s) => s.endpoint !== endpoint) : []
-  const { record, watching } = buildRecord(prev, subs, { ...(prev.alertsBy ?? {}) }, { ...(prev.linesBy ?? {}) })
-  const next = JSON.stringify(record)
+  const next = JSON.stringify(buildRecord(prev, subs, prev.acks ?? {}))
   if (next !== prevRaw) await env.SETTINGS.put(key, next)
-  await syncIndex(env, code, watching)
+  await syncIndex(env, code, subs.length > 0)
   return new Response(JSON.stringify({ ok: true }), { headers: JSON_HEADERS })
 }

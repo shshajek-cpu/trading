@@ -1,29 +1,18 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { armOf, type AlertArm, type PriceAlert } from './usePriceAlerts'
+import { useCallback, useEffect, useRef, useState } from 'react'
 
 export type PushState = 'unsupported' | 'off' | 'on' | 'working' | 'error'
 
-/** 서버가 대신 감시할 수평선 알림. 가격이 선을 지나가면 울린다. */
-export interface LineWatch {
-  id: string
-  symbol: string
-  price: number
-}
-
-/** 푸시 본문에 붙는 메모 길이 한도. 서버(/api/push)도 같은 길이로 자른다. */
-const MESSAGE_MAX = 200
-
 /**
- * 이 기기 구독이 서버의 어느 코드에, 어떤 감시 목록으로 올라가 있는지.
- * 코드를 바꾸거나 동기화를 끄면 옛 코드 쪽 등록을 지우는 데 쓰고,
- * 목록이 그대로면 다시 쓰지 않는 데 쓴다(무료 플랜 KV 쓰기 한도 아끼기).
+ * 이 기기 구독이 서버의 어느 코드에 어떤 주소(endpoint)로 올라가 있는지.
+ * 코드가 바뀌거나 브라우저 구독이 새로 만들어지면 옛 등록을 지우는 데 쓴다 — 남겨 두면 같은 알림이 두 번 오거나
+ * 서버가 죽은 주소로 보낸다. 무엇을 감시할지는 서버(감시기)가 동기화 설정에서 직접 읽으므로 여기 두지 않는다.
  */
 const REG_KEY = 'trading.pushReg'
 
 interface Registration {
   code: string
-  /** 마지막으로 올린 감시 목록(JSON). */
-  watch: string
+  /** 예전 앱이 적은 기록에는 없다. */
+  endpoint?: string
 }
 
 function readReg(): Registration | null {
@@ -31,7 +20,8 @@ function readReg(): Registration | null {
     const raw = localStorage.getItem(REG_KEY)
     if (!raw) return null
     const v = JSON.parse(raw) as Partial<Registration>
-    return typeof v.code === 'string' && typeof v.watch === 'string' ? { code: v.code, watch: v.watch } : null
+    if (typeof v.code !== 'string') return null
+    return typeof v.endpoint === 'string' ? { code: v.code, endpoint: v.endpoint } : { code: v.code }
   } catch {
     return null
   }
@@ -76,84 +66,48 @@ function errorText(error: unknown, fallback: string): string {
   return error instanceof Error ? error.message : fallback
 }
 
-/** 서버에 올리는 감시 목록. 켜진 가격 알림(메모 포함)과 아직 안 울린 수평선 알림. */
-interface WatchPayload {
-  alerts: {
-    id: string
-    symbol: string
-    condition: PriceAlert['condition']
-    price: number
-    message?: string
-    /** 아직 걸리지 않은 교차 알림 — 감시기가 가격이 먼저 이쪽에 있는 것을 본 뒤에 건다. */
-    arm?: AlertArm
-  }[]
-  lines: LineWatch[]
-}
-
-function buildWatch(alerts: PriceAlert[], lines: LineWatch[]): WatchPayload {
-  return {
-    alerts: alerts
-      .filter((alert) => alert.active)
-      .map(({ id, symbol, condition, price, message, kind, pending }) => {
-        const note = message?.trim().slice(0, MESSAGE_MAX)
-        const arm = pending ? armOf({ kind }) : null
-        return {
-          id,
-          symbol,
-          condition,
-          price,
-          ...(note ? { message: note } : {}),
-          ...(arm ? { arm } : {}),
-        }
-      }),
-    lines: lines
-      .filter((line) => Number.isFinite(line.price))
-      .map(({ id, symbol, price }) => ({ id, symbol, price })),
-  }
-}
-
-/** 서버 응답. 서버가 먼저 울린 알림·수평선 id 를 돌려준다(로컬에서 끄는 데 쓴다). */
-interface SaveWatchResult {
+/** 서버 응답. 서버가 먼저 울렸고 아직 아무 기기도 받지 않은 알림·수평선 id, endpoint 를 주면 이 기기가 등록돼 있는지. */
+interface PushStatus {
+  registered?: boolean
   firedIds?: string[]
 }
 
-async function saveWatch(
-  code: string,
-  watch: WatchPayload,
-  sub: PushSubscription,
-  signal?: AbortSignal,
-): Promise<SaveWatchResult> {
-  const res = await fetch(`/api/push?code=${encodeURIComponent(code)}`, {
+const pushUrl = (code: string) => `/api/push?code=${encodeURIComponent(code)}`
+
+/** 이 기기 구독을 등록한다. 같은 구독이 이미 있으면 서버는 다시 쓰지 않는다. */
+async function saveSub(code: string, sub: PushSubscription, signal?: AbortSignal): Promise<PushStatus> {
+  const res = await fetch(pushUrl(code), {
     method: 'PUT',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ subs: [toRecord(sub)], alerts: watch.alerts, lines: watch.lines }),
+    body: JSON.stringify({ subs: [toRecord(sub)] }),
     signal,
   })
   if (!res.ok) throw new Error(`서버 등록 실패 ${res.status}`)
-  return (await res.json()) as SaveWatchResult
+  return (await res.json()) as PushStatus
 }
 
-/** 쓰지 않고 읽기만 한다 — 이 기기가 등록돼 있는지와 서버가 먼저 울린 id. */
-async function readWatch(
-  code: string,
-  endpoint: string,
-  signal?: AbortSignal,
-): Promise<{ registered?: boolean; firedIds?: string[] }> {
-  const res = await fetch(
-    `/api/push?code=${encodeURIComponent(code)}&endpoint=${encodeURIComponent(endpoint)}`,
-    { signal },
-  )
+/** 쓰지 않고 읽기만 한다 — 서버가 먼저 울린 id 와, endpoint 를 주면 이 기기가 등록돼 있는지. */
+async function readStatus(code: string, endpoint: string | null, signal?: AbortSignal): Promise<PushStatus> {
+  const query = endpoint ? `&endpoint=${encodeURIComponent(endpoint)}` : ''
+  const res = await fetch(`${pushUrl(code)}${query}`, { signal })
   if (!res.ok) throw new Error(`서버 조회 실패 ${res.status}`)
-  return (await res.json()) as { registered?: boolean; firedIds?: string[] }
+  return (await res.json()) as PushStatus
 }
 
-/** 한 코드에서 이 기기(endpoint)의 구독과 감시 목록을 지운다. */
-async function removeBucket(code: string, endpoint: string, signal?: AbortSignal): Promise<void> {
-  const res = await fetch(
-    `/api/push?code=${encodeURIComponent(code)}&endpoint=${encodeURIComponent(endpoint)}`,
-    { method: 'DELETE', signal },
-  )
+/** 한 코드에서 이 기기(endpoint)의 구독을 지운다. */
+async function removeSub(code: string, endpoint: string, signal?: AbortSignal): Promise<void> {
+  const res = await fetch(`${pushUrl(code)}&endpoint=${encodeURIComponent(endpoint)}`, { method: 'DELETE', signal })
   if (!res.ok) throw new Error(`이전 등록 해제 실패 ${res.status}`)
+}
+
+/** 옛 코드나 옛 구독 주소로 남은 이 기기 등록을 지운다. 남겨 두면 같은 알림이 두 번 오거나 서버가 죽은 주소로 보낸다. */
+async function dropStaleReg(code: string, endpoint: string | null, signal?: AbortSignal): Promise<void> {
+  const prev = readReg()
+  if (!prev) return
+  if (prev.code === code && (prev.endpoint === undefined || prev.endpoint === endpoint)) return
+  const stale = prev.endpoint ?? endpoint
+  if (stale) await removeSub(prev.code, stale, signal)
+  writeReg(null)
 }
 
 async function getPublicKey(): Promise<Uint8Array> {
@@ -171,20 +125,18 @@ function usesApplicationServerKey(sub: PushSubscription, key: Uint8Array): boole
   return bytes.length === key.length && bytes.every((byte, index) => byte === key[index])
 }
 
+/** 서비스워커(sw-push.js)가 푸시를 받았다고 알린 뒤 서버를 다시 보기까지 기다리는 시간 — 감시기가 발동을 적을 틈. */
+const PUSH_RECHECK_MS = 5000
+
 /**
  * 앱을 닫아도 오는 알림.
  *
- * 브라우저 푸시는 서비스워커가 받아야 하고, 서버는 보낼 주소를 알아야 한다.
- * 어느 기기의 알림인지 묶으려면 동기화 코드가 필요하다.
- * 코드를 바꾸면 옛 코드의 이 기기 등록을 지우고 새 코드로 옮긴다. 동기화를 끄면 구독도 해제한다.
+ * 브라우저 푸시는 서비스워커가 받아야 하고, 서버는 보낼 주소를 알아야 한다. 이 훅은 이 기기 구독만 등록한다 —
+ * 감시할 알림은 서버(감시기)가 모든 기기가 함께 쓰는 동기화 설정에서 직접 읽는다.
+ * 서버가 먼저 울린 알림은 앱을 열 때·탭으로 돌아올 때·푸시를 받았을 때 받아 와 onServerFired 로 넘기고(로컬에서도 끈다),
+ * 받았다고 서버에 알린다. 코드를 바꾸면 옛 코드의 이 기기 등록을 지우고 새 코드로 옮긴다. 코드가 없으면 구독도 해제한다.
  */
-export function usePushAlerts(
-  code: string,
-  alerts: PriceAlert[],
-  onServerFired: (ids: string[]) => void,
-  lineAlerts: LineWatch[],
-  onLinesFired: (ids: string[]) => void,
-) {
+export function usePushAlerts(code: string, onServerFired: (ids: string[]) => void) {
   const supported =
     typeof navigator !== 'undefined' &&
     typeof Notification !== 'undefined' &&
@@ -194,39 +146,30 @@ export function usePushAlerts(
   const [state, setState] = useState<PushState>(supported ? 'off' : 'unsupported')
   const [message, setMessage] = useState('')
 
-  // 부르는 쪽이 렌더마다 새 배열을 넘겨도 내용이 같으면 서버에 다시 보내지 않도록 문자열로 비교한다.
-  const watch = useMemo(() => buildWatch(alerts, lineAlerts), [alerts, lineAlerts])
-  const watchKey = useMemo(() => JSON.stringify(watch), [watch])
-  const watchRef = useRef(watch)
-  watchRef.current = watch
-  const watchKeyRef = useRef(watchKey)
-  watchKeyRef.current = watchKey
-
-  const alertsRef = useRef(alerts)
-  alertsRef.current = alerts
-  const linesRef = useRef(lineAlerts)
-  linesRef.current = lineAlerts
-  // 지금 이 기기의 구독. 디바운스 동기화 때 endpoint 를 알려 버킷을 맞춘다.
-  const subRef = useRef<PushSubscription | null>(null)
   // 켜기·끄기가 도는 동안에는 코드 변경 복구가 상태를 건드리지 않는다(권한 창이 떠 있는 동안 'off' 로 되돌리던 문제).
   const busyRef = useRef(false)
   // 참조를 고정해 effect 의존성이 흔들리지 않게 한다.
   const onServerFiredRef = useRef(onServerFired)
   onServerFiredRef.current = onServerFired
-  const onLinesFiredRef = useRef(onLinesFired)
-  onLinesFiredRef.current = onLinesFired
 
-  // 서버가 이미 울린 알림 중 로컬에서 아직 켜져 있는 것을 꺼 앱을 다시 열 때 중복 발동을 막는다.
-  const notifyServerFired = useCallback((firedIds: string[] | undefined) => {
-    if (!firedIds || firedIds.length === 0) return
-    const fired = new Set(firedIds)
-    const alertIds = alertsRef.current.filter((a) => a.active && fired.has(a.id)).map((a) => a.id)
-    const lineIds = linesRef.current.filter((l) => fired.has(l.id)).map((l) => l.id)
-    if (alertIds.length > 0) onServerFiredRef.current(alertIds)
-    if (lineIds.length > 0) onLinesFiredRef.current(lineIds)
-  }, [])
+  // 서버가 먼저 울린 알림을 로컬에서도 꺼(앱을 다시 열 때 또 울리지 않게) 받았다고 서버에 알린다.
+  // 서버는 받은 id 를 다시 주지 않는다 — 그 뒤 다시 켠 알림을 또 끄지 않고, 서버도 다시 감시한다.
+  const applyFired = useCallback(
+    (firedIds: string[] | undefined) => {
+      if (!firedIds || firedIds.length === 0) return
+      onServerFiredRef.current(firedIds)
+      void fetch(pushUrl(code), {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ack: firedIds }),
+      }).catch(() => {
+        /* 못 알려도 끈 알림이 설정으로 동기화되면 서버가 알아챈다 */
+      })
+    },
+    [code],
+  )
 
-  // 코드가 정해지거나 바뀔 때: 옛 코드 등록을 정리하고, 브라우저에 남은 구독을 현재 코드에 다시 묶는다.
+  // 코드가 정해지거나 바뀔 때: 옛 등록을 정리하고, 브라우저에 남은 구독을 현재 코드에 다시 묶는다.
   // KV 가 비었거나 동기화 코드를 바꾼 뒤에도 새로 구독할 필요 없이 복구된다.
   useEffect(() => {
     if (!supported) return
@@ -242,16 +185,9 @@ export function usePushAlerts(
         const sub = await reg.pushManager.getSubscription()
         if (!idle()) return
 
-        // 옛 코드에 남은 이 기기 등록을 먼저 지운다. 남겨 두면 옛 코드로 계속 알림이 오고
-        // (앱에서 지운 알림까지), 새 코드에도 등록되면 같은 알림이 두 번 온다.
-        const prev = readReg()
-        if (prev && prev.code !== code) {
-          if (sub) await removeBucket(prev.code, sub.endpoint, signal)
-          writeReg(null)
-        }
+        await dropStaleReg(code, sub?.endpoint ?? null, signal)
 
         if (!sub) {
-          subRef.current = null
           if (idle()) {
             setState('off')
             setMessage('')
@@ -262,7 +198,6 @@ export function usePushAlerts(
         if (!code) {
           // 동기화 코드 없이는 서버가 감시할 수 없다 — 구독도 해제해 푸시가 오지 않게 한다.
           await sub.unsubscribe()
-          subRef.current = null
           if (idle()) {
             setState('off')
             setMessage('')
@@ -270,26 +205,12 @@ export function usePushAlerts(
           return
         }
 
-        subRef.current = sub
-        const key = watchKeyRef.current
-        let firedIds: string[] | undefined
-        let known = false
-        const current = readReg()
-        if (current && current.code === code && current.watch === key) {
-          // 서버에 이미 같은 목록이 있으면 쓰지 않고 읽기만 한다.
-          const status = await readWatch(code, sub.endpoint, signal)
-          if (status.registered === true) {
-            known = true
-            firedIds = status.firedIds
-          }
-        }
-        if (!known) {
-          const result = await saveWatch(code, watchRef.current, sub, signal)
-          writeReg({ code, watch: key })
-          firedIds = result.firedIds
-        }
+        // 서버에 이 기기가 있으면 읽기만 하고, 없으면(처음이거나 서버 기록이 비었으면) 등록한다.
+        let status = await readStatus(code, sub.endpoint, signal)
+        if (status.registered !== true) status = await saveSub(code, sub, signal)
+        writeReg({ code, endpoint: sub.endpoint })
         if (idle()) {
-          notifyServerFired(firedIds)
+          applyFired(status.firedIds)
           setState('on')
           setMessage('')
         }
@@ -306,7 +227,43 @@ export function usePushAlerts(
       cancelled = true
       controller.abort()
     }
-  }, [supported, code, notifyServerFired])
+  }, [supported, code, applyFired])
+
+  // 켜져 있는 동안 탭으로 돌아오거나 푸시를 받으면 서버가 먼저 울린 알림을 다시 받아 온다(읽기만 한다).
+  useEffect(() => {
+    if (!supported || state !== 'on' || !code) return
+    let cancelled = false
+    let timer: number | undefined
+    const controller = new AbortController()
+    const recheck = () => {
+      if (cancelled || busyRef.current) return
+      readStatus(code, null, controller.signal)
+        .then((status) => {
+          if (!cancelled) applyFired(status.firedIds)
+        })
+        .catch(() => {
+          /* 다음에 돌아올 때 다시 본다 */
+        })
+    }
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') recheck()
+    }
+    const onMessage = (e: MessageEvent) => {
+      const data: unknown = e.data
+      if (typeof data !== 'object' || data === null || !('type' in data) || data.type !== 'push') return
+      window.clearTimeout(timer)
+      timer = window.setTimeout(recheck, PUSH_RECHECK_MS)
+    }
+    document.addEventListener('visibilitychange', onVisibility)
+    navigator.serviceWorker.addEventListener('message', onMessage)
+    return () => {
+      cancelled = true
+      controller.abort()
+      window.clearTimeout(timer)
+      document.removeEventListener('visibilitychange', onVisibility)
+      navigator.serviceWorker.removeEventListener('message', onMessage)
+    }
+  }, [supported, state, code, applyFired])
 
   const enable = useCallback(
     async () => {
@@ -340,19 +297,10 @@ export function usePushAlerts(
           applicationServerKey: publicKey as BufferSource,
         })
 
-        // 다른 코드에 남은 이 기기 등록은 지운다 — 두 코드로 같은 알림이 두 번 오지 않게.
-        const prev = readReg()
-        if (prev && prev.code !== code) {
-          await removeBucket(prev.code, sub.endpoint)
-          writeReg(null)
-        }
-
-        subRef.current = sub
-        // 구독과 현재 감시 목록을 한 요청으로 저장해야 앱을 바로 닫아도 빠지지 않는다.
-        const key = watchKeyRef.current
-        const result = await saveWatch(code, watchRef.current, sub)
-        writeReg({ code, watch: key })
-        notifyServerFired(result.firedIds)
+        await dropStaleReg(code, sub.endpoint)
+        const status = await saveSub(code, sub)
+        writeReg({ code, endpoint: sub.endpoint })
+        applyFired(status.firedIds)
         setState('on')
         setMessage('앱을 닫아도 알림이 옵니다')
       } catch (error) {
@@ -362,7 +310,7 @@ export function usePushAlerts(
         busyRef.current = false
       }
     },
-    [supported, code, notifyServerFired],
+    [supported, code, applyFired],
   )
 
   const disable = useCallback(async () => {
@@ -375,11 +323,10 @@ export function usePushAlerts(
       const sub = await reg.pushManager.getSubscription()
       if (sub) {
         const registered = readReg()?.code || code
-        if (registered) await removeBucket(registered, sub.endpoint)
+        if (registered) await removeSub(registered, sub.endpoint)
         await sub.unsubscribe()
       }
       writeReg(null)
-      subRef.current = null
       setState('off')
       setMessage('')
     } catch (error) {
@@ -389,38 +336,6 @@ export function usePushAlerts(
       busyRef.current = false
     }
   }, [supported, code])
-
-  // 감시 목록을 서버와 맞춘다 — 알림을 고치면 서버도 따라와야 한다. 내용이 같으면 보내지 않는다.
-  useEffect(() => {
-    if (state !== 'on' || !code) return
-    const payload = watchRef.current
-    let cancelled = false
-    const controller = new AbortController()
-    const timer = window.setTimeout(() => {
-      const sub = subRef.current
-      if (!sub || busyRef.current) return
-      // 코드 변경 복구가 방금 같은 목록을 올렸으면 다시 쓰지 않는다.
-      const sent = readReg()
-      if (sent && sent.code === code && sent.watch === watchKey) return
-      // 이 기기의 구독을 함께 보내 서버가 이 기기 버킷만 갱신하게 한다(다른 기기 알림 보존).
-      void saveWatch(code, payload, sub, controller.signal)
-        .then((result) => {
-          writeReg({ code, watch: watchKey })
-          if (!cancelled) notifyServerFired(result.firedIds)
-        })
-        .catch((error: unknown) => {
-          if (!cancelled) {
-            setState('error')
-            setMessage(errorText(error, '알림 목록 동기화 실패'))
-          }
-        })
-    }, 1500)
-    return () => {
-      cancelled = true
-      controller.abort()
-      window.clearTimeout(timer)
-    }
-  }, [state, code, watchKey, notifyServerFired])
 
   return { state, message, enable, disable, supported }
 }

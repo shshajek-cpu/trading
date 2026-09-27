@@ -8,16 +8,22 @@ self.addEventListener('push', (event) => {
   }
 
   event.waitUntil(
-    self.registration.showNotification(data.title, {
-      body: data.body,
-      tag: data.tag,
-      icon: '/pwa-192.png',
-      badge: '/pwa-192.png',
-      vibrate: [200, 100, 200],
-      renotify: Boolean(data.tag),
-      // 누르면 이 종목 차트를 연다.
-      data: { symbol: typeof data.symbol === 'string' ? data.symbol : '' },
-    }),
+    Promise.all([
+      self.registration.showNotification(data.title, {
+        body: data.body,
+        tag: data.tag,
+        icon: '/pwa-192.png',
+        badge: '/pwa-192.png',
+        vibrate: [200, 100, 200],
+        renotify: Boolean(data.tag),
+        // 누르면 이 종목 차트를 연다.
+        data: { symbol: typeof data.symbol === 'string' ? data.symbol : '' },
+      }),
+      // 열린 앱에 알린다 — 서버가 울린 알림을 앱에서도 끄도록 다시 확인한다(usePushAlerts).
+      self.clients.matchAll({ type: 'window' }).then((list) => {
+        for (const client of list) client.postMessage({ type: 'push' })
+      }),
+    ]),
   )
 })
 
