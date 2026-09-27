@@ -33,6 +33,7 @@ import {
 } from '../lib/indicators'
 import {
   INDICATOR_DEFS,
+  VOLUME_SURGE_DEFAULTS,
   indicatorTitle,
   multiMaSlots,
   setParts,
@@ -138,12 +139,12 @@ export function displayParts(c: ComputedIndicator): ComputedIndicator[] {
 /** 볼륨 봉별 색: 급증 단계는 형광, 평소엔 방향색을 흐리게. */
 function volumeColors(candles: Candle[], instance: IndicatorInstance, palette: ChartPalette): string[] {
   const surgeOn = (instance.params.surge ?? 1) !== 0
-  const window = instance.params.window ?? 20
+  const window = instance.params.window ?? VOLUME_SURGE_DEFAULTS.window
   const tiers = surgeOn
     ? volumeTiers(candles.map((c) => c.volume), window, {
-        low: instance.params.low ?? 2,
-        mid: instance.params.mid ?? 3,
-        high: instance.params.high ?? 5,
+        low: instance.params.low ?? VOLUME_SURGE_DEFAULTS.low,
+        mid: instance.params.mid ?? VOLUME_SURGE_DEFAULTS.mid,
+        high: instance.params.high ?? VOLUME_SURGE_DEFAULTS.high,
       })
     : null
   const dim = tiers ? '45' : '80'

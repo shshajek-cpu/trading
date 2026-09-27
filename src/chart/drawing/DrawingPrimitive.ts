@@ -11,7 +11,7 @@ import type {
 } from 'lightweight-charts'
 import type { CanvasRenderingTarget2D } from 'fancy-canvas'
 import type { Candle, Interval } from '../../lib/binance'
-import type { ChartPalette } from '../../lib/theme'
+import { readableTextOn, type ChartPalette } from '../../lib/theme'
 import type { Drawing } from '../../lib/drawings'
 import { Coords } from './coords'
 import { anchorPoints, renderDrawing, type RenderScope } from './render'
@@ -54,7 +54,8 @@ class AxisView implements ISeriesPrimitiveAxisView {
     return this._text
   }
   textColor(): string {
-    return '#ffffff'
+    // 흰색·노랑 같은 밝은 선 색 위에 흰 글자를 쓰면 빈 상자로 보인다 — 바탕에 맞춘다.
+    return readableTextOn(this._color)
   }
   backColor(): string {
     return this._color

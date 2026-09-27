@@ -187,13 +187,13 @@ export const VOLUME_TIER_LABELS: Record<Exclude<VolumeTier, 0>, string> = {
  * 고정 기준을 쓸 수 없다 — 종목마다 거래량 단위가 전혀 다르다. 그래서 자기
  * 직전 구간과 비교한 배율로 판단한다.
  *
- * 평균은 **자기 자신을 뺀** 직전 20봉으로 낸다. 급증한 봉이 평균에 섞이면
- * 스스로를 희석해 배율이 낮게 나온다.
+ * 평균은 **자기 자신을 뺀** 직전 `window` 봉으로 낸다. 급증한 봉이 평균에 섞이면
+ * 스스로를 희석해 배율이 낮게 나온다. 기본 구간·배율은 indicatorConfig 의 VOLUME_SURGE_DEFAULTS 가 정한다.
  */
 export function volumeTiers(
   volumes: number[],
-  window = 20,
-  thresholds: { low: number; mid: number; high: number } = { low: 2, mid: 3, high: 5 },
+  window: number,
+  thresholds: { low: number; mid: number; high: number },
 ): VolumeTier[] {
   const out: VolumeTier[] = new Array(volumes.length).fill(0)
   if (volumes.length <= window) return out

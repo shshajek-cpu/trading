@@ -79,9 +79,20 @@ function nearestBar(candles: Candle[], time: number): Candle | null {
   return time - candles[lo].time <= candles[hi].time - time ? candles[lo] : candles[hi]
 }
 
-function makePoint(coords: Coords, candles: Candle[], p: Pt, mode: MagnetMode): DrawingPoint {
-  const time = coords.xToTime(p.x) ?? 0
-  const price = coords.yToPrice(p.y) ?? 0
+/**
+ * 화면 좌표 → 시각·가격. 차트가 아직 좌표를 못 바꾸면(봉을 받기 전·빈 차트 등) null 이다.
+ * 예전에는 0 으로 채워 가격 0(또는 1970년) 짜리 그림이 만들어졌다 — 이제는 그 누름을 무시한다.
+ */
+function pointAt(coords: Coords, p: Pt): DrawingPoint | null {
+  const time = coords.xToTime(p.x)
+  const price = coords.yToPrice(p.y)
+  return time === null || price === null ? null : { time, price }
+}
+
+function makePoint(coords: Coords, candles: Candle[], p: Pt, mode: MagnetMode): DrawingPoint | null {
+  const raw = pointAt(coords, p)
+  if (!raw) return null
+  const { time, price } = raw
   if (mode === 'off' || candles.length === 0) return { time, price }
   const bar = nearestBar(candles, time)
   if (!bar) return { time, price }
@@ -408,12 +419,14 @@ export function DrawingOverlay(props: DrawingOverlayProps) {
 
       // Shift + 드래그 = 커서 도구에서도 측정.
       if (isCursorTool(t) && shift && t !== 'eraser') {
+        const sp = makePoint(coords, l.candles, p, resolveMagnet(ctrl))
+        if (!sp) return
         measureRef.current = null
         pressRef.current = {
           mode: 'measure',
           pointerId: e.pointerId,
           startPt: p,
-          startPoint: makePoint(coords, l.candles, p, resolveMagnet(ctrl)),
+          startPoint: sp,
           moved: false,
         }
         el.setPointerCapture(e.pointerId)
@@ -425,11 +438,13 @@ export function DrawingOverlay(props: DrawingOverlayProps) {
 
       if (isDrawingKind(t)) {
         const sp = makePoint(coords, l.candles, p, resolveMagnet(ctrl))
+        // 좌표를 못 바꾸면(차트가 아직 봉을 받기 전 등) 누른 자리를 무시한다 — 가격 0 짜리 그림을 만들지 않는다.
+        if (!sp) return
         if (t === 'text' || t === 'note') {
           // 텍스트·노트는 클릭 시 인라인 편집기를 연다(아래 up 에서 처리하지 않음).
           pressRef.current = { mode: 'create', pointerId: e.pointerId, startPt: p, startPoint: sp, moved: false }
         } else if (t === 'brush') {
-          const rp = { time: coords.xToTime(p.x) ?? 0, price: coords.yToPrice(p.y) ?? 0 }
+          const rp = pointAt(coords, p) ?? sp
           pressRef.current = { mode: 'brush', pointerId: e.pointerId, startPt: p, startPoint: sp, moved: false, brush: [rp] }
         } else {
           if (!creatingRef.current) creatingRef.current = { kind: t, committed: [] }
@@ -443,12 +458,14 @@ export function DrawingOverlay(props: DrawingOverlayProps) {
       }
 
       if (t === 'measure') {
+        const sp = makePoint(coords, l.candles, p, resolveMagnet(ctrl))
+        if (!sp) return
         measureRef.current = null
         pressRef.current = {
           mode: 'measure',
           pointerId: e.pointerId,
           startPt: p,
-          startPoint: makePoint(coords, l.candles, p, resolveMagnet(ctrl)),
+          startPoint: sp,
           moved: false,
         }
         el.setPointerCapture(e.pointerId)
@@ -533,7 +550,8 @@ export function DrawingOverlay(props: DrawingOverlayProps) {
       if (!press) {
         // 진행 중 생성: 커서를 따라 미리보기.
         if (creatingRef.current) {
-          updateCreatePreview(makePoint(coords, l.candles, p, resolveMagnet(ctrl)))
+          const cur = makePoint(coords, l.candles, p, resolveMagnet(ctrl))
+          if (cur) updateCreatePreview(cur)
         }
         return
       }
@@ -547,6 +565,7 @@ export function DrawingOverlay(props: DrawingOverlayProps) {
           const c = creatingRef.current
           if (!c) break
           const cur = makePoint(coords, l.candles, p, resolveMagnet(ctrl))
+          if (!cur) break
           // 첫 점에서 누른 채 끌면 누른 자리~커서가 두 점이다. 미리보기도 그 둘로 그려야 끄는 동안 선이 보인다.
           if (press.moved && c.committed.length === 0 && requiredPoints(c.kind) >= 2) {
             setPreview(previewDrawing(l.symbol, c.kind, [press.startPoint, cur], defaultStyle(c.kind)))
@@ -556,7 +575,8 @@ export function DrawingOverlay(props: DrawingOverlayProps) {
           break
         }
         case 'brush': {
-          const rp = { time: coords.xToTime(p.x) ?? 0, price: coords.yToPrice(p.y) ?? 0 }
+          const rp = pointAt(coords, p)
+          if (!rp) break
           const last = press.brush![press.brush!.length - 1]
           const lx = coords.timeToX(last.time)
           if (lx === null || Math.hypot(p.x - lx, p.y - (coords.priceToY(last.price) ?? p.y)) > 2) {
@@ -568,12 +588,12 @@ export function DrawingOverlay(props: DrawingOverlayProps) {
         case 'move': {
           // 고르려고 누른 손의 떨림(몇 px)으로 그림이 밀리고 되돌리기 단계가 쌓이지 않게, 문턱을 넘어야 옮긴다.
           if (!press.moved) break
-          const t0 = coords.xToTime(press.startPt.x) ?? 0
-          const t1 = coords.xToTime(p.x) ?? 0
-          const pr0 = coords.yToPrice(press.startPt.y) ?? 0
-          const pr1 = coords.yToPrice(p.y) ?? 0
-          const dt = t1 - t0
-          const dp = pr1 - pr0
+          // 좌표를 못 바꾸는 순간은 건너뛴다 — 0 으로 채우면 그림이 가격만큼 튄다.
+          const from = pointAt(coords, press.startPt)
+          const to = pointAt(coords, p)
+          if (!from || !to) break
+          const dt = to.time - from.time
+          const dp = to.price - from.price
           const next = press.original!.map((pt) => ({ time: pt.time + dt, price: pt.price + dp }))
           press.last = next
           handlers.current.onUpdate(press.id!, { points: next }, { history: false })
@@ -582,6 +602,7 @@ export function DrawingOverlay(props: DrawingOverlayProps) {
         case 'anchor': {
           if (!press.moved) break
           const sp = makePoint(coords, l.candles, p, resolveMagnet(ctrl))
+          if (!sp) break
           const next = press.original!.map((pt, i) => (i === press.index ? sp : pt))
           press.last = next
           handlers.current.onUpdate(press.id!, { points: next }, { history: false })
@@ -589,6 +610,7 @@ export function DrawingOverlay(props: DrawingOverlayProps) {
         }
         case 'measure': {
           const sp = makePoint(coords, l.candles, p, resolveMagnet(ctrl))
+          if (!sp) break
           const shape = previewDrawing(l.symbol, 'datePriceRange', [press.startPoint, sp], defaultStyle('datePriceRange'))
           measureRef.current = shape
           setPreview(shape)
@@ -622,9 +644,10 @@ export function DrawingOverlay(props: DrawingOverlayProps) {
         case 'create': {
           const c = creatingRef.current
           if (!c) break
-          if (press.moved) {
-            // 끌었으면 놓은 자리가 점이 된다(미리보기가 따라간 자리). 첫 점에서 끌었다면 누른 자리까지 두 점.
-            const end = makePoint(coords, l.candles, p, resolveMagnet(ctrl))
+          // 끌었으면 놓은 자리가 점이 된다(미리보기가 따라간 자리). 첫 점에서 끌었다면 누른 자리까지 두 점.
+          // 놓은 자리를 못 바꾸면 클릭처럼 누른 자리만 쓴다.
+          const end = press.moved ? makePoint(coords, l.candles, p, resolveMagnet(ctrl)) : null
+          if (end) {
             if (c.committed.length === 0 && requiredPoints(c.kind) >= 2) c.committed.push(press.startPoint)
             c.committed.push(end)
           } else {
@@ -681,7 +704,7 @@ export function DrawingOverlay(props: DrawingOverlayProps) {
       // 텍스트·노트: 놓은 자리에 인라인 편집기를 연다.
       if (press.mode === 'create' && (l.tool === 'text' || l.tool === 'note')) {
         const dp = makePoint(coords, l.candles, p, resolveMagnet(ctrl))
-        openTextEditor(l.tool, 'create', dp, p.x, p.y, '')
+        if (dp) openTextEditor(l.tool, 'create', dp, p.x, p.y, '')
         creatingRef.current = null
       }
     }

@@ -193,6 +193,12 @@ export function setParts(i: IndicatorInstance): { key: string; on: boolean; inst
   })
 }
 
+/**
+ * 거래량 지표의 급증 강조 기본값 — 직전 70봉 평균의 3·5·7배(거래량 급증 지표와 같은 기준).
+ * 예전 20봉 2·3·5배는 BTC 1분~4시간봉에서 7~9봉에 한 번꼴로 칠해져 너무 잦았다(70봉 3배는 14~25봉에 한 번).
+ */
+export const VOLUME_SURGE_DEFAULTS = { window: 70, low: 3, mid: 5, high: 7 } as const
+
 export const INDICATOR_DEFS: Record<IndicatorKind, IndicatorDef> = {
   maSet: MA_SET_DEF,
   volume: {
@@ -203,10 +209,10 @@ export const INDICATOR_DEFS: Record<IndicatorKind, IndicatorDef> = {
     category: '거래량',
     params: [
       { key: 'surge', label: '거래량 급증 강조', default: 0, min: 0, max: 1, kind: 'flag' },
-      { key: 'window', label: '평균 구간', default: 20, min: 2, max: 500, step: 1 },
-      { key: 'low', label: '급증 1단계 배율', default: 2, min: 1, max: 20, step: 0.1 },
-      { key: 'mid', label: '급증 2단계 배율', default: 3, min: 1, max: 20, step: 0.1 },
-      { key: 'high', label: '급증 3단계 배율', default: 5, min: 1, max: 30, step: 0.1 },
+      { key: 'window', label: '평균 구간', default: VOLUME_SURGE_DEFAULTS.window, min: 2, max: 500, step: 1 },
+      { key: 'low', label: '급증 1단계 배율', default: VOLUME_SURGE_DEFAULTS.low, min: 1, max: 20, step: 0.1 },
+      { key: 'mid', label: '급증 2단계 배율', default: VOLUME_SURGE_DEFAULTS.mid, min: 1, max: 20, step: 0.1 },
+      { key: 'high', label: '급증 3단계 배율', default: VOLUME_SURGE_DEFAULTS.high, min: 1, max: 30, step: 0.1 },
     ],
     colors: [],
   },
@@ -593,10 +599,10 @@ function migrateV2(raw: string): IndicatorInstance[] | null {
     if (vs) {
       vol.params = {
         surge: vs.enabled === false ? 0 : 1,
-        window: typeof vs.window === 'number' ? vs.window : 20,
-        low: typeof vs.low === 'number' ? vs.low : 2,
-        mid: typeof vs.mid === 'number' ? vs.mid : 3,
-        high: typeof vs.high === 'number' ? vs.high : 5,
+        window: typeof vs.window === 'number' ? vs.window : VOLUME_SURGE_DEFAULTS.window,
+        low: typeof vs.low === 'number' ? vs.low : VOLUME_SURGE_DEFAULTS.low,
+        mid: typeof vs.mid === 'number' ? vs.mid : VOLUME_SURGE_DEFAULTS.mid,
+        high: typeof vs.high === 'number' ? vs.high : VOLUME_SURGE_DEFAULTS.high,
       }
     }
     list.push(vol)

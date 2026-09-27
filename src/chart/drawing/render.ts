@@ -1,4 +1,4 @@
-import { withAlpha, type ChartPalette } from '../../lib/theme'
+import { readableTextOn, withAlpha, type ChartPalette } from '../../lib/theme'
 import type { Drawing, DrawingPoint, DrawingStyle } from '../../lib/drawings'
 import { drawVolumeProfile, pocPrice } from '../volumeProfile'
 import type { Coords } from './coords'
@@ -161,7 +161,8 @@ function label(
   x: number,
   y: number,
   bg: string,
-  fg = '#ffffff',
+  /** 비우면 바탕 밝기에 맞춰 흰 글자/어두운 글자를 고른다(흰색·노랑 선의 라벨이 안 보이지 않게). */
+  fg: string = readableTextOn(bg),
   align: CanvasTextAlign = 'left',
 ): void {
   ctx.save()
@@ -444,7 +445,7 @@ function drawLineInfo(rc: RenderScope, d: Drawing, a: Pt, b: Pt): void {
   const angle = (Math.atan2(-(b.y - a.y), b.x - a.x) * 180) / Math.PI
   const text = `${dPrice >= 0 ? '+' : ''}${coords.format(dPrice)} (${pct(p0.price, p1.price)})\n${bars} 봉 · ${angle.toFixed(1)}°`
   const right = b.x >= a.x
-  label(ctx, text, b.x + (right ? 10 : -10), b.y, withAlpha(d.style.color, 0.9), '#fff', right ? 'left' : 'right')
+  label(ctx, text, b.x + (right ? 10 : -10), b.y, withAlpha(d.style.color, 0.9), undefined, right ? 'left' : 'right')
 }
 
 /** 추세 각도: 시작점의 수평 기준선과 호, 그 옆에 각도 값. */
@@ -811,7 +812,7 @@ function labelOutside(
   bg: string,
 ): void {
   const half = (text.split('\n').length * 14 + 8) / 2
-  label(ctx, text, x, edgeY + (below ? half + 4 : -half - 4), bg, '#fff', 'center')
+  label(ctx, text, x, edgeY + (below ? half + 4 : -half - 4), bg, undefined, 'center')
 }
 
 function drawPosition(rc: RenderScope, d: Drawing, pts: (Pt | null)[]): void {
@@ -851,7 +852,7 @@ function drawPosition(rc: RenderScope, d: Drawing, pts: (Pt | null)[]): void {
   const cx = x + w / 2
   labelOutside(ctx, `목표 ${coords.format(tP)} (${pct(eP, tP)})`, cx, target.y, target.y > entry.y, withAlpha(green, 0.9))
   labelOutside(ctx, `손절 ${coords.format(sP)} (${pct(eP, sP)})`, cx, stop.y, stop.y > entry.y, withAlpha(red, 0.9))
-  label(ctx, `손익비 ${rr.toFixed(2)}`, cx, entry.y, withAlpha('#787b86', 0.95), '#fff', 'center')
+  label(ctx, `손익비 ${rr.toFixed(2)}`, cx, entry.y, withAlpha('#787b86', 0.95), undefined, 'center')
 }
 
 /** 가격 범위: 두 점 사이 상자, 가운데 세로 화살표(시작→끝), 끝점 바깥에 값. */
