@@ -46,7 +46,8 @@ const EMPTY_CANDLES: Candle[] = []
 
 /**
  * 범례 지표 줄을 접어 두었는가 — 칸마다(PiP 는 따로) 기기에 기억한다. 안 기억하면 새로고침·종목·주기를
- * 바꿀 때마다 도로 펼쳐져 접어 둔 사람이 매번 다시 접어야 한다.
+ * 바꿀 때마다 도로 펼쳐지거나 접혀 매번 다시 눌러야 한다. 처음(기억한 값이 없을 때)은 접은 채 시작한다 —
+ * 지표가 많으면 이름 줄이 차트를 가린다(특히 폰·분할 칸). 접혀 있으면 화살표 옆에 지표 개수를 보인다.
  */
 const LEGEND_COLLAPSED_KEY = 'trading.legendCollapsed.v1'
 
@@ -57,9 +58,10 @@ function legendCollapsedSlot(cellIndex: number | null): string {
 function loadLegendCollapsed(cellIndex: number | null): boolean {
   try {
     const all = JSON.parse(localStorage.getItem(LEGEND_COLLAPSED_KEY) ?? '{}') as Record<string, unknown>
-    return all[legendCollapsedSlot(cellIndex)] === true
+    const saved = all[legendCollapsedSlot(cellIndex)]
+    return typeof saved === 'boolean' ? saved : true
   } catch {
-    return false
+    return true
   }
 }
 
@@ -760,6 +762,7 @@ export function ChartCell({
                 <span className={collapsed ? 'flip' : undefined}>
                   <Ctl name="caret" />
                 </span>
+                {collapsed && <span className="tv-legend-count">{mainRows.length + compare.length}</span>}
               </button>
               {!collapsed && (
                 <div className="tv-legend-inds-list">

@@ -99,15 +99,20 @@
 }
 
 .tv-legend-collapse {
+  position: relative;
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 18px;
+  gap: 2px;
+  min-width: 18px;
   height: 18px;
+  padding: 0 2px;
   border: 0;
   border-radius: var(--tv-radius-sm);
   background: none;
   color: var(--tv-text-dim);
+  font: inherit;
+  font-size: var(--tv-fs-xs);
   cursor: pointer;
 }
 .tv-legend-collapse:hover {
@@ -117,6 +122,23 @@
 .tv-legend-collapse .flip {
   transform: rotate(180deg);
   display: inline-flex;
+}
+/* 접혀 있을 때 화살표 옆 지표 개수. */
+.tv-legend-count {
+  font-variant-numeric: tabular-nums;
+}
+
+/* 폰: 버튼을 조금 키우고 누르는 자리를 위아래로 더 넓힌다(손가락 44px). */
+@media (max-width: 900px) {
+  .tv-legend-collapse {
+    min-width: 28px;
+    height: 28px;
+  }
+  .tv-legend-collapse::before {
+    content: '';
+    position: absolute;
+    inset: -8px -4px;
+  }
 }
 
 .tv-legend-inds-list {
