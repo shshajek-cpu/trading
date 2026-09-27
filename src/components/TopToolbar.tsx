@@ -40,7 +40,7 @@ export interface TopToolbarProps {
   layout: LayoutMode
   onLayoutChange: (mode: LayoutMode) => void
   onEqualize: () => void
-  /** 레이아웃 메뉴 "모든 칸에 같이 적용"(심볼·차트 종류·십자선). */
+  /** 레이아웃 메뉴 "모든 칸에 같이 적용"(심볼·차트 종류). */
   layoutSync: LayoutSync
   onLayoutSyncChange: (key: LayoutSyncKey, on: boolean) => void
   /** 저장 버튼·Ctrl+S = 지금 동기화. saved = 방금 동기화에 성공함('저장됨'). */

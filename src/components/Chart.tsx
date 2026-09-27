@@ -115,7 +115,7 @@ export interface ChartProps {
   onContextMenu?: (req: ChartMenuRequest) => void
   /** 사용자에게 짧게 알릴 말(예: 날짜로 이동이 그 날짜까지 닿지 못함). */
   onNotice?: (message: string) => void
-  /** 켜면 같은 값을 켠 다른 칸과 크로스헤어 시각을 맞춘다(crosshairSync). */
+  /** 켜면 다른 분할 칸과 십자선을 맞춘다(crosshairSync) — 같은 종목 칸은 가로선 가격까지, 다른 종목 칸은 세로선만. */
   syncCrosshair?: boolean
   /** 밖(객체 트리)에서 고른 그림 — DrawingOverlay 의 selectRequest 로 넘긴다. */
   drawingSelectRequest?: { id: string; nonce: number } | null
@@ -856,18 +856,36 @@ export function Chart({
   const syncId = useId()
   const syncRef = useRef(syncCrosshair)
   syncRef.current = syncCrosshair
-  // 다른 칸이 이 칸 크로스헤어를 맞춰 둔 상태 / 사용자 커서가 이 칸 위에 있어 발행하는 상태 / 마지막 발행 시각.
+  const symbolRef = useRef(symbol)
+  symbolRef.current = symbol
+  // 다른 칸이 이 칸 크로스헤어를 맞춰 둔 상태 / 사용자 커서가 이 칸 위에 있어 발행하는 상태 / 마지막 발행 값(제자리 갱신).
   const syncDrivenRef = useRef(false)
   const syncOwnRef = useRef(false)
-  const syncSentRef = useRef<number | null>(null)
+  const syncSentRef = useRef<{ time: number | null; price: number | null }>({ time: null, price: null })
+  // 다른 칸이 맞춰 준 동안 숨긴 선의 원래 색(숨기지 않았으면 null). 다른 종목이면 가로선, 그 시각이 화면 밖이면 세로선을 숨긴다.
+  // 보이기 여부(visible)는 DrawingOverlay 의 화살표 커서가 쓰므로 색·라벨로만 숨긴다.
+  const hiddenLinesRef = useRef<{ horzLine: string | null; vertLine: string | null }>({ horzLine: null, vertLine: null })
+  const showSyncLine = useCallback((which: 'horzLine' | 'vertLine', show: boolean) => {
+    const chart = chartRef.current
+    const hidden = hiddenLinesRef.current
+    if (!chart || show === (hidden[which] === null)) return
+    const line = show ? { color: hidden[which]!, labelVisible: true } : { color: 'transparent', labelVisible: false }
+    hidden[which] = show ? null : chart.options().crosshair[which].color
+    chart.applyOptions({ crosshair: which === 'horzLine' ? { horzLine: line } : { vertLine: line } })
+  }, [])
   useEffect(() => {
     const chart = chartRef.current
     if (!chart) return
+    const sent = syncSentRef.current
     const handler = (param: MouseEventParams) => {
       const user = param.sourceEvent !== undefined
       // 다른 칸이 맞춰 준 크로스헤어를 봉 갱신 때 차트가 다시 계산해 올린 것 — 이 칸의 호버가 아니다.
       if (!user && syncDrivenRef.current) return
-      if (user) syncDrivenRef.current = false
+      if (user) {
+        syncDrivenRef.current = false
+        showSyncLine('horzLine', true)
+        showSyncLine('vertLine', true)
+      }
       const time = param.time === undefined ? null : Number(param.time)
       cbRef.current.onHoverTime?.(time)
       const el = replayLineRef.current
@@ -880,42 +898,61 @@ export function Chart({
           el.style.display = 'none'
         }
       }
-      // 사용자 커서가 이 칸에 있으면 봉이 바뀔 때만 발행한다(같은 봉 안의 움직임·틱 재계산은 거른다).
+      // 사용자 커서가 이 칸에 있으면 봉이나 가격이 바뀔 때만 발행한다.
       if (syncRef.current && (user || syncOwnRef.current)) {
         syncOwnRef.current = param.point !== undefined
-        const next = param.point ? time : null
-        if (next !== syncSentRef.current) {
-          syncSentRef.current = next
-          publishCrosshair(syncId, next)
+        const nextTime = param.point ? time : null
+        // 가격 칸에 있을 때만 가격을 보낸다 — 보조 지표 칸의 y 는 가격이 아니다.
+        const nextPrice =
+          param.point && mainSeries && (param.paneIndex ?? 0) === 0 ? mainSeries.coordinateToPrice(param.point.y) : null
+        if (nextTime !== sent.time || nextPrice !== sent.price) {
+          sent.time = nextTime
+          sent.price = nextPrice
+          publishCrosshair(syncId, nextTime, nextPrice, symbolRef.current)
         }
       }
     }
     chart.subscribeCrosshairMove(handler)
     return () => chart.unsubscribeCrosshairMove(handler)
-  }, [replayPick, syncId])
+  }, [replayPick, syncId, mainSeries, showSyncLine])
 
-  // 10b) 다른 칸이 발행한 시각을 이 칸의 그 시각을 품는 봉 종가에 맞춘다. 차트 API 만 부르고 React 상태는 건드리지 않는다.
+  // 10b) 다른 칸이 발행한 십자선을 이 칸에 맞춘다: 세로선은 그 시각을 품는 봉, 가로선은 같은 종목일 때만 그 가격.
+  // 차트 API 만 부르고 React 상태는 건드리지 않는다.
   useEffect(() => {
     const chart = chartRef.current
     const series = mainSeries
     if (!chart || !series || !syncCrosshair) return
+    const sent = syncSentRef.current
     const clear = () => {
+      showSyncLine('horzLine', true)
+      showSyncLine('vertLine', true)
       if (!syncDrivenRef.current) return
       syncDrivenRef.current = false
       chart.clearCrosshairPosition()
     }
-    const unsubscribe = subscribeCrosshair((sourceId, time) => {
+    const unsubscribe = subscribeCrosshair((sourceId, time, price, sourceSymbol) => {
       if (sourceId === syncId) return
       // 커서가 다른 칸으로 갔다 — 이 칸은 더 발행하지 않는다.
       syncOwnRef.current = false
-      syncSentRef.current = null
-      const bar = time === null ? null : barAtOrBefore(candlesRef.current, time)
-      if (!bar) {
+      sent.time = null
+      sent.price = null
+      const candles = candlesRef.current
+      const found = time === null ? null : barAtOrBefore(candles, time)
+      // 다른 종목은 가격이 달라 가로선을 숨긴다(가격 자리는 봉 종가로 채운다).
+      const samePrice = price !== null && sourceSymbol === symbolRef.current
+      // 그 시각이 이 칸 화면 밖(불러온 봉보다 앞 포함)이면 세로선을 숨긴다 — 두면 시간 라벨이 칸 가장자리에 엉뚱한 시각으로 붙는다.
+      const range = found ? chart.timeScale().getVisibleRange() : null
+      const inView = found !== null && range !== null && found.time >= Number(range.from) && found.time <= Number(range.to)
+      // 같은 종목이면 시각이 화면 밖이어도 가로선은 보인다 — 봉이 없으면 첫 봉 자리에 두고 세로선을 숨긴다.
+      const bar = found ?? (samePrice ? candles[0] : undefined)
+      if (!bar || (!inView && !samePrice)) {
         clear()
         return
       }
       try {
-        chart.setCrosshairPosition(bar.close, bar.time as Time, series)
+        chart.setCrosshairPosition(samePrice ? price : bar.close, bar.time as Time, series)
+        showSyncLine('horzLine', samePrice)
+        showSyncLine('vertLine', inView)
         syncDrivenRef.current = true
       } catch {
         // 보이는 봉이 하나도 없으면(빈 구간으로 밀어 둔 경우) 가격 좌표를 못 구한다 — 맞추지 않는다.
@@ -927,12 +964,13 @@ export function Chart({
       clear()
       // 이 칸이 발행해 둔 커서가 있으면 다른 칸에서도 지운다.
       syncOwnRef.current = false
-      if (syncSentRef.current !== null) {
-        syncSentRef.current = null
-        publishCrosshair(syncId, null)
+      if (sent.time !== null || sent.price !== null) {
+        sent.time = null
+        sent.price = null
+        publishCrosshair(syncId, null, null, symbolRef.current)
       }
     }
-  }, [syncCrosshair, mainSeries, syncId])
+  }, [syncCrosshair, mainSeries, syncId, showSyncLine])
 
   // ── 11) 핀/리플레이 클릭 캡처(시각 + 가격). ──────────────────────────
   useEffect(() => {

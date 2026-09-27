@@ -127,7 +127,7 @@ export interface ChartCellProps {
   onScaleMenu?: () => void
   /** 사용자에게 짧게 알릴 말(예: 날짜로 이동이 그 날짜까지 닿지 못함). */
   onNotice?: (message: string) => void
-  /** 켜면 같은 값을 켠 다른 칸과 크로스헤어 시각을 맞춘다. */
+  /** 켜면 다른 분할 칸과 십자선을 맞춘다(같은 종목 칸은 가로선 가격까지). 분할 칸은 늘 켜고, PiP 창은 끈다. */
   syncCrosshair?: boolean
   /** 밖(객체 트리)에서 고른 그림 — 이 칸에 있으면 선택한다. */
   drawingSelectRequest?: { id: string; nonce: number } | null

@@ -29,16 +29,14 @@ export interface LayoutState {
   syncChartType: boolean
   /** 심볼을 바꾸면 모든 칸에 같이 적용한다(한 종목을 여러 주기로 볼 때). */
   syncSymbol: boolean
-  /** 한 칸의 십자선 시각을 다른 칸에도 세로선으로 보여 준다. */
-  syncCrosshair: boolean
 }
 
 /** 레이아웃 메뉴 "모든 칸에 같이 적용" 항목. */
-export type LayoutSyncKey = 'chartType' | 'symbol' | 'crosshair'
+export type LayoutSyncKey = 'chartType' | 'symbol'
 export type LayoutSync = Record<LayoutSyncKey, boolean>
 
 export function layoutSync(state: LayoutState): LayoutSync {
-  return { chartType: state.syncChartType, symbol: state.syncSymbol, crosshair: state.syncCrosshair }
+  return { chartType: state.syncChartType, symbol: state.syncSymbol }
 }
 
 /** 레이아웃 고르기 — 데스크톱 레이아웃 메뉴와 폰 레이아웃 시트가 같은 목록을 쓴다. */
@@ -52,7 +50,6 @@ export const LAYOUT_MODES: { mode: LayoutMode; label: string }[] = [
 export const LAYOUT_SYNC_ITEMS: { key: LayoutSyncKey; label: string }[] = [
   { key: 'symbol', label: '심볼' },
   { key: 'chartType', label: '차트 종류' },
-  { key: 'crosshair', label: '십자선' },
 ]
 
 const STORAGE_KEY = 'trading.layout.v1'
@@ -74,7 +71,6 @@ export const DEFAULT_LAYOUT: LayoutState = {
   splitRow: 0.5,
   syncChartType: true,
   syncSymbol: false,
-  syncCrosshair: false,
 }
 
 /** 다중 시간대 프리셋. 한 종목을 여러 주기로 동시에 본다. */
@@ -132,7 +128,6 @@ export function loadLayout(): LayoutState {
       splitRow: split(parsed.splitRow),
       syncChartType: typeof parsed.syncChartType === 'boolean' ? parsed.syncChartType : true,
       syncSymbol: parsed.syncSymbol === true,
-      syncCrosshair: parsed.syncCrosshair === true,
     }
   } catch {
     return DEFAULT_LAYOUT

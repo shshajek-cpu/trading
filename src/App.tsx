@@ -509,7 +509,6 @@ function App() {
   const setLayoutSync = useCallback((key: LayoutSyncKey, on: boolean) => {
     setLayoutState((prev) => {
       const src = prev.cells[prev.active]
-      if (key === 'crosshair') return { ...prev, syncCrosshair: on }
       if (key === 'symbol') {
         return {
           ...prev,
@@ -1197,7 +1196,7 @@ function App() {
         onEditIndicator={setEditIndicatorId}
         onScaleMenu={isMobile ? () => setMobileSheet('scale') : undefined}
         onNotice={pushToast}
-        syncCrosshair={layoutState.syncCrosshair}
+        syncCrosshair
         drawingSelectRequest={drawingSelect?.cell === index ? drawingSelect.req : null}
         // 폰에서는 가격 축을 끌 수 있다(분할 칸이 좁을 때). 데스크톱은 늘 보인다.
         priceAxisVisible={!isMobile || prefs.mobilePriceAxis}
