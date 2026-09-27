@@ -228,7 +228,8 @@ function TradeOverlayInner({ chart, series, symbol, interactive, api }: TradeOve
       node: (
         <>
           <span className="tv-tl-text">
-            {orderText(o, tick)} · <span className={`tv-tl-side ${SIDE_CLASS[o.side]}`}>{SIDE_LABEL[o.side]}</span> {ACTION_LABEL[o.action]} · {fmtQty(o.qty, step)}
+            {orderText(o, tick)} · <span className={`tv-tl-side ${SIDE_CLASS[o.side]}`}>{SIDE_LABEL[o.side]}</span> {ACTION_LABEL[o.action]} ·{' '}
+            {o.filledQty > 0 ? `${fmtQty(o.filledQty, step)}/${fmtQty(o.qty, step)}` : fmtQty(o.qty, step)}
           </span>
           {interactive && (
             <button type="button" className="tv-tl-x" aria-label="주문 취소" onClick={() => report(api.cancel(o.id))}>

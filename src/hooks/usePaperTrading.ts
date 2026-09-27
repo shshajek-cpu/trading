@@ -20,6 +20,8 @@ import {
   positionView,
   summarize,
   estimateOrder,
+  firesTaker,
+  trimBook,
   maxOpenQty as engineMaxOpenQty,
   marginLimits as engineMarginLimits,
 } from '../lib/paper/engine'
@@ -28,6 +30,7 @@ import { loadRules } from '../lib/paper/rules'
 import {
   fetchAggTrades,
   fetchBookTicker,
+  fetchDepth,
   fetchFundingRates,
   fetchKlines,
   fetchMarkKlines,
@@ -39,8 +42,9 @@ import {
   type CombinedStreamMessage,
   type Interval,
   type MarkPriceEvent,
+  type OrderBook,
 } from '../lib/binance'
-import { ACTION_LABEL, fmtPrice, fmtQty, fmtUsdt, SIDE_LABEL, TYPE_LABEL } from '../components/trade/format'
+import { ACTION_LABEL, fmtBp, fmtPrice, fmtQty, fmtUsdt, roundTo, SIDE_LABEL, TYPE_LABEL } from '../components/trade/format'
 import type { SymbolInfo } from '../lib/symbols'
 import {
   DEFAULT_START_BALANCE,
@@ -49,14 +53,17 @@ import {
   type EngineEvent,
   type FundingEvent,
   type MarketSnap,
+  type OrderAction,
   type OrderEstimate,
   type PaperAccount,
+  type PaperFill,
   type PaperApi,
   type PaperLive,
   type PaperLiveStore,
   type PaperQuote,
   type PaperSyncMode,
   type PaperSyncStatus,
+  type PosSide,
   type PositionView,
   type RulesOf,
   type SymbolRules,
@@ -90,6 +97,11 @@ const HIDE_SAVE_GAP = 5 * MINUTE
 const MAX_DEFERRED = 50_000
 /** 스트림 시세가 이보다 오래되면(끊김·복귀 직후) 동작에 쓰지 않고 호가를 새로 받는다. */
 const STALE_QUOTE_MS = 10_000
+/** 호가창을 기다리는 시간 상한 — 넘으면 호가창 없이(최우선 호가로) 체결한다. */
+const BOOK_TIMEOUT_MS = 3000
+/** 호가창 단계 수 — 50단계(가중치 2)를 받고, 그것으로 모자라 보이는 큰 주문만 100단계(가중치 5)를 한 번 더 받는다. */
+const BOOK_LEVELS = 50
+const BOOK_LEVELS_DEEP = 100
 /** 저장이 서버에 닿지 못했을 때 다시 올리는 간격(연속 실패마다 다음 값, 마지막 값에서 멈춘다). */
 const SAVE_RETRY_MS = [15_000, 30_000, 60_000]
 /** keepalive 요청 본문 상한(브라우저 한도 64KB 보다 조금 작게). */
@@ -100,8 +112,19 @@ interface LiveStep {
   kind: 'trade' | 'mark'
   symbol: string
   price: number
+  /** 체결 수량(aggTrade q) — 정확히 지정가에서 난 체결은 이 수량까지만 지정가 주문을 채운다. 마크는 0. */
+  qty: number
   at: number
   other?: number
+  /** 조건부 주문이 테이커로 발동하는 시세에 받아 둔 호가창. null = 받으려 했지만 못 받음, 없으면 아직 받지 않았다. */
+  book?: OrderBook | null
+}
+
+/** 호가창을 훑을 주문 — 사는지, 얼마나, 바로 닿는 지정가면 그 가격까지. */
+interface BookNeed {
+  buy: boolean
+  qty: number
+  limit?: number
 }
 
 interface Persisted {
@@ -202,6 +225,8 @@ export function usePaperTrading(opts: UsePaperTradingOptions): PaperApi {
   const catchUpRunningRef = useRef(false)
   const lastReqRef = useRef(0)
   const deferredRef = useRef<LiveStep[]>([])
+  /** 조건부 주문이 테이커로 발동하는 시세의 호가창을 받는 중 — 그동안 들어온 시세는 미뤄 둔다. */
+  const bookWaitRef = useRef(false)
 
   // 시세로 바뀌는 파생 값 저장소.
   const liveRef = useRef<PaperLive>({
@@ -276,18 +301,63 @@ export function usePaperTrading(opts: UsePaperTradingOptions): PaperApi {
   }
 
   /**
-   * 사용자 동작에 쓸 시세. 시각은 지금이다 — 옛 시각이면 새 주문·포지션의 updatedAt 이 과거가 되어 되짚기가
-   * 넣기 전의 봉으로 체결·손절을 판정한다. 시장가(book)는 늘 호가를 새로 받고, 그 밖에는 스트림 시세가 오래됐을
-   * 때만 받는다. 오래된 최근가·마크가는 새 호가와 섞지 않고 호가 중간값으로 대신한다. 쓸 시세가 없으면 오류 문구.
+   * 이 주문이 호가창을 훑는가 — 시장가(종료는 보유 수량까지, 0 이하면 전량), 또는 지금 반대 호가에 닿을 수 있는 지정가
+   * (스트림 최근가 이상으로 사거나 이하로 파는 지정가 — 시세가 오래됐으면 받아 본다). 지정가는 엔진처럼 틱에 맞춘다.
    */
-  async function actionSnap(symbol: string, book: boolean): Promise<MarketSnap | string> {
-    const bt = book || !freshQuote(symbol) ? await fetchBookTicker(symbol).catch(() => null) : null
-    // 호가를 받는 사이 스트림이 돌아왔을 수 있다 — 다시 본다.
+  function bookNeed(symbol: string, side: PosSide, action: OrderAction, qty: number, limit?: number): BookNeed | null {
+    const buy = (side === 'long') === (action === 'open')
+    if (action === 'close') {
+      const held = accountRef.current.positions.find((p) => p.symbol === symbol && p.side === side)?.qty ?? 0
+      qty = qty > 0 ? Math.min(qty, held) : held
+    }
+    if (!(qty > 0)) return null
+    if (limit === undefined) return { buy, qty }
+    const price = roundTo(limit, rulesMapRef.current.get(symbol)?.tickSize ?? infoOf(symbol)?.tickSize ?? 0)
+    if (!(price > 0)) return null
+    const q = freshQuote(symbol)
+    if (q && (buy ? price < q.last : price > q.last)) return null
+    return { buy, qty, limit: price }
+  }
+
+  /** 호가창 한 번 받기 — BOOK_TIMEOUT_MS 안에 오지 않거나 실패하면(쿨다운 포함) null. */
+  function fetchBook(symbol: string, levels: typeof BOOK_LEVELS | typeof BOOK_LEVELS_DEEP): Promise<OrderBook | null> {
+    const ctrl = new AbortController()
+    const timer = setTimeout(() => ctrl.abort(), BOOK_TIMEOUT_MS)
+    return fetchDepth(symbol, levels, ctrl.signal)
+      .catch(() => null)
+      .finally(() => clearTimeout(timer))
+  }
+
+  /**
+   * 호가창(50단계)을 받는다. 50단계를 다 써도 모자라 보이는 큰 주문만 100단계를 한 번 더 받는다(가중치 2 → +5).
+   * 못 받으면 null — 엔진이 최우선 호가로 체결하고 '호가창 없음'을 남긴다.
+   */
+  async function loadBook(symbol: string, need: BookNeed): Promise<OrderBook | null> {
+    const book = await fetchBook(symbol, BOOK_LEVELS)
+    if (!book || (need.buy ? book.asks : book.bids).length < BOOK_LEVELS) return book
+    if (!trimBook(book, need.buy, need.qty, need.limit).short) return book
+    return (await fetchBook(symbol, BOOK_LEVELS_DEEP)) ?? book
+  }
+
+  /**
+   * 사용자 동작에 쓸 시세. 시각은 지금이다 — 옛 시각이면 새 주문·포지션의 updatedAt 이 과거가 되어 되짚기가
+   * 넣기 전의 봉으로 체결·손절을 판정한다. 호가창을 훑을 주문(need)은 호가창을 받아 그 주문이 쓰는 단계만 시세에 담는다
+   * (명령과 함께 남아 다시 적용해도 같은 체결가가 나온다). 호가창을 못 받으면 호가(최우선)로 — 예전 방식. 그 밖의 동작은
+   * 스트림 시세가 오래됐을 때만 호가를 받는다. 오래된 최근가·마크가는 새 호가와 섞지 않고 호가 중간값으로 대신한다.
+   * 쓸 시세가 없으면 오류 문구.
+   */
+  async function actionSnap(symbol: string, need: BookNeed | null): Promise<MarketSnap | string> {
+    const book = need ? await loadBook(symbol, need) : null
+    const bt = !book && (need || !freshQuote(symbol)) ? await fetchBookTicker(symbol).catch(() => null) : null
+    // 받는 사이 스트림이 돌아왔을 수 있다 — 다시 본다.
     const q = freshQuote(symbol)
     const snap: MarketSnap | null = q ? { last: q.last, mark: Number.isFinite(q.mark) ? q.mark : q.last, at: Date.now() } : null
-    if (bt && bt.bid > 0 && bt.ask > 0) {
-      const mid = (bt.bid + bt.ask) / 2
-      return { last: snap?.last ?? mid, mark: snap?.mark ?? mid, bid: bt.bid, ask: bt.ask, at: Date.now() }
+    const bid = book?.bids[0]?.[0] ?? bt?.bid ?? 0
+    const ask = book?.asks[0]?.[0] ?? bt?.ask ?? 0
+    if (bid > 0 && ask > 0) {
+      const mid = (bid + ask) / 2
+      const used = book && need ? trimBook(book, need.buy, need.qty, need.limit).book : undefined
+      return { last: snap?.last ?? mid, mark: snap?.mark ?? mid, bid, ask, ...(used ? { book: used } : {}), at: Date.now() }
     }
     if (snap) return snap
     return quotesRef.current[symbol] ? '시세가 오래되어 주문할 수 없습니다. 잠시 후 다시 시도하세요' : '시세를 아직 받지 못했습니다'
@@ -505,7 +575,44 @@ export function usePaperTrading(opts: UsePaperTradingOptions): PaperApi {
     optsRef.current.toast(body)
   }
 
+  /** 체결 알림. 호가창을 훑은 체결은 평균가·슬리피지를, 부분 체결은 누적 체결/주문 수량을 붙인다. */
+  function notifyFill(f: PaperFill, qty: number, price: number, progress?: { filled: number; total: number }): void {
+    const info = infoOf(f.symbol)
+    const tick = info?.tickSize && info.tickSize > 0 ? info.tickSize : 0.01
+    const step = info?.stepSize && info.stepSize > 0 ? info.stepSize : 0.001
+    let title = '체결'
+    let typeLabel = '시장가'
+    if (f.reason === 'tp') {
+      title = '익절 체결'
+      typeLabel = '익절'
+    } else if (f.reason === 'sl') {
+      title = '손절 체결'
+      typeLabel = '손절'
+    } else if (f.reason === 'trigger') {
+      typeLabel = '조건부 시장가'
+    } else if (f.reason === 'order') {
+      typeLabel = '지정가'
+    }
+    const notes = [typeLabel]
+    if (f.slippage !== undefined && f.slippage > 0) notes.push(`슬리피지 ${fmtBp(f.slippage)}`)
+    if (f.depth === 'thin') notes.push('호가 부족')
+    else if (f.depth === 'none') notes.push('호가창 없음')
+    if (progress) {
+      notes.push(`${fmtQty(progress.filled, step)}/${fmtQty(progress.total, step)}`)
+      if (progress.filled < progress.total) title = '부분 체결'
+    }
+    const at = f.depth === 'book' || f.depth === 'thin' ? '@ 평균' : '@'
+    notifyAndToast(
+      title,
+      `${optsRef.current.displayName(f.symbol)} ${SIDE_LABEL[f.side]} ${ACTION_LABEL[f.action]} ${fmtQty(qty, step)} ${at} ${fmtPrice(price, tick)} (${notes.join(' · ')})`,
+      // 같은 주문의 부분 체결 알림은 서로 바꿔 끼운다.
+      `paper-${f.orderId ?? f.id}`,
+    )
+  }
+
   function handleEvents(events: EngineEvent[]): void {
+    // 한 번에 들어온 같은 주문의 메이커 부분 체결은 하나로 묶어 알린다(되짚기에서 여러 건이 한꺼번에 올 수 있다).
+    const partials = new Map<string, { fill: PaperFill; qty: number; value: number; progress: { filled: number; total: number } }>()
     for (const ev of events) {
       if (ev.kind === 'funding') continue
       const name = optsRef.current.displayName
@@ -523,39 +630,30 @@ export function usePaperTrading(opts: UsePaperTradingOptions): PaperApi {
         continue
       }
       const f = ev.fill
-      const info = infoOf(f.symbol)
-      const tick = info?.tickSize && info.tickSize > 0 ? info.tickSize : 0.01
-      const step = info?.stepSize && info.stepSize > 0 ? info.stepSize : 0.001
-      const priceStr = fmtPrice(f.price, tick)
-      const qtyStr = fmtQty(f.qty, step)
-      const nm = name(f.symbol)
       if (ev.kind === 'liquidation') {
+        const info = infoOf(f.symbol)
+        const tick = info?.tickSize && info.tickSize > 0 ? info.tickSize : 0.01
+        const step = info?.stepSize && info.stepSize > 0 ? info.stepSize : 0.001
         notifyAndToast(
           '강제 청산',
-          `${nm} ${SIDE_LABEL[f.side]} 강제 청산 ${qtyStr} @ ${priceStr} (${fmtUsdt(Math.abs(f.pnl))} USDT 손실)`,
+          `${name(f.symbol)} ${SIDE_LABEL[f.side]} 강제 청산 ${fmtQty(f.qty, step)} @ ${fmtPrice(f.price, tick)} (${fmtUsdt(Math.abs(f.pnl))} USDT 손실)`,
           `paper-${f.id}`,
         )
         continue
       }
-      let title = '체결'
-      let typeLabel = '시장가'
-      if (f.reason === 'tp') {
-        title = '익절 체결'
-        typeLabel = '익절'
-      } else if (f.reason === 'sl') {
-        title = '손절 체결'
-        typeLabel = '손절'
-      } else if (f.reason === 'trigger') {
-        typeLabel = '조건부 시장가'
-      } else if (f.reason === 'order') {
-        typeLabel = '지정가'
+      if (ev.progress && f.maker && f.orderId) {
+        const prev = partials.get(f.orderId)
+        partials.set(f.orderId, {
+          fill: f,
+          qty: (prev?.qty ?? 0) + f.qty,
+          value: (prev?.value ?? 0) + f.qty * f.price,
+          progress: ev.progress,
+        })
+        continue
       }
-      notifyAndToast(
-        title,
-        `${nm} ${SIDE_LABEL[f.side]} ${ACTION_LABEL[f.action]} ${qtyStr} @ ${priceStr} (${typeLabel})`,
-        `paper-${f.id}`,
-      )
+      notifyFill(f, f.qty, f.price, ev.progress)
     }
+    for (const p of partials.values()) notifyFill(p.fill, p.qty, p.value / p.qty, p.progress)
   }
 
   /* ── 되짚기(catch-up) ───────────────────────────────────────── */
@@ -584,7 +682,7 @@ export function usePaperTrading(opts: UsePaperTradingOptions): PaperApi {
           break
         }
         const mark = quotesRef.current[symbol]?.mark
-        const res = onTrade(accountRef.current, symbol, t.price, t.time, rulesOf, mark)
+        const res = onTrade(accountRef.current, symbol, t.price, t.qty, t.time, rulesOf, mark)
         accountRef.current = res.account
         if (res.events.length) collected.push(...res.events)
       }
@@ -718,16 +816,32 @@ export function usePaperTrading(opts: UsePaperTradingOptions): PaperApi {
     }
   }
 
-  /** 시세 한 건을 엔진에 반영한다. 되짚는 중이면 미뤄 둔다 — 새 시세가 옛 시세보다 먼저 판정되면 순서가 뒤집힌다. */
+  /**
+   * 시세 한 건을 엔진에 반영한다. 되짚는 중이거나 호가창을 기다리는 중이면 미뤄 둔다 — 새 시세가 옛 시세보다 먼저 판정되면
+   * 순서가 뒤집힌다. 이 시세에 조건부 주문이 테이커로 발동하면 호가창을 먼저 한 번 받아(최대 3초) 그것으로 체결한다
+   * (못 받으면 예전처럼 발동 가격으로 — 체결에 '호가창 없음'). TP/SL 만으로는 받지 않는다.
+   */
   function runStep(step: LiveStep): void {
-    if (catchUpRunningRef.current) {
+    if (catchUpRunningRef.current || bookWaitRef.current) {
       if (deferredRef.current.length < MAX_DEFERRED) deferredRef.current.push(step)
       return
     }
-    const res =
-      step.kind === 'trade'
-        ? onTrade(accountRef.current, step.symbol, step.price, step.at, rulesOf, step.other)
-        : onMark(accountRef.current, step.symbol, step.price, step.at, rulesOf, step.other, buildMarks())
+    const trade = step.kind === 'trade'
+    if (step.book === undefined && firesTaker(accountRef.current, step.symbol, trade ? 'last' : 'mark', step.price, step.at, trade ? step.price : step.other)) {
+      bookWaitRef.current = true
+      void fetchBook(step.symbol, BOOK_LEVELS).then((book) => {
+        bookWaitRef.current = false
+        // 기다리는 사이 미뤄 둔 시세는 이 시세 뒤에 순서대로(그사이 되짚기가 시작됐으면 runStep 이 다시 미룬다).
+        const queue = deferredRef.current
+        deferredRef.current = []
+        runStep({ ...step, book })
+        for (const s of queue) runStep(s)
+      })
+      return
+    }
+    const res = trade
+      ? onTrade(accountRef.current, step.symbol, step.price, step.qty, step.at, rulesOf, step.other, step.book)
+      : onMark(accountRef.current, step.symbol, step.price, step.at, rulesOf, step.other, buildMarks(), step.book)
     accountRef.current = markChecked(res.account, step.at)
     if (res.events.length) {
       setAccount(accountRef.current)
@@ -801,7 +915,7 @@ export function usePaperTrading(opts: UsePaperTradingOptions): PaperApi {
         },
       }
       quoteSeenRef.current.set(symbol, Date.now())
-      runStep({ kind: 'trade', symbol, price, at, other: quotesRef.current[symbol].mark })
+      runStep({ kind: 'trade', symbol, price, qty: Number(d.q), at, other: quotesRef.current[symbol].mark })
       markLiveDirty()
     } else if (d.e === 'markPriceUpdate') {
       const symbol = d.s
@@ -819,7 +933,7 @@ export function usePaperTrading(opts: UsePaperTradingOptions): PaperApi {
         },
       }
       quoteSeenRef.current.set(symbol, Date.now())
-      runStep({ kind: 'mark', symbol, price: mark, at, other: prev?.last })
+      runStep({ kind: 'mark', symbol, price: mark, qty: 0, at, other: prev?.last })
       markLiveDirty()
       scheduleFunding(symbol, d.T)
     }
@@ -872,7 +986,13 @@ export function usePaperTrading(opts: UsePaperTradingOptions): PaperApi {
       }
     },
     place: async (req) => {
-      const snap = await actionSnap(req.symbol, req.type === 'market')
+      const need =
+        req.type === 'market'
+          ? bookNeed(req.symbol, req.side, req.action, req.qty)
+          : req.type === 'limit' && req.price !== undefined
+            ? bookNeed(req.symbol, req.side, req.action, req.qty, req.price)
+            : null
+      const snap = await actionSnap(req.symbol, need)
       if (typeof snap === 'string') return snap
       const before = new Set(accountRef.current.orders.map((o) => o.id))
       const err = dispatch({ kind: 'place', req, snap, marks: buildMarks(), at: Date.now() })
@@ -884,8 +1004,10 @@ export function usePaperTrading(opts: UsePaperTradingOptions): PaperApi {
         const tick = info?.tickSize && info.tickSize > 0 ? info.tickSize : 0.01
         const step = info?.stepSize && info.stepSize > 0 ? info.stepSize : 0.001
         const at = rested.type === 'trigger' ? `발동 ${fmtPrice(rested.triggerPrice ?? 0, tick)}` : `@ ${fmtPrice(rested.price ?? 0, tick)}`
+        // 바로 닿은 몫이 체결되고 남은 몫만 걸렸으면 그 수량(잔량)을 알린다.
+        const qty = rested.filledQty > 0 ? `잔량 ${fmtQty(rested.qty - rested.filledQty, step)}` : fmtQty(rested.qty, step)
         optsRef.current.toast(
-          `주문 접수: ${optsRef.current.displayName(rested.symbol)} ${SIDE_LABEL[rested.side]} ${ACTION_LABEL[rested.action]} ${TYPE_LABEL[rested.type]} ${fmtQty(rested.qty, step)} ${at}`,
+          `주문 접수: ${optsRef.current.displayName(rested.symbol)} ${SIDE_LABEL[rested.side]} ${ACTION_LABEL[rested.action]} ${TYPE_LABEL[rested.type]} ${qty} ${at}`,
         )
       }
       return null
@@ -895,22 +1017,27 @@ export function usePaperTrading(opts: UsePaperTradingOptions): PaperApi {
     amend: async (orderId, patch) => {
       const order = accountRef.current.orders.find((o) => o.id === orderId)
       if (!order) return '주문을 찾을 수 없습니다'
-      const snap = await actionSnap(order.symbol, false)
+      // 옮긴 지정가가 지금 호가에 닿을 수 있으면 남은 수량만큼 호가창을 받는다.
+      const need =
+        order.type === 'limit'
+          ? bookNeed(order.symbol, order.side, order.action, (patch.qty ?? order.qty) - order.filledQty, patch.price ?? order.price)
+          : null
+      const snap = await actionSnap(order.symbol, need)
       if (typeof snap === 'string') return snap
       return dispatch({ kind: 'amend', orderId, patch, snap, marks: buildMarks(), at: Date.now() })
     },
     close: async (symbol, side, qty) => {
-      const snap = await actionSnap(symbol, true)
+      const snap = await actionSnap(symbol, bookNeed(symbol, side, 'close', qty ?? 0))
       if (typeof snap === 'string') return snap
       return dispatch({ kind: 'close', symbol, side, qty: qty ?? 0, snap, marks: buildMarks(), at: Date.now() })
     },
     setTpSl: async (symbol, side, tp, sl) => {
-      const snap = await actionSnap(symbol, false)
+      const snap = await actionSnap(symbol, null)
       if (typeof snap === 'string') return snap
       return dispatch({ kind: 'setTpSl', symbol, side, tp, sl, snap, marks: buildMarks(), at: Date.now() })
     },
     adjustMargin: async (symbol, side, delta) => {
-      const snap = await actionSnap(symbol, false)
+      const snap = await actionSnap(symbol, null)
       if (typeof snap === 'string') return snap
       return dispatch({ kind: 'adjustMargin', symbol, side, delta, snap, marks: buildMarks(), at: Date.now() })
     },

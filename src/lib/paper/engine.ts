@@ -2,7 +2,10 @@
  * 모의 선물거래 엔진 — 순수 함수만 둔다(시각은 인자로 받는다).
  *
  * 규칙: OKX USDT 무기한 롱/숏 모드(종목·방향마다 포지션 하나), 교차/격리, 구간별 최대 레버리지·유지증거금률.
- * 가격: 바이낸스 시세(체결가·마크가·호가)를 호출하는 쪽이 넣어 준다.
+ * 가격: 바이낸스 시세(체결가·마크가·호가·호가창)를 호출하는 쪽이 넣어 준다.
+ *
+ * 체결: 시장가(와 바로 닿는 지정가의 테이커 몫)는 주문 때 받은 호가창을 훑은 평균가로 체결한다. 걸어 둔 지정가(메이커)는
+ * 체결가가 지정가를 넘어서면 남은 수량이 모두, 정확히 지정가면 그 체결 수량까지만 체결된다(부분 체결).
  *
  * 멱등성: 시세로 판정하는 모든 것(지정가 체결·발동·TP/SL·강제 청산)은 주문·포지션의 updatedAt 이후 시세만 본다.
  * 그래서 같은 구간을 두 번 되짚어도(다른 기기에서 이미 처리했거나 재시작) 결과가 같다.
@@ -15,8 +18,11 @@ import {
   type AccountSummary,
   type ActionResult,
   type Bar,
+  type BookLevel,
+  type DepthBook,
   type EngineEvent,
   type EngineResult,
+  type FillDepth,
   type FillReason,
   type FundingEvent,
   type MarginMode,
@@ -24,7 +30,6 @@ import {
   type OrderAction,
   type OrderEstimate,
   type OrderRequest,
-  type OrderType,
   type PaperAccount,
   type PaperFill,
   type PaperOrder,
@@ -78,6 +83,11 @@ function roundStep(v: number, step: number): number {
   return Number((Math.round(v / step) * step).toFixed(stepDecimals(step)))
 }
 
+/** 수량 계산의 부동소수 찌꺼기를 지운다(0.30000000000000004 → 0.3). */
+function qtyNorm(v: number): number {
+  return Number(v.toPrecision(12))
+}
+
 function num(v: number, digits = 2): string {
   return v.toLocaleString('en-US', { maximumFractionDigits: digits })
 }
@@ -128,15 +138,17 @@ export function symbolsInUse(acct: PaperAccount): string[] {
 }
 
 /**
- * 밖에서 들어온 계좌(로컬 사본·서버)를 지금 모양으로 맞춘다 — 포지션 기록·적용한 명령 id 가 생기기 전 계좌에는
- * 그 배열이 없다.
+ * 밖에서 들어온 계좌(로컬 사본·서버)를 지금 모양으로 맞춘다 — 포지션 기록·적용한 명령 id·주문의 체결 수량이 생기기 전
+ * 계좌에는 그 값이 없다(체결 수량은 0 으로 채운다).
  */
 export function normalizeAccount(acct: PaperAccount): PaperAccount {
-  if (Array.isArray(acct.positionHistory) && Array.isArray(acct.appliedCmds)) return acct
+  const ordersOk = acct.orders.every((o) => typeof o.filledQty === 'number')
+  if (Array.isArray(acct.positionHistory) && Array.isArray(acct.appliedCmds) && ordersOk) return acct
   return {
     ...acct,
     positionHistory: Array.isArray(acct.positionHistory) ? acct.positionHistory : [],
     appliedCmds: Array.isArray(acct.appliedCmds) ? acct.appliedCmds : [],
+    orders: ordersOk ? acct.orders : acct.orders.map((o) => (typeof o.filledQty === 'number' ? o : { ...o, filledQty: 0 })),
   }
 }
 
@@ -212,6 +224,120 @@ function marketPrice(snap: MarketSnap, buy: boolean): number {
   return quote !== undefined && quote > 0 ? quote : snap.last
 }
 
+/* ── 호가창 ───────────────────────────────────────────── */
+
+/** 명령에 담는 호가창 단계 상한(받는 호가창도 많아야 100단계). */
+const BOOK_CAP = 100
+
+/** 호가창을 훑은 결과. */
+interface Walk {
+  /** 채운 수량. */
+  qty: number
+  /** 평균 체결가(VWAP). */
+  price: number
+  /** 최우선 호가. */
+  best: number
+  /** 받은 호가창이 모자라 나머지를 추가 슬리피지로 채웠다. */
+  thin: boolean
+}
+
+/** 테이커 체결에 남기는 표시값 — 슬리피지(bp)와 체결가를 정한 방법. */
+interface FillTag {
+  slippage?: number
+  depth?: FillDepth
+}
+
+/** 호가창으로 체결하려 했지만 호가창이 없다 — 최우선 호가(없으면 최근가)로 체결했다. */
+const NO_DEPTH: FillTag = { depth: 'none' }
+
+/**
+ * 호가창을 훑어 qty 를 채운다 — 사는 쪽은 매도 호가를 낮은 가격부터, 파는 쪽은 매수 호가를 높은 가격부터 먹는다.
+ * limit 이 있으면(바로 닿는 지정가) 그 가격을 넘는 단계는 먹지 않고 채운 만큼만 돌려준다. 없으면(시장가) 받은 단계로
+ * 모자란 나머지를 마지막 단계 가격에서 "먹은 단계 수 × 단계 간격(평균, 최소 한 틱)"만큼 더 불리한 가격으로 채운다 —
+ * 스냅숏 너머에도 비슷한 간격으로 호가가 이어진다고 보고 그만큼을 더 먹는다고 친다. 먹을 단계가 없으면 null.
+ */
+function walkBook(book: DepthBook, buy: boolean, qty: number, tick: number, limit?: number): Walk | null {
+  if (!(qty > 0)) return null
+  const tiny = qty * 1e-12
+  let left = qty
+  let cost = 0
+  let used = 0
+  let best = 0
+  let worst = 0
+  for (const [price, size] of buy ? book.asks : book.bids) {
+    if (left <= tiny) break
+    if (!(price > 0) || !(size > 0)) continue
+    if (limit !== undefined && (buy ? price > limit : price < limit)) break
+    const take = Math.min(left, size)
+    cost += take * price
+    left -= take
+    if (used === 0) best = price
+    worst = price
+    used++
+  }
+  if (used === 0) return null
+  let thin = false
+  if (left > tiny && limit === undefined) {
+    const gap = used > 1 ? Math.abs(worst - best) / (used - 1) : 0
+    const step = Math.max(tick > 0 ? tick : worst * 1e-4, gap)
+    const beyond = buy ? worst + step * used : Math.max(step, worst - step * used)
+    cost += left * beyond
+    left = 0
+    thin = true
+  }
+  const filled = left <= tiny ? qty : qtyNorm(qty - left)
+  return { qty: filled, price: cost / filled, best, thin }
+}
+
+/** 훑은 체결의 표시값. 슬리피지 = 최우선 호가보다 평균가가 불리한 만큼(bp, 0.01 단위). */
+function walkTag(w: Walk, buy: boolean): FillTag {
+  const bp = ((buy ? w.price - w.best : w.best - w.price) / w.best) * 10_000
+  return { slippage: Math.max(0, Math.round(bp * 100) / 100), depth: w.thin ? 'thin' : 'book' }
+}
+
+/**
+ * 명령에 담을 호가창 — 이 주문이 훑는 쪽에서 qty 를 채우는 데 쓰는 단계만(지정가를 넘는 단계는 뺀다), 많아야 BOOK_CAP 단계.
+ * 쓸 단계가 없으면 book 이 없다. short = 받은 단계를 다 써도 모자라다(더 깊은 호가창을 받으면 달라질 수 있다).
+ * 담긴 단계로 엔진이 같은 주문을 다시 훑으면 원래 호가창과 같은 결과가 나온다.
+ */
+export function trimBook(book: DepthBook, buy: boolean, qty: number, limit?: number): { book?: DepthBook; short: boolean } {
+  const tiny = qty * 1e-12
+  const kept: BookLevel[] = []
+  let left = qty
+  let blocked = false
+  for (const [price, size] of buy ? book.asks : book.bids) {
+    if (left <= tiny || kept.length >= BOOK_CAP) break
+    if (limit !== undefined && (buy ? price > limit : price < limit)) {
+      blocked = true
+      break
+    }
+    kept.push([price, size])
+    if (price > 0 && size > 0) left -= size
+  }
+  const short = left > tiny && !blocked
+  if (kept.length === 0) return { short }
+  return { book: buy ? { bids: [], asks: kept } : { bids: kept, asks: [] }, short }
+}
+
+/** 바로 닿는 지정가의 테이커 몫 — 수량, 평균 체결가, 표시값. */
+interface Take {
+  qty: number
+  price: number
+  tag: FillTag
+}
+
+/**
+ * 지금 호가에 바로 닿는 지정가(사는 주문은 지정가 ≥ 매도1, 파는 주문은 ≤ 매수1)의 테이커 몫. 호가창이 있으면 지정가까지
+ * 훑은 만큼, 없으면 전량을 최우선 호가에(호가창 없음). 닿지 않으면 null.
+ */
+function crossingTake(snap: MarketSnap, buy: boolean, qty: number, limit: number, tick: number): Take | null {
+  const opposite = marketPrice(snap, buy)
+  if (buy ? limit < opposite : limit > opposite) return null
+  if (!snap.book) return { qty, price: opposite, tag: NO_DEPTH }
+  const w = walkBook(snap.book, buy, qty, tick, limit)
+  return w ? { qty: w.qty, price: w.price, tag: walkTag(w, buy) } : null
+}
+
 function findPos(acct: PaperAccount, symbol: string, side: PosSide): PaperPosition | undefined {
   return acct.positions.find((p) => p.symbol === symbol && p.side === side)
 }
@@ -256,6 +382,8 @@ interface FillSpec {
   sl?: number
   tpSlBy?: TriggerBy
   mark?: number
+  slippage?: number
+  depth?: FillDepth
 }
 
 /** 포지션에 체결을 반영한다. 종료할 포지션이 없으면 null. */
@@ -390,6 +518,8 @@ function pushFill(d: PaperAccount, s: FillSpec, qty: number, pnl: number, fee: n
     reason: s.reason,
     at: s.at,
   }
+  if (s.slippage !== undefined) fill.slippage = s.slippage
+  if (s.depth !== undefined) fill.depth = s.depth
   d.fills.push(fill)
   events.push(s.reason === 'liquidation' ? { kind: 'liquidation', fill } : { kind: 'fill', fill })
   return fill
@@ -403,28 +533,83 @@ function removePosition(d: PaperAccount, pos: PaperPosition, at: number, note: s
   }
 }
 
-function endOrder(
-  d: PaperAccount,
-  o: PaperOrder,
-  status: PaperOrderRecord['status'],
-  at: number,
-  events: EngineEvent[],
-  note?: string,
-  avgPrice?: number,
-): void {
+/** 주문을 끝내고 주문 내역으로 옮긴다. 체결된 몫이 있으면 그 수량·평균가도 남는다(부분 체결 뒤 취소). */
+function endOrder(d: PaperAccount, o: PaperOrder, status: PaperOrderRecord['status'], at: number, events: EngineEvent[], note?: string): void {
   d.orders = d.orders.filter((x) => x.id !== o.id)
-  const record: PaperOrderRecord = { ...o, frozen: 0, status, endedAt: at, note, avgPrice }
+  const { avgFillPrice, ...rest } = o
+  const record: PaperOrderRecord = { ...rest, frozen: 0, status, endedAt: at, note, avgPrice: avgFillPrice }
   d.orderHistory.push(record)
   if (status !== 'filled') events.push({ kind: 'canceled', order: record })
 }
 
-/** 바로 체결된 주문(시장가·바로 체결된 지정가)의 기록. */
-function recordImmediate(
-  d: PaperAccount,
-  base: Omit<PaperOrderRecord, 'status' | 'endedAt' | 'frozen' | 'updatedAt' | 'createdAt'>,
-  at: number,
-): void {
-  d.orderHistory.push({ ...base, frozen: 0, createdAt: at, updatedAt: at, status: 'filled', endedAt: at })
+/** 주문의 남은(아직 체결되지 않은) 수량. 부동소수 찌꺼기만 남았으면 0. */
+function remainingOf(o: PaperOrder): number {
+  const left = qtyNorm(o.qty - (o.filledQty ?? 0))
+  return left > o.qty * 1e-9 ? left : 0
+}
+
+/** executeOrder 가 남기는 체결의 성격. */
+interface ExecSpec extends FillTag {
+  maker: boolean
+  reason: FillReason
+  at: number
+  mark?: number
+}
+
+/**
+ * 주문 o 에서 qty 만큼을 price 에 체결한다(부분 체결 포함). 남은 수량이 있으면 주문을 제자리에 남기고(진입 주문은 남은
+ * 수량만큼 다시 묶는다), 다 찼거나 종료할 포지션이 먼저 끝나면 주문 내역으로 옮긴다. 체결된 수량(없으면 0)을 돌려준다.
+ * 주문에 붙은 익절·손절은 첫 체결 때만 포지션에 붙인다 — 부분 체결마다 붙이면 사용자가 그새 바꾼 값을 덮는다.
+ */
+function executeOrder(d: PaperAccount, o: PaperOrder, qty: number, price: number, x: ExecSpec, events: EngineEvent[]): number {
+  const idx = d.orders.findIndex((y) => y.id === o.id)
+  if (idx >= 0) d.orders.splice(idx, 1)
+  const before = o.filledQty ?? 0
+  const fill = applyFill(
+    d,
+    {
+      symbol: o.symbol,
+      side: o.side,
+      action: o.action,
+      qty,
+      price,
+      maker: x.maker,
+      reason: x.reason,
+      at: x.at,
+      leverage: o.leverage,
+      marginMode: o.marginMode,
+      orderId: o.id,
+      mark: x.mark,
+      slippage: x.slippage,
+      depth: x.depth,
+      ...(before > 0 ? {} : { tp: o.tp, sl: o.sl, tpSlBy: o.tpSlBy }),
+    },
+    events,
+  )
+  if (!fill) {
+    endOrder(d, o, 'canceled', x.at, events, '종료할 포지션이 없어 취소')
+    return 0
+  }
+  const filled = qtyNorm(before + fill.qty)
+  const next: PaperOrder = {
+    ...o,
+    filledQty: filled,
+    avgFillPrice: ((o.avgFillPrice ?? 0) * before + price * fill.qty) / filled,
+    updatedAt: x.at,
+  }
+  // 종료 주문이 포지션보다 컸으면 포지션이 먼저 끝난다 — 체결된 만큼으로 끝낸다(줄이기 전용).
+  const posGone = o.action === 'close' && !findPos(d, o.symbol, o.side)
+  const done = posGone || remainingOf(next) <= 0
+  if (before > 0 || !done) {
+    for (const ev of events) if (ev.kind === 'fill' && ev.fill === fill) ev.progress = { filled, total: posGone ? filled : o.qty }
+  }
+  if (done) {
+    endOrder(d, posGone ? { ...next, qty: filled } : next, 'filled', x.at, events)
+  } else {
+    next.frozen = o.action === 'open' && o.price !== undefined ? openCost(remainingOf(next), o.price, o.leverage, d.fees.maker) : 0
+    d.orders.splice(idx >= 0 ? Math.min(idx, d.orders.length) : d.orders.length, 0, next)
+  }
+  return fill.qty
 }
 
 /* ── 검증 ─────────────────────────────────────────────── */
@@ -493,8 +678,10 @@ export function placeOrder(
     ...tpSl,
   }
 
-  // 바로 체결: 시장가, 또는 지금 호가에 바로 닿는 지정가(테이커).
-  const executeNow = (price: number, type: OrderType, limitPrice?: number): ActionResult => {
+  // 시장가 — 호가창을 끝까지 훑은 평균가로 바로 체결한다(호가창이 없으면 최우선 호가).
+  if (req.type === 'market') {
+    const w = snap.book ? walkBook(snap.book, buy, qty, rules.tickSize) : null
+    const price = w?.price ?? marketPrice(snap, buy)
     if (req.action === 'open') {
       const tpErr = checkEntryTpSl(req.side, price, req.tp, req.sl)
       if (tpErr) return { error: tpErr }
@@ -505,37 +692,54 @@ export function placeOrder(
     const d = draft(acct)
     const events: EngineEvent[] = []
     const id = newId()
-    const fill = applyFill(
-      d,
-      { ...base, price, maker: false, reason: type === 'market' ? 'market' : 'order', at, orderId: id, mark: snap.mark },
-      events,
-    )
+    const tag = w ? walkTag(w, buy) : NO_DEPTH
+    const fill = applyFill(d, { ...base, price, maker: false, reason: 'market', at, orderId: id, mark: snap.mark, ...tag }, events)
     if (!fill) return { error: `종료할 ${SIDE_KO[req.side]} 포지션이 없습니다` }
-    recordImmediate(d, { ...base, id, type, price: limitPrice, avgPrice: price }, at)
+    d.orderHistory.push({
+      ...base,
+      id,
+      type: 'market',
+      avgPrice: price,
+      filledQty: fill.qty,
+      frozen: 0,
+      createdAt: at,
+      updatedAt: at,
+      status: 'filled',
+      endedAt: at,
+    })
     return finish(d, events)
   }
-
-  if (req.type === 'market') return executeNow(marketPrice(snap, buy), 'market')
 
   if (req.type === 'limit') {
     const price = roundStep(req.price ?? NaN, rules.tickSize)
     if (!(price > 0)) return { error: '가격을 입력하세요' }
-    const opposite = marketPrice(snap, buy)
-    if (buy ? price >= opposite : price <= opposite) {
-      // 지정가가 이미 반대 호가에 닿아 있다 — 그 호가로 바로 체결된다(더 나은 가격).
-      return executeNow(opposite, 'limit', price)
-    }
-    let frozen = 0
+    // 지금 호가에 바로 닿는 몫은 지정가까지 호가창을 훑어 테이커로 체결하고, 남은 몫은 지정가에 걸어 둔다(메이커).
+    const take = crossingTake(snap, buy, qty, price, rules.tickSize)
+    const rest = take ? qtyNorm(qty - take.qty) : qty
     if (req.action === 'open') {
-      const tpErr = checkEntryTpSl(req.side, price, req.tp, req.sl)
+      const tpErr =
+        (take && checkEntryTpSl(req.side, take.price, req.tp, req.sl)) || (rest > 0 && checkEntryTpSl(req.side, price, req.tp, req.sl))
       if (tpErr) return { error: tpErr }
-      frozen = openCost(qty, price, set.leverage, acct.fees.maker)
+      const need =
+        (take ? openCost(take.qty, take.price, set.leverage, acct.fees.taker) : 0) + openCost(rest, price, set.leverage, acct.fees.maker)
       const avail = availableOf(acct, mk)
-      if (frozen > avail + EPS) return { error: marginShortfall(frozen, avail) }
+      if (need > avail + EPS) return { error: marginShortfall(need, avail) }
     }
     const d = draft(acct)
-    d.orders.push({ ...base, id: newId(), type: 'limit', price, frozen, createdAt: at, updatedAt: at })
-    return finish(d, [])
+    const events: EngineEvent[] = []
+    const order: PaperOrder = {
+      ...base,
+      id: newId(),
+      type: 'limit',
+      price,
+      filledQty: 0,
+      frozen: req.action === 'open' ? openCost(qty, price, set.leverage, acct.fees.maker) : 0,
+      createdAt: at,
+      updatedAt: at,
+    }
+    d.orders.push(order)
+    if (take) executeOrder(d, order, take.qty, take.price, { maker: false, reason: 'order', at, mark: snap.mark, ...take.tag }, events)
+    return finish(d, events)
   }
 
   // 조건부: 발동가에 닿으면 시장가(또는 지정가)로 넣는다. 증거금은 발동할 때 확인한다(OKX 와 같다).
@@ -559,6 +763,7 @@ export function placeOrder(
     triggerPrice: trigger,
     triggerBy: by,
     triggerDir: trigger > ref ? 'up' : 'down',
+    filledQty: 0,
     frozen: 0,
     createdAt: at,
     updatedAt: at,
@@ -599,6 +804,7 @@ export function amendOrder(
   if (patch.qty !== undefined) {
     const q = floorStep(patch.qty, rules.stepSize)
     if (!(q > 0) || q < rules.minQty - EPS) return { error: `최소 수량은 ${num(rules.minQty, 8)} 입니다` }
+    if (q <= (o.filledQty ?? 0) + EPS) return { error: `이미 체결된 수량(${num(o.filledQty, 8)})보다 커야 합니다` }
     next.qty = q
   }
   if (patch.price !== undefined && (o.type === 'limit' || o.price !== undefined)) {
@@ -622,37 +828,26 @@ export function amendOrder(
   const without: PaperAccount = { ...acct, orders: acct.orders.filter((x) => x.id !== orderId) }
   const mk: Marks = { ...marks, [o.symbol]: snap.mark }
 
+  // 옮긴 지정가가 지금 호가에 닿으면 새로 넣을 때처럼 닿는 몫은 호가창을 훑어 바로 체결하고 나머지는 걸어 둔다.
+  let take: Take | null = null
   if (next.type === 'limit' && next.price !== undefined) {
-    const buy = isBuy(next.side, next.action)
-    const opposite = marketPrice(snap, buy)
-    if (buy ? next.price >= opposite : next.price <= opposite) {
-      // 옮긴 가격이 반대 호가에 닿는다 — 바로 체결.
-      if (next.action === 'open') {
-        const need = openCost(next.qty, opposite, next.leverage, acct.fees.taker)
-        const avail = availableOf(without, mk)
-        if (need > avail + EPS) return { error: marginShortfall(need, avail) }
-      }
-      const d = draft(acct)
-      const events: EngineEvent[] = []
-      d.orders = d.orders.filter((x) => x.id !== orderId)
-      const fill = applyFill(
-        d,
-        { ...next, price: opposite, maker: false, reason: 'order', at, orderId, mark: snap.mark },
-        events,
-      )
-      if (!fill) return { error: `종료할 ${SIDE_KO[next.side]} 포지션이 없습니다` }
-      d.orderHistory.push({ ...next, frozen: 0, status: 'filled', endedAt: at, avgPrice: opposite })
-      return finish(d, events)
-    }
+    const left = remainingOf(next)
+    take = crossingTake(snap, isBuy(next.side, next.action), left, next.price, rules.tickSize)
     if (next.action === 'open') {
-      next.frozen = openCost(next.qty, next.price, next.leverage, acct.fees.maker)
+      next.frozen = openCost(left, next.price, next.leverage, acct.fees.maker)
+      const rest = take ? qtyNorm(left - take.qty) : left
+      const need =
+        (take ? openCost(take.qty, take.price, next.leverage, acct.fees.taker) : 0) +
+        openCost(rest, next.price, next.leverage, acct.fees.maker)
       const avail = availableOf(without, mk)
-      if (next.frozen > avail + EPS) return { error: marginShortfall(next.frozen, avail) }
+      if (need > avail + EPS) return { error: marginShortfall(need, avail) }
     }
   }
   const d = draft(acct)
+  const events: EngineEvent[] = []
   d.orders = d.orders.map((x) => (x.id === orderId ? next : x))
-  return finish(d, [])
+  if (take) executeOrder(d, next, take.qty, take.price, { maker: false, reason: 'order', at, mark: snap.mark, ...take.tag }, events)
+  return finish(d, events)
 }
 
 /** 시장가 종료. qty ≤ 0 이면 전량. */
@@ -799,7 +994,7 @@ export function setSymbolSettings(
     }
     for (const o of d.orders.filter((x) => x.symbol === symbol && x.action === 'open')) {
       o.leverage = lev
-      if (o.type === 'limit' && o.price !== undefined) o.frozen = openCost(o.qty, o.price, lev, d.fees.maker)
+      if (o.type === 'limit' && o.price !== undefined) o.frozen = openCost(remainingOf(o), o.price, lev, d.fees.maker)
     }
     const mk: Marks = { ...marks, ...(mark !== undefined ? { [symbol]: mark } : {}) }
     const avail = availableOf(d, mk)
@@ -810,9 +1005,16 @@ export function setSymbolSettings(
 
 /* ── 시세 반영 ────────────────────────────────────────── */
 
+/** 체결가가 지정가에 닿았는가(사는 주문은 지정가 이하, 파는 주문은 이상). */
 function limitTouched(o: PaperOrder, price: number): boolean {
   if (o.type !== 'limit' || o.price === undefined) return false
   return isBuy(o.side, o.action) ? price <= o.price : price >= o.price
+}
+
+/** 체결가가 지정가를 넘어섰는가(사는 주문은 더 낮게, 파는 주문은 더 높게) — 걸어 둔 수량이 모두 체결됐다고 본다. */
+function limitThrough(o: PaperOrder, price: number): boolean {
+  if (o.type !== 'limit' || o.price === undefined || Math.abs(price - o.price) <= o.price * 1e-12) return false
+  return isBuy(o.side, o.action) ? price < o.price : price > o.price
 }
 
 function triggerHit(o: PaperOrder, price: number): boolean {
@@ -830,22 +1032,10 @@ function slHit(p: PaperPosition, by: TriggerBy, price: number): boolean {
   return p.side === 'long' ? price <= p.sl.price : price >= p.sl.price
 }
 
-/** 지정가 주문 체결(메이커, 지정가 그대로). */
-function fillLimit(d: PaperAccount, o: PaperOrder, at: number, events: EngineEvent[], mark?: number): void {
-  const price = o.price!
-  d.orders = d.orders.filter((x) => x.id !== o.id)
-  const fill = applyFill(d, { ...o, price, maker: true, reason: 'order', at, orderId: o.id, mark }, events)
-  if (!fill) {
-    d.orderHistory.push({ ...o, frozen: 0, status: 'canceled', endedAt: at, note: '종료할 포지션이 없어 취소' })
-    events.push({ kind: 'canceled', order: d.orderHistory[d.orderHistory.length - 1] })
-    return
-  }
-  d.orderHistory.push({ ...o, frozen: 0, qty: fill.qty, status: 'filled', endedAt: at, avgPrice: price })
-}
-
 /**
- * 조건부 주문 발동. 시장가면 `price` 에 체결(테이커), 지정가면 지정가 주문으로 바꿔 둔다.
- * 진입은 이때 증거금을 확인하고, 모자라면 거절한다.
+ * 조건부 주문 발동. 시장가면 테이커로 체결하고(호가창 book 을 받았으면 훑은 평균가, 아니면 `price`), 지정가면 지정가 주문으로
+ * 바꿔 두고 발동 순간 이미 닿으면 닿는 몫을 바로 체결한다. 진입은 이때 증거금을 확인하고, 모자라면 거절한다.
+ * book: undefined = 호가창을 쓰지 않는 경로(봉 되짚기), null = 받으려 했지만 못 받음(체결에 '호가창 없음'을 남긴다).
  */
 function fireTrigger(
   d: PaperAccount,
@@ -858,35 +1048,29 @@ function fireTrigger(
   /** 바로 체결을 볼 현재 체결가 — 봉 되짚기에서는 undefined(다음 봉부터 본다). */
   livePrice: number | undefined,
   mark?: number,
+  book?: DepthBook | null,
 ): void {
   d.orders = d.orders.filter((x) => x.id !== o.id)
   const rules = rulesOf(o.symbol)
-  const set = { leverage: o.leverage, marginMode: o.marginMode }
+  const tick = rules?.tickSize ?? 0
+  const buy = isBuy(o.side, o.action)
+  const unbooked: FillTag = book === null ? NO_DEPTH : {}
   if (o.action === 'open') {
     const pos = findPos(d, o.symbol, o.side)
-    if (rules && set.leverage > maxLeverageFor(rules, (pos?.qty ?? 0) + o.qty) + EPS) {
-      d.orderHistory.push({ ...o, status: 'rejected', endedAt: at, note: '포지션 크기가 레버리지 구간을 넘어 거절' })
-      events.push({ kind: 'canceled', order: d.orderHistory[d.orderHistory.length - 1] })
+    if (rules && o.leverage > maxLeverageFor(rules, (pos?.qty ?? 0) + o.qty) + EPS) {
+      endOrder(d, o, 'rejected', at, events, '포지션 크기가 레버리지 구간을 넘어 거절')
       return
     }
   }
   if (o.price === undefined) {
-    if (o.action === 'open') {
-      const need = openCost(o.qty, price, o.leverage, d.fees.taker)
-      if (need > availableOf(d, marks) + EPS) {
-        d.orderHistory.push({ ...o, status: 'rejected', endedAt: at, note: '증거금이 부족해 발동 후 거절' })
-        events.push({ kind: 'canceled', order: d.orderHistory[d.orderHistory.length - 1] })
-        return
-      }
-    }
     // 조건부 시장가 — 체결 내역·알림에서 지정가와 구분한다.
-    const fill = applyFill(d, { ...o, price, maker: false, reason: 'trigger', at, orderId: o.id, mark }, events)
-    if (!fill) {
-      d.orderHistory.push({ ...o, status: 'canceled', endedAt: at, note: '종료할 포지션이 없어 취소' })
-      events.push({ kind: 'canceled', order: d.orderHistory[d.orderHistory.length - 1] })
+    const w = book ? walkBook(book, buy, o.qty, tick) : null
+    const px = w?.price ?? price
+    if (o.action === 'open' && openCost(o.qty, px, o.leverage, d.fees.taker) > availableOf(d, marks) + EPS) {
+      endOrder(d, o, 'rejected', at, events, '증거금이 부족해 발동 후 거절')
       return
     }
-    d.orderHistory.push({ ...o, qty: fill.qty, status: 'filled', endedAt: at, avgPrice: price })
+    executeOrder(d, o, o.qty, px, { maker: false, reason: 'trigger', at, mark, ...(w ? walkTag(w, buy) : unbooked) }, events)
     return
   }
   // 지정가로 바꿔 둔다.
@@ -899,26 +1083,36 @@ function fireTrigger(
     updatedAt: at,
   }
   if (o.action === 'open' && limit.frozen > availableOf(d, marks) + EPS) {
-    d.orderHistory.push({ ...o, status: 'rejected', endedAt: at, note: '증거금이 부족해 발동 후 거절' })
-    events.push({ kind: 'canceled', order: d.orderHistory[d.orderHistory.length - 1] })
+    endOrder(d, o, 'rejected', at, events, '증거금이 부족해 발동 후 거절')
     return
   }
   d.orders.push(limit)
   events.push({ kind: 'triggered', order: limit })
   if (livePrice !== undefined && limitTouched(limit, livePrice)) {
-    // 발동 순간 이미 닿는 지정가 — 지금 가격으로 바로 체결(테이커).
-    d.orders = d.orders.filter((x) => x.id !== limit.id)
-    const fill = applyFill(d, { ...limit, price: livePrice, maker: false, reason: 'order', at, orderId: limit.id, mark }, events)
-    if (fill) d.orderHistory.push({ ...limit, frozen: 0, qty: fill.qty, status: 'filled', endedAt: at, avgPrice: livePrice })
-    else {
-      d.orderHistory.push({ ...limit, frozen: 0, status: 'canceled', endedAt: at, note: '종료할 포지션이 없어 취소' })
-      events.push({ kind: 'canceled', order: d.orderHistory[d.orderHistory.length - 1] })
-    }
+    // 발동 순간 이미 닿는 지정가 — 호가창을 받았으면 지정가까지 훑고 남은 몫은 걸어 둔다. 못 받았으면 지금 가격으로 전량(테이커).
+    const w = book ? walkBook(book, buy, limit.qty, tick, limit.price) : null
+    if (w) executeOrder(d, limit, w.qty, w.price, { maker: false, reason: 'order', at, mark, ...walkTag(w, buy) }, events)
+    else if (!book) executeOrder(d, limit, limit.qty, livePrice, { maker: false, reason: 'order', at, mark, ...unbooked }, events)
   }
 }
 
-/** 포지션 전량을 시장가로 닫는다(TP/SL). */
-function closeAllAt(d: PaperAccount, pos: PaperPosition, price: number, reason: 'tp' | 'sl', at: number, events: EngineEvent[], mark?: number): void {
+/**
+ * 포지션 전량을 시장가로 닫는다(TP/SL). 이 시세에 호가창을 이미 받아 두었으면(같은 순간 발동한 조건부 주문 때문에) 훑은
+ * 평균가, 아니면 price — TP/SL 때문에 호가창을 따로 받지는 않는다.
+ */
+function closeAllAt(
+  d: PaperAccount,
+  pos: PaperPosition,
+  price: number,
+  reason: 'tp' | 'sl',
+  at: number,
+  events: EngineEvent[],
+  mark?: number,
+  book?: DepthBook | null,
+  tick = 0,
+): void {
+  const buy = isBuy(pos.side, 'close')
+  const w = book ? walkBook(book, buy, pos.qty, tick) : null
   applyFill(
     d,
     {
@@ -926,13 +1120,14 @@ function closeAllAt(d: PaperAccount, pos: PaperPosition, price: number, reason: 
       side: pos.side,
       action: 'close',
       qty: pos.qty,
-      price,
+      price: w?.price ?? price,
       maker: false,
       reason,
       at,
       leverage: pos.leverage,
       marginMode: pos.marginMode,
       mark,
+      ...(w ? walkTag(w, buy) : {}),
     },
     events,
   )
@@ -998,14 +1193,36 @@ function liquidateCross(d: PaperAccount, priceOf: (p: PaperPosition) => number, 
   d.balance = isoTotal
 }
 
-/** 최근 체결가 한 건 반영: 지정가 체결, 최근가 기준 조건부 발동·TP/SL. */
+/**
+ * 이 시세 한 건에 조건부 주문이 발동해 바로 테이커로 체결되는가(발동 후 시장가, 또는 발동 순간 이미 닿는 지정가).
+ * 그렇다면 부르는 쪽이 호가창을 받아 onTrade·onMark 에 넘긴다 — 시세마다 받지 않는다. live = 그때의 최근 체결가.
+ */
+export function firesTaker(acct: PaperAccount, symbol: string, by: TriggerBy, price: number, at: number, live?: number): boolean {
+  return acct.orders.some(
+    (o) =>
+      o.symbol === symbol &&
+      o.updatedAt < at &&
+      (o.triggerBy ?? 'last') === by &&
+      triggerHit(o, price) &&
+      (o.price === undefined || (live !== undefined && (isBuy(o.side, o.action) ? live <= o.price : live >= o.price))),
+  )
+}
+
+/**
+ * 최근 체결 한 건(가격 price, 수량 qty) 반영: 지정가 체결, 최근가 기준 조건부 발동·TP/SL.
+ * 걸어 둔 지정가는 체결가가 지정가를 넘어서면 남은 수량이 모두 체결되고, 정확히 지정가면 그 체결 수량까지만 체결된다
+ * (대기열 순서는 모르니 무시하고, 같은 쪽 주문끼리 그 수량을 나눠 쓴다).
+ * book = 조건부 주문이 테이커로 발동할 때 받아 둔 호가창(firesTaker), null = 받으려 했지만 못 받음.
+ */
 export function onTrade(
   acct: PaperAccount,
   symbol: string,
   price: number,
+  qty: number,
   at: number,
   rulesOf: RulesOf,
   mark?: number,
+  book?: DepthBook | null,
 ): EngineResult {
   const posHits = acct.positions.filter(
     (p) => p.symbol === symbol && p.updatedAt < at && (slHit(p, 'last', price) || tpHit(p, 'last', price)),
@@ -1014,28 +1231,47 @@ export function onTrade(
     (o) =>
       o.symbol === symbol &&
       o.updatedAt < at &&
-      (limitTouched(o, price) || ((o.triggerBy ?? 'last') === 'last' && triggerHit(o, price))),
+      ((limitTouched(o, price) && (qty > 0 || limitThrough(o, price))) || ((o.triggerBy ?? 'last') === 'last' && triggerHit(o, price))),
   )
   if (posHits.length === 0 && orderHits.length === 0) return { account: acct, events: [] }
   const d = draft(acct)
   const events: EngineEvent[] = []
   const marks: Marks | undefined = mark !== undefined ? { [symbol]: mark } : undefined
+  const rules = rulesOf(symbol)
+  const tick = rules?.tickSize ?? 0
   for (const hit of posHits) {
     const pos = findPos(d, hit.symbol, hit.side)
     if (!pos) continue
-    if (slHit(pos, 'last', price)) closeAllAt(d, pos, price, 'sl', at, events, mark)
-    else if (tpHit(pos, 'last', price)) closeAllAt(d, pos, price, 'tp', at, events, mark)
+    if (slHit(pos, 'last', price)) closeAllAt(d, pos, price, 'sl', at, events, mark, book, tick)
+    else if (tpHit(pos, 'last', price)) closeAllAt(d, pos, price, 'tp', at, events, mark, book, tick)
   }
+  // 정확히 지정가에서 난 체결의 수량 — 사는 주문끼리, 파는 주문끼리 나눠 쓴다.
+  const pool = { buy: qty, sell: qty }
   for (const hit of orderHits) {
     const o = d.orders.find((x) => x.id === hit.id)
     if (!o) continue
-    if (o.type === 'limit') fillLimit(d, o, at, events, mark)
-    else fireTrigger(d, o, price, at, events, rulesOf, marks, price, mark)
+    if (o.type !== 'limit') {
+      fireTrigger(d, o, price, at, events, rulesOf, marks, price, mark, book)
+      continue
+    }
+    const spec: ExecSpec = { maker: true, reason: 'order', at, mark }
+    if (limitThrough(o, price)) {
+      executeOrder(d, o, remainingOf(o), o.price!, spec, events)
+      continue
+    }
+    const side = isBuy(o.side, o.action) ? 'buy' : 'sell'
+    const part = floorStep(Math.min(remainingOf(o), pool[side]), rules?.stepSize ?? 0)
+    if (part > 0) pool[side] -= executeOrder(d, o, part, o.price!, spec, events)
   }
+  // 정확히 닿았지만 나눌 수량이 없었다 — 바뀐 것이 없다.
+  if (events.length === 0) return { account: acct, events }
   return finish(d, events)
 }
 
-/** 마크가 한 건 반영: 마크 기준 조건부 발동·TP/SL, 강제 청산. `marks` 는 다른 종목의 마크가(교차 계산용). */
+/**
+ * 마크가 한 건 반영: 마크 기준 조건부 발동·TP/SL, 강제 청산. `marks` 는 다른 종목의 마크가(교차 계산용).
+ * book 은 onTrade 와 같다(마크 기준 조건부 주문이 테이커로 발동할 때 받아 둔 호가창).
+ */
 export function onMark(
   acct: PaperAccount,
   symbol: string,
@@ -1044,6 +1280,7 @@ export function onMark(
   rulesOf: RulesOf,
   last?: number,
   marks?: Marks,
+  book?: DepthBook | null,
 ): EngineResult {
   const fillPrice = last ?? mark
   const mk: Marks = { ...marks, [symbol]: mark }
@@ -1054,6 +1291,7 @@ export function onMark(
     (o) => o.symbol === symbol && o.updatedAt < at && o.triggerBy === 'mark' && triggerHit(o, mark),
   )
   const rules = rulesOf(symbol)
+  const tick = rules?.tickSize ?? 0
   const isoLiq = rules
     ? acct.positions.filter(
         (p) =>
@@ -1078,12 +1316,12 @@ export function onMark(
   for (const hit of posHits) {
     const pos = findPos(d, hit.symbol, hit.side)
     if (!pos) continue
-    if (slHit(pos, 'mark', mark)) closeAllAt(d, pos, fillPrice, 'sl', at, events, mark)
-    else if (tpHit(pos, 'mark', mark)) closeAllAt(d, pos, fillPrice, 'tp', at, events, mark)
+    if (slHit(pos, 'mark', mark)) closeAllAt(d, pos, fillPrice, 'sl', at, events, mark, book, tick)
+    else if (tpHit(pos, 'mark', mark)) closeAllAt(d, pos, fillPrice, 'tp', at, events, mark, book, tick)
   }
   for (const hit of orderHits) {
     const o = d.orders.find((x) => x.id === hit.id)
-    if (o) fireTrigger(d, o, fillPrice, at, events, rulesOf, mk, last, mark)
+    if (o) fireTrigger(d, o, fillPrice, at, events, rulesOf, mk, last, mark, book)
   }
   return finish(d, events)
 }
@@ -1100,6 +1338,7 @@ function crossLiquidating(acct: PaperAccount, marks: Marks, rulesOf: RulesOf, sy
 /**
  * 되짚기 — 봉 하나(길이 무관)를 반영한다. 봉 안의 순서는 알 수 없으므로 불리한 쪽부터 본다:
  * 강제 청산 → 손절 → 지정가·조건부 → 익절. 이 봉에서 새로 생긴 포지션·주문은 다음 봉부터 본다.
+ * 봉에는 가격별 체결량이 없어 지정가는 봉이 지정가를 넘어섰을 때만 체결로 본다(딱 닿기만 한 봉은 체결 없음).
  */
 export function onBar(
   acct: PaperAccount,
@@ -1150,8 +1389,8 @@ export function onBar(
   for (const o of [...d.orders].filter((x) => x.symbol === symbol && eligible(x.updatedAt))) {
     if (!d.orders.some((x) => x.id === o.id)) continue
     if (o.type === 'limit') {
-      const touched = isBuy(o.side, o.action) ? bar.low <= o.price! : bar.high >= o.price!
-      if (touched) fillLimit(d, o, at, events, mb.close)
+      const through = isBuy(o.side, o.action) ? bar.low < o.price! : bar.high > o.price!
+      if (through) executeOrder(d, o, remainingOf(o), o.price!, { maker: true, reason: 'order', at, mark: mb.close }, events)
       continue
     }
     const src = o.triggerBy === 'mark' ? mb : bar

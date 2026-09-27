@@ -32,14 +32,19 @@ export interface OrderRequest {
   tpSlBy?: TriggerBy
 }
 
-/** 체결을 기다리는 주문(지정가·조건부). 시장가는 남지 않는다. */
+/** 체결을 기다리는 주문(지정가·조건부). 시장가는 남지 않는다. 지정가는 여러 번에 나눠 체결될 수 있다. */
 export interface PaperOrder {
   id: string
   symbol: string
   side: PosSide
   action: OrderAction
   type: 'limit' | 'trigger'
+  /** 주문 전체 수량. 남은 수량 = qty − filledQty. */
   qty: number
+  /** 지금까지 체결된 수량(부분 체결). 이 필드가 생기기 전 주문에는 없을 수 있다(normalizeAccount 가 0 으로 채운다). */
+  filledQty: number
+  /** 체결된 몫의 평균가. 체결 전에는 없다. */
+  avgFillPrice?: number
   price?: number
   triggerPrice?: number
   triggerBy?: TriggerBy
@@ -50,7 +55,7 @@ export interface PaperOrder {
   tp?: number
   sl?: number
   tpSlBy?: TriggerBy
-  /** 진입 주문이 묶어 둔 증거금 + 예상 수수료(USDT). 종료 주문은 0. */
+  /** 진입 주문이 남은 수량에 묶어 둔 증거금 + 예상 수수료(USDT). 종료 주문은 0. */
   frozen: number
   createdAt: number
   updatedAt: number
@@ -103,6 +108,12 @@ export interface PaperPosition {
  */
 export type FillReason = 'order' | 'market' | 'trigger' | 'tp' | 'sl' | 'liquidation'
 
+/**
+ * 테이커 체결가를 정한 방법. book = 호가창을 훑은 평균가, thin = 받은 호가창이 모자라 나머지를 추가 슬리피지로 채움,
+ * none = 호가창을 받지 못해 최우선 호가(없으면 최근가)로 채움.
+ */
+export type FillDepth = 'book' | 'thin' | 'none'
+
 export interface PaperFill {
   id: string
   orderId?: string
@@ -110,6 +121,7 @@ export interface PaperFill {
   side: PosSide
   action: OrderAction
   qty: number
+  /** 체결가. 호가창을 훑은 테이커 체결이면 먹은 단계들의 평균가(VWAP). */
   price: number
   fee: number
   /** 종료 체결의 실현 손익(수수료 제외). 진입은 0. 강제 청산은 잃은 증거금(음수). */
@@ -117,6 +129,10 @@ export interface PaperFill {
   maker: boolean
   reason: FillReason
   at: number
+  /** 슬리피지(bp) — 주문 때의 최우선 호가보다 평균 체결가가 불리한 만큼. 호가창을 훑은 체결에만 있다. */
+  slippage?: number
+  /** 테이커 체결가를 정한 방법. 호가창으로 체결하려던 것(시장가·바로 닿는 지정가·발동한 조건부)에만 있다. */
+  depth?: FillDepth
 }
 
 export interface PaperFunding {
@@ -134,14 +150,16 @@ export interface PaperFunding {
 export type OrderEnd = 'filled' | 'canceled' | 'rejected'
 
 /** 끝난 주문. 시장가 주문(바로 체결)도 여기 남는다. */
-export interface PaperOrderRecord extends Omit<PaperOrder, 'type'> {
+export interface PaperOrderRecord extends Omit<PaperOrder, 'type' | 'filledQty' | 'avgFillPrice'> {
   type: OrderType
   status: OrderEnd
   endedAt: number
   /** 취소·거절 이유(예: "포지션이 없어 취소"). */
   note?: string
-  /** 체결가(filled). */
+  /** 체결 평균가(체결, 또는 부분 체결 뒤 취소). */
   avgPrice?: number
+  /** 체결된 수량. 이 필드가 생기기 전 기록에는 없다 — 체결이면 qty, 아니면 0 으로 본다. */
+  filledQty?: number
 }
 
 /** 끝난 포지션 한 건(거래소의 "포지션 기록"). */
@@ -209,12 +227,26 @@ export const DEFAULT_START_BALANCE = 10_000
 export const DEFAULT_FEES = { maker: 0.0002, taker: 0.0005 } as const
 export const DEFAULT_SETTINGS: SymbolSettings = { leverage: 10, marginMode: 'cross' }
 
-/** 한 종목의 그 순간 시세. 시장가는 bid/ask(없으면 last)로 체결한다. */
+/** 호가 한 단계 [가격, 수량]. */
+export type BookLevel = [price: number, qty: number]
+
+/**
+ * 호가창 스냅숏. 매수 호가(bids)는 높은 가격부터, 매도 호가(asks)는 낮은 가격부터.
+ * 명령에 담을 때는 그 주문이 훑는 쪽에서 쓰는 단계만 남긴다(trimBook).
+ */
+export interface DepthBook {
+  bids: BookLevel[]
+  asks: BookLevel[]
+}
+
+/** 한 종목의 그 순간 시세. 시장가는 호가창(book)을 훑어 체결하고, 호가창이 없으면 bid/ask(없으면 last)로 체결한다. */
 export interface MarketSnap {
   last: number
   mark: number
   bid?: number
   ask?: number
+  /** 주문 때 받은 호가창(이 주문이 쓰는 쪽·단계만). 명령에 담겨 다시 적용해도 같은 체결가가 나온다. */
+  book?: DepthBook
   at: number
 }
 
@@ -244,7 +276,7 @@ export type RulesOf = (symbol: string) => SymbolRules | null
 /* ── 엔진 결과 ─────────────────────────────────────────────── */
 
 export type EngineEvent =
-  | { kind: 'fill'; fill: PaperFill }
+  | { kind: 'fill'; fill: PaperFill; progress?: { filled: number; total: number } }
   | { kind: 'liquidation'; fill: PaperFill }
   | { kind: 'canceled'; order: PaperOrderRecord }
   | { kind: 'triggered'; order: PaperOrder }

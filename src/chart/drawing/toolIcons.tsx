@@ -5,10 +5,12 @@ export type IconName =
   | 'cross' | 'dot' | 'arrow' | 'eraser'
   | 'trend' | 'ray' | 'infoLine' | 'extended' | 'trendAngle'
   | 'horizontal' | 'horizontalRay' | 'vertical' | 'crossLine'
-  | 'parallelChannel' | 'fibRetracement'
+  | 'parallelChannel' | 'regressionTrend' | 'pitchfork'
+  | 'fibRetracement' | 'fibExtension' | 'fibTimeZone'
   | 'rectangle' | 'ellipse' | 'triangle' | 'brush'
-  | 'text' | 'arrowLine' | 'arrowMarkUp' | 'arrowMarkDown'
+  | 'text' | 'note' | 'arrowLine' | 'arrowMarkUp' | 'arrowMarkDown'
   | 'longPosition' | 'shortPosition' | 'priceRange' | 'dateRange' | 'datePriceRange'
+  | 'fixedRangeVolumeProfile'
   | 'measure' | 'zoom'
   | 'magnet' | 'magnetStrong' | 'stay' | 'lockAll' | 'hideAll' | 'remove'
   | 'bell' | 'lock' | 'unlock' | 'eye' | 'eyeOff' | 'trash' | 'clone'
@@ -52,8 +54,16 @@ function paths(name: IconName): ReactElement {
       return <><line x1="4" y1="14" x2="24" y2="14" {...S} /><line x1="14" y1="4" x2="14" y2="24" {...S} /></>
     case 'parallelChannel':
       return <><line x1="4" y1="20" x2="22" y2="8" {...S} /><line x1="6" y1="24" x2="24" y2="12" {...S} /></>
+    case 'regressionTrend':
+      return <><line x1="4" y1="14" x2="24" y2="5" {...S} /><line x1="4" y1="19" x2="24" y2="10" {...S} strokeDasharray="3 2.5" /><line x1="4" y1="24" x2="24" y2="15" {...S} /></>
+    case 'pitchfork':
+      return <><line x1="5" y1="14" x2="24" y2="14" {...S} /><line x1="11" y1="7" x2="11" y2="21" {...S} /><line x1="11" y1="7" x2="24" y2="7" {...S} /><line x1="11" y1="21" x2="24" y2="21" {...S} /><circle cx="5" cy="14" r="1.8" fill="currentColor" /></>
     case 'fibRetracement':
       return <><line x1="5" y1="7" x2="23" y2="7" {...S} /><line x1="5" y1="12" x2="23" y2="12" {...S} /><line x1="5" y1="16" x2="23" y2="16" {...S} /><line x1="5" y1="21" x2="23" y2="21" {...S} /></>
+    case 'fibExtension':
+      return <><path d="M4 23 L9 11 L13 17" {...S} strokeDasharray="2.5 2" /><line x1="13" y1="5" x2="24" y2="5" {...S} /><line x1="13" y1="10" x2="24" y2="10" {...S} /><line x1="13" y1="17" x2="24" y2="17" {...S} /></>
+    case 'fibTimeZone':
+      return <><line x1="4" y1="5" x2="4" y2="23" {...S} /><line x1="7" y1="5" x2="7" y2="23" {...S} /><line x1="10" y1="5" x2="10" y2="23" {...S} /><line x1="15" y1="5" x2="15" y2="23" {...S} /><line x1="23" y1="5" x2="23" y2="23" {...S} /></>
     case 'rectangle':
       return <rect x="5" y="8" width="18" height="12" rx="1" {...S} />
     case 'ellipse':
@@ -64,6 +74,8 @@ function paths(name: IconName): ReactElement {
       return <path d="M5 22 C9 18 9 10 14 10 C18 10 16 16 21 14" {...S} />
     case 'text':
       return <><line x1="7" y1="8" x2="21" y2="8" {...S} /><line x1="14" y1="8" x2="14" y2="21" {...S} /></>
+    case 'note':
+      return <><path d="M6 6 H22 V17 L17 22 H6 Z" {...S} /><path d="M22 17 H17 V22" {...S} /><line x1="9.5" y1="11" x2="18.5" y2="11" {...S} /><line x1="9.5" y1="15" x2="15" y2="15" {...S} /></>
     case 'arrowLine':
       return <><line x1="5" y1="22" x2="22" y2="7" {...S} /><path d="M22 7 L16 8 M22 7 L21 13" {...S} /></>
     case 'arrowMarkUp':
@@ -80,6 +92,8 @@ function paths(name: IconName): ReactElement {
       return <><line x1="5" y1="14" x2="23" y2="14" {...S} /><path d="M5 14 L9 11 M5 14 L9 17 M23 14 L19 11 M23 14 L19 17" {...S} /></>
     case 'datePriceRange':
       return <><rect x="6" y="7" width="16" height="14" rx="1" {...S} /><path d="M10 11 L18 17 M10 17 L18 11" stroke="currentColor" fill="none" strokeWidth={1} /></>
+    case 'fixedRangeVolumeProfile':
+      return <><rect x="4.5" y="5" width="19" height="18" rx="1" {...S} strokeDasharray="2 2" /><line x1="4.5" y1="9" x2="11" y2="9" {...S} strokeWidth={2.4} strokeLinecap="butt" /><line x1="4.5" y1="13" x2="17" y2="13" {...S} strokeWidth={2.4} strokeLinecap="butt" /><line x1="4.5" y1="17" x2="13" y2="17" {...S} strokeWidth={2.4} strokeLinecap="butt" /><line x1="4.5" y1="20.5" x2="8" y2="20.5" {...S} strokeWidth={2.4} strokeLinecap="butt" /></>
     case 'measure':
       return <><rect x="5" y="9" width="18" height="10" rx="1" {...S} /><line x1="10" y1="9" x2="10" y2="13" {...S} /><line x1="14" y1="9" x2="14" y2="14" {...S} /><line x1="18" y1="9" x2="18" y2="13" {...S} /></>
     case 'zoom':

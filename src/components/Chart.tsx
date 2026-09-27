@@ -46,6 +46,7 @@ import {
 import { makeTickFormatter, makeTimeFormatter, formatCountdown, formatPrice, priceFormatter, barCloseTime } from '../chart/format'
 import { BandFillPrimitive } from '../chart/bandFill'
 import { ColumnHighlightPrimitive } from '../chart/columnHighlight'
+import { VisibleRangeProfilePrimitive } from '../chart/volumeProfile'
 import type { ComputedIndicator } from '../chart/compute'
 import { publishCrosshair, subscribeCrosshair } from '../chart/crosshairSync'
 import { tip } from '../lib/tooltip'
@@ -120,6 +121,11 @@ export interface ChartProps {
   drawingSelectRequest?: { id: string; nonce: number } | null
   /** 차트에서 지표 선·막대를 두 번 누르면 — 그 지표(설정 단위 id)의 설정 창을 연다. */
   onEditIndicator?: (instanceId: string) => void
+  /**
+   * 볼륨 프로파일(보이는 구간)의 POC 가격이 바뀌면(스크롤·확대·틱) — 없으면 null. 차트를 그리는 중에 불리므로
+   * React 상태를 바꾸지 말고 범례 글자만 직접 고친다.
+   */
+  onVolumeProfilePoc?: (instanceId: string, price: number | null) => void
 }
 
 const asTime = (t: number) => t as UTCTimestamp
@@ -197,6 +203,7 @@ export function Chart({
   syncCrosshair,
   drawingSelectRequest,
   onEditIndicator,
+  onVolumeProfilePoc,
 }: ChartProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<IChartApi | null>(null)
@@ -209,8 +216,8 @@ export function Chart({
   )
 
   // ── 자주 바뀌는 콜백은 ref 로 잡아 이펙트 재실행을 막는다. ──
-  const cbRef = useRef({ onReachStart, onHoverTime, onPanes, onAutoScaleChange, onReplayPreview, onChartClick, onCompareInfo, onNotice, onEditIndicator })
-  cbRef.current = { onReachStart, onHoverTime, onPanes, onAutoScaleChange, onReplayPreview, onChartClick, onCompareInfo, onNotice, onEditIndicator }
+  const cbRef = useRef({ onReachStart, onHoverTime, onPanes, onAutoScaleChange, onReplayPreview, onChartClick, onCompareInfo, onNotice, onEditIndicator, onVolumeProfilePoc })
+  cbRef.current = { onReachStart, onHoverTime, onPanes, onAutoScaleChange, onReplayPreview, onChartClick, onCompareInfo, onNotice, onEditIndicator, onVolumeProfilePoc }
   // 지표 두 번 누르기·패널 보고가 참조하지만 매초 바뀌어 이펙트를 재구독시키면 안 되므로 ref 로 잡는다.
   const indicatorsRef = useRef(indicators)
   indicatorsRef.current = indicators
@@ -660,6 +667,33 @@ export function Chart({
     }
   }, [indicators, mainSeries])
 
+  // ── 6b) 볼륨 프로파일(보이는 구간) — 메인 시리즈에 프리미티브 하나를 붙여 두고 설정·봉만 넘긴다. ──
+  // 보이는 구간이 바뀌면 프리미티브가 그릴 때 스스로 다시 계산한다(React 를 거치지 않는다).
+  const profilePrimRef = useRef<VisibleRangeProfilePrimitive | null>(null)
+  useEffect(() => {
+    const series = mainSeries
+    if (!series) return
+    const prim = new VisibleRangeProfilePrimitive((id, price) => cbRef.current.onVolumeProfilePoc?.(id, price))
+    series.attachPrimitive(prim)
+    profilePrimRef.current = prim
+    return () => {
+      profilePrimRef.current = null
+      try {
+        series.detachPrimitive(prim)
+      } catch {
+        /* 차트 종류를 바꿔 시리즈가 먼저 사라졌으면 함께 떨어졌다 */
+      }
+    }
+  }, [mainSeries])
+  useEffect(() => {
+    profilePrimRef.current?.setProfiles(
+      indicators.flatMap((c) => (c.volumeProfile ? [{ id: c.instanceId, spec: c.volumeProfile }] : [])),
+    )
+  }, [indicators, mainSeries])
+  useEffect(() => {
+    profilePrimRef.current?.setCandles(candles)
+  }, [candles, mainSeries])
+
   // ── 7) 비교 심볼: 메인 패널의 라인 시리즈. 15초마다 새로 받는다. ──────
   useEffect(() => {
     const chart = chartRef.current
@@ -944,15 +978,21 @@ export function Chart({
     const handler = (param: MouseEventParams) => {
       // 선이 먼저, 없으면 차트가 짚은 시리즈(거래량 막대 등).
       const target = nearestLine(param) ?? param.hoveredInfo?.series
-      if (!target) return
-      for (const [key, series] of indicatorSeriesRef.current) {
-        if (series !== target) continue
-        // 키는 `${지표(또는 부분) id}:${선 key}` — 세트 지표의 부분이면 원래 지표 id 로 연다.
-        const partId = key.slice(0, key.lastIndexOf(':'))
-        const comp = indicatorsRef.current.find((c) => c.instanceId === partId)
-        cbRef.current.onEditIndicator?.(comp?.parentId ?? partId)
-        return
+      if (target) {
+        for (const [key, series] of indicatorSeriesRef.current) {
+          if (series !== target) continue
+          // 키는 `${지표(또는 부분) id}:${선 key}` — 세트 지표의 부분이면 원래 지표 id 로 연다.
+          const partId = key.slice(0, key.lastIndexOf(':'))
+          const comp = indicatorsRef.current.find((c) => c.instanceId === partId)
+          cbRef.current.onEditIndicator?.(comp?.parentId ?? partId)
+          return
+        }
       }
+      // 지표 시리즈가 아니면(캔들·빈 곳) 가격 칸의 볼륨 프로파일 막대를 본다.
+      const { point, paneIndex } = param
+      if (!point || (paneIndex ?? 0) !== 0) return
+      const profileId = profilePrimRef.current?.profileAt(point.x, point.y)
+      if (profileId) cbRef.current.onEditIndicator?.(profileId)
     }
     chart.subscribeDblClick(handler)
     return () => chart.unsubscribeDblClick(handler)

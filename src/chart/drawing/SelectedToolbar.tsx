@@ -3,6 +3,7 @@ import type { Drawing, DrawingKind, DrawingStyle } from '../../lib/drawings'
 import { withAlpha } from '../../lib/theme'
 import { Popover, MenuSection, MenuItem } from '../../components/ui/Popover'
 import { ToolIcon } from './toolIcons'
+import { profileOptions } from './studies'
 import { tip } from '../../lib/tooltip'
 
 export interface SelectedToolbarProps {
@@ -19,13 +20,18 @@ const FILL_KINDS: Record<DrawingKind, true | undefined> = {
   rectangle: true, ellipse: true, triangle: true, parallelChannel: true,
   fibRetracement: true, priceRange: true, dateRange: true, datePriceRange: true,
   longPosition: true, shortPosition: true,
+  regressionTrend: true, pitchfork: true, note: true,
   trend: undefined, ray: undefined, infoLine: undefined, extended: undefined,
   trendAngle: undefined, horizontal: undefined, horizontalRay: undefined,
   vertical: undefined, crossLine: undefined, brush: undefined, text: undefined,
   arrowLine: undefined, arrowMarkUp: undefined, arrowMarkDown: undefined,
+  fibExtension: undefined, fibTimeZone: undefined, fixedRangeVolumeProfile: undefined,
 }
 
-const TEXT_KINDS: Record<string, true> = { text: true, arrowMarkUp: true, arrowMarkDown: true }
+/** 채움을 끌 수 있는 그림 — 채움 메뉴에 "채우지 않음"이 붙는다. */
+const OPTIONAL_FILL: Record<string, true> = { regressionTrend: true, pitchfork: true }
+
+const TEXT_KINDS: Record<string, true> = { text: true, note: true, arrowMarkUp: true, arrowMarkDown: true }
 
 const WIDTHS: (1 | 2 | 3 | 4)[] = [1, 2, 3, 4]
 const STYLES: { id: DrawingStyle['lineStyle']; label: string }[] = [
@@ -33,6 +39,10 @@ const STYLES: { id: DrawingStyle['lineStyle']; label: string }[] = [
   { id: 'dashed', label: '파선' },
   { id: 'dotted', label: '점선' },
 ]
+
+/** 고정 범위 볼륨 프로파일의 행 수·가치 영역 % 선택지. */
+const VP_ROWS = [12, 24, 48, 96]
+const VP_VALUE_AREAS = [50, 60, 70, 80, 90]
 
 export function SelectedToolbar({
   drawing,
@@ -44,17 +54,19 @@ export function SelectedToolbar({
   palette,
 }: SelectedToolbarProps) {
   const [pos, setPos] = useState<{ left: number; top: number } | null>(null)
-  const [menu, setMenu] = useState<'color' | 'fill' | 'width' | 'style' | null>(null)
+  const [menu, setMenu] = useState<'color' | 'fill' | 'width' | 'style' | 'profile' | null>(null)
   const colorRef = useRef<HTMLButtonElement>(null)
   const fillRef = useRef<HTMLButtonElement>(null)
   const widthRef = useRef<HTMLButtonElement>(null)
   const styleRef = useRef<HTMLButtonElement>(null)
+  const profileRef = useRef<HTMLButtonElement>(null)
   const dragRef = useRef<{ dx: number; dy: number } | null>(null)
 
   const s = drawing.style
   const hasFill = FILL_KINDS[drawing.kind] === true
   const isText = TEXT_KINDS[drawing.kind] === true
   const lockedNow = globalLocked || drawing.locked
+  const profile = drawing.kind === 'fixedRangeVolumeProfile' ? profileOptions(drawing) : null
 
   const setStyle = (patch: Partial<DrawingStyle>) => {
     onUpdate(drawing.id, { style: { ...s, ...patch } })
@@ -129,6 +141,15 @@ export function SelectedToolbar({
               value={s.fillColor ?? s.color}
               onPick={(c) => { setStyle({ fillColor: withAlpha(c, 0.2) }); setMenu(null) }}
             />
+            {OPTIONAL_FILL[drawing.kind] && (
+              <MenuSection>
+                <MenuItem
+                  label="채우지 않음"
+                  active={s.fillColor === undefined}
+                  onSelect={() => { setStyle({ fillColor: undefined }); setMenu(null) }}
+                />
+              </MenuSection>
+            )}
           </Popover>
         </>
       )}
@@ -189,6 +210,43 @@ export function SelectedToolbar({
         >
           <ToolIcon name="text" size={20} />
         </button>
+      )}
+
+      {profile && (
+        <>
+          <button
+            ref={profileRef}
+            type="button"
+            className="tv-draw-selbtn"
+            {...tip('프로파일 설정', '가격 행 수와 가치 영역 비율을 고릅니다.')}
+            aria-label="프로파일 설정"
+            onClick={() => setMenu(menu === 'profile' ? null : 'profile')}
+          >
+            <ToolIcon name="fixedRangeVolumeProfile" size={20} />
+          </button>
+          <Popover anchor={profileRef.current} open={menu === 'profile'} onClose={() => setMenu(null)} placement="bottom-start">
+            <MenuSection title="행 수">
+              {VP_ROWS.map((n) => (
+                <MenuItem
+                  key={n}
+                  label={`${n}행`}
+                  active={profile.rows === n}
+                  onSelect={() => { setStyle({ vpRows: n }); setMenu(null) }}
+                />
+              ))}
+            </MenuSection>
+            <MenuSection title="가치 영역">
+              {VP_VALUE_AREAS.map((pct) => (
+                <MenuItem
+                  key={pct}
+                  label={`${pct}%`}
+                  active={profile.valueAreaPct === pct}
+                  onSelect={() => { setStyle({ vpValueArea: pct }); setMenu(null) }}
+                />
+              ))}
+            </MenuSection>
+          </Popover>
+        </>
       )}
 
       {drawing.kind === 'horizontal' && (

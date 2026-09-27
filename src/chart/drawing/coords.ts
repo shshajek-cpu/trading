@@ -9,7 +9,8 @@ import { INTERVAL_SECONDS } from '../../lib/intervals'
 export class Coords {
   private readonly chart: IChartApi
   private readonly series: ISeriesApi<SeriesType>
-  private readonly candles: Candle[]
+  /** 로드된 캔들(시각 오름차순). 회귀 추세·볼륨 프로파일처럼 봉 값을 읽는 그림이 쓴다. */
+  readonly candles: Candle[]
   private readonly step: number
 
   constructor(
@@ -82,11 +83,15 @@ export class Coords {
     return bars[i].time + frac * (bars[i + 1].time - bars[i].time)
   }
 
-  timeToX(time: number): number | null {
-    const logical = this.timeToLogical(time)
-    if (logical === null) return null
+  /** 분수 논리 인덱스 → x. 봉 간격 단위로 떨어진 자리(피보나치 타임 존)를 바로 찍는다. */
+  logicalToX(logical: number): number | null {
     const x = this.chart.timeScale().logicalToCoordinate(logical as Logical)
     return x === null ? null : x
+  }
+
+  timeToX(time: number): number | null {
+    const logical = this.timeToLogical(time)
+    return logical === null ? null : this.logicalToX(logical)
   }
 
   xToTime(x: number): number | null {

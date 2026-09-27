@@ -36,16 +36,29 @@ export interface WatchAlert {
   message?: string
   /**
    * 아직 걸리지 않은 교차 알림. 감시기가 가격이 먼저 이쪽(below/above, away = 선에서 벗어남)에 있는 것을
-   * 본 뒤 넘어갈 쪽을 alertArms 에 적고, 그쪽으로 넘어가면 울린다. 없으면 condition 으로 바로 판정한다.
+   * 본 뒤 넘어갈 쪽을 armMarks 에 적고, 그쪽으로 넘어가면 울린다. 없으면 condition 으로 바로 판정한다.
    */
   arm?: 'below' | 'above' | 'away'
+  /**
+   * 감시 시작 시각(ms) — 서버가 이 내용(가격·조건·거는 조건)을 처음 받은 때. 감시기는 그 전의 움직임으로 울리지 않는다.
+   * 앱의 createdAt 은 알림을 고치거나 다시 켜도 그대로라 쓰지 않고 서버가 붙인다(stampSince). 예전 기록에는 없다.
+   */
+  since?: number
 }
 
-/** 수평선 알림. 감시기가 처음 본 현재가 쪽을 기준으로, 가격이 선을 지나 반대쪽으로 가면 울린다. */
+/** 수평선 알림. 감시기가 처음 잡은 기준 쪽에서 가격이 선을 지나 반대쪽으로 가면 울린다. */
 export interface WatchLine {
   id: string
   symbol: string
   price: number
+  /** 감시 시작 시각(ms) — 서버가 이 선(가격)을 처음 받은 때. 예전 기록에는 없다. */
+  since?: number
+}
+
+/** 감시기가 적어 둔 기준 쪽과 그것을 확인한 시각(ms). 감시기(worker/index.ts)와 모양이 같아야 한다. */
+export interface SideMark {
+  side: 'above' | 'below'
+  at: number
 }
 
 /**
@@ -59,10 +72,10 @@ export interface WatchRecord {
   alertsBy: Record<string, WatchAlert[]>
   alerts?: WatchAlert[]
   linesBy?: Record<string, WatchLine[]>
-  /** 수평선마다 감시기가 처음 본 현재가 쪽. 키는 lineKey — 선을 옮기면 기준을 새로 잡는다. */
-  lineSides?: Record<string, 'above' | 'below'>
+  /** 수평선마다 감시기가 처음 잡은 기준 쪽. 키는 lineKey — 선을 옮기면 기준을 새로 잡는다. */
+  lineMarks?: Record<string, SideMark>
   /** 걸린 교차 알림이 기다리는 쪽. 키는 armKey — 가격·거는 조건을 바꾸면 새로 건다. */
-  alertArms?: Record<string, 'above' | 'below'>
+  armMarks?: Record<string, SideMark>
   firedIds: string[]
 }
 
@@ -85,14 +98,32 @@ export function unionLines(record: Pick<WatchRecord, 'linesBy'>): WatchLine[] {
   return [...byId.values()]
 }
 
-/** lineSides 키. 감시기(worker/index.ts)와 형식이 같아야 한다. */
+/** lineMarks 키. 감시기(worker/index.ts)와 형식이 같아야 한다. */
 export function lineKey(line: WatchLine): string {
   return `${line.id}@${line.price}`
 }
 
-/** alertArms 키. 감시기(worker/index.ts)와 형식이 같아야 한다. */
+/** armMarks 키. 감시기(worker/index.ts)와 형식이 같아야 한다. */
 export function armKey(alert: WatchAlert): string {
   return `${alert.id}@${alert.price}@${alert.arm ?? ''}`
+}
+
+/**
+ * 감시 시작 시각(since)을 붙인다. 같은 내용(key)이 예전 기록의 어느 버킷에든 있으면 그 시각을 이어받고,
+ * 새로 왔거나 바뀐 것(가격·조건을 고쳤거나, 울린 뒤 목록에서 빠졌다가 다시 켠 것)은 지금 시각을 쓴다.
+ * 내용이 그대로면 기록도 그대로라 다시 쓰지 않는다. 예전 기록에서 시각 없이 이어받은 것은 시각 없이 둔다.
+ */
+function stampSince<T extends { since?: number }>(items: T[], prev: T[], key: (item: T) => string, now: number): T[] {
+  const known = new Map<string, number | undefined>()
+  for (const item of prev) {
+    const k = key(item)
+    if (!known.has(k)) known.set(k, item.since)
+  }
+  return items.map((item) => {
+    const k = key(item)
+    const since = known.has(k) ? known.get(k) : now
+    return since === undefined ? item : { ...item, since }
+  })
 }
 
 /** 감시기(worker/index.ts)가 매분 읽는 감시 대상 코드 목록. 두 곳의 키 이름이 같아야 한다. */
@@ -180,19 +211,19 @@ function buildRecord(
   const lines = unionLines({ linesBy })
   const alive = new Set([...alerts.map((a) => a.id), ...lines.map((l) => l.id)])
   const liveKeys = new Set(lines.map(lineKey))
-  const lineSides: Record<string, 'above' | 'below'> = {}
-  for (const [key, side] of Object.entries(prev?.lineSides ?? {})) if (liveKeys.has(key)) lineSides[key] = side
+  const lineMarks: Record<string, SideMark> = {}
+  for (const [key, mark] of Object.entries(prev?.lineMarks ?? {})) if (liveKeys.has(key)) lineMarks[key] = mark
   const armKeys = new Set(alerts.filter((a) => a.arm).map(armKey))
-  const alertArms: Record<string, 'above' | 'below'> = {}
-  for (const [key, side] of Object.entries(prev?.alertArms ?? {})) if (armKeys.has(key)) alertArms[key] = side
+  const armMarks: Record<string, SideMark> = {}
+  for (const [key, mark] of Object.entries(prev?.armMarks ?? {})) if (armKeys.has(key)) armMarks[key] = mark
 
   return {
     record: {
       subs,
       alertsBy,
       linesBy,
-      lineSides,
-      alertArms,
+      lineMarks,
+      armMarks,
       // 사라진 알림의 발동 흔적은 같이 지운다.
       firedIds: (prev?.firedIds ?? []).filter((id) => alive.has(id)),
     },
@@ -225,9 +256,13 @@ export const onRequestPut: PagesFunction<Env> = async ({ request, env }) => {
   const linesBy: Record<string, WatchLine[]> = { ...(prev?.linesBy ?? {}) }
   const endpoint = body.subs?.[0]?.endpoint
   if (endpoint) {
-    alertsBy[endpoint] = readAlerts(body.alerts)
+    const now = Date.now()
+    const prevAlerts = [...Object.values(prev?.alertsBy ?? {}).flat(), ...(prev?.alerts ?? [])]
+    alertsBy[endpoint] = stampSince(readAlerts(body.alerts), prevAlerts, (a) => `${armKey(a)}@${a.condition}`, now)
     // 수평선을 모르는 예전 앱은 lines 를 보내지 않는다 — 그때는 이 기기의 수평선 버킷을 그대로 둔다.
-    if (Array.isArray(body.lines)) linesBy[endpoint] = readLines(body.lines)
+    if (Array.isArray(body.lines)) {
+      linesBy[endpoint] = stampSince(readLines(body.lines), Object.values(prev?.linesBy ?? {}).flat(), lineKey, now)
+    }
   }
 
   const { record, watching } = buildRecord(prev, uniqueSubs, alertsBy, linesBy)

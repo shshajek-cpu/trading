@@ -14,7 +14,7 @@ import type { Candle, Interval } from '../../lib/binance'
 import type { ChartPalette } from '../../lib/theme'
 import type { Drawing } from '../../lib/drawings'
 import { Coords } from './coords'
-import { renderDrawing, type RenderScope } from './render'
+import { anchorPoints, renderDrawing, type RenderScope } from './render'
 import { makeTimeFormatter } from '../format'
 
 export interface DrawingState {
@@ -127,9 +127,9 @@ export class DrawingPrimitive implements ISeriesPrimitive<Time> {
           const x = coords.timeToX(d.points[0].time)
           if (x !== null) this.timeViews.push(new AxisView(x, timeLabel(d.points[0].time as Time), d.style.color))
         }
-        // 선택된 그림은 모든 앵커의 축 라벨을 낸다.
+        // 선택된 그림은 모든 앵커의 축 라벨을 낸다. 가격이 봉에서 나오는 그림(회귀 추세 등)은 화면의 앵커 자리 값.
         if (selected) {
-          for (const p of d.points) {
+          for (const p of anchorPoints(d, coords)) {
             const y = coords.priceToY(p.price)
             if (y !== null) this.priceViews.push(new AxisView(y, coords.format(p.price), d.style.color))
             const x = coords.timeToX(p.time)

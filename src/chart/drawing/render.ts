@@ -1,7 +1,18 @@
 import { withAlpha, type ChartPalette } from '../../lib/theme'
-import type { Drawing, DrawingStyle } from '../../lib/drawings'
+import type { Drawing, DrawingPoint, DrawingStyle } from '../../lib/drawings'
+import { drawVolumeProfile, pocPrice } from '../volumeProfile'
 import type { Coords } from './coords'
-import type { Pt } from './geometry'
+import { pitchforkDir, type Pt } from './geometry'
+import {
+  FIB_EXT_LEVELS,
+  REGRESSION_DEVIATION,
+  fibExtensionPrice,
+  fibTimeZoneLogicals,
+  profileFor,
+  profileWidth,
+  regressionFor,
+  regressionValue,
+} from './studies'
 
 export const FIB_LEVELS = [0, 0.236, 0.382, 0.5, 0.618, 0.786, 1] as const
 
@@ -14,16 +25,43 @@ export function fibPrice(d: Drawing, level: number): number {
 
 let measureCtx: CanvasRenderingContext2D | null = null
 
+function measureFont(size: number): CanvasRenderingContext2D | null {
+  measureCtx ??= document.createElement('canvas').getContext('2d')
+  if (measureCtx) measureCtx.font = `${size}px -apple-system, "Malgun Gothic", sans-serif`
+  return measureCtx
+}
+
 /** 텍스트 그림이 차지하는 상자(앵커가 왼쪽 위). 그리기와 잡기 판정이 같은 크기를 쓴다. */
 export function textBox(d: Drawing, a: Pt): { x: number; y: number; w: number; h: number } {
   const size = d.style.fontSize ?? 14
-  measureCtx ??= document.createElement('canvas').getContext('2d')
-  let w = size * 4
-  if (measureCtx) {
-    measureCtx.font = `${size}px -apple-system, "Malgun Gothic", sans-serif`
-    w = measureCtx.measureText(d.style.text || '텍스트').width
-  }
+  const m = measureFont(size)
+  const w = m ? m.measureText(d.style.text || '텍스트').width : size * 4
   return { x: a.x, y: a.y, w, h: size * 1.3 }
+}
+
+const NOTE_PAD_X = 8
+const NOTE_PAD_Y = 6
+
+/** 노트 상자(앵커가 왼쪽 위). 줄마다 재서 가장 긴 줄에 맞춘다. 그리기와 잡기 판정이 같은 크기를 쓴다. */
+export function noteBox(
+  d: Drawing,
+  a: Pt,
+): { x: number; y: number; w: number; h: number; lines: string[]; size: number; lineHeight: number } {
+  const size = d.style.fontSize ?? 14
+  const lines = (d.style.text || '노트').split('\n')
+  const m = measureFont(size)
+  let textW = 0
+  for (const l of lines) textW = Math.max(textW, m ? m.measureText(l).width : l.length * size * 0.6)
+  const lineHeight = Math.round(size * 1.35)
+  return {
+    x: a.x,
+    y: a.y,
+    w: Math.ceil(textW) + NOTE_PAD_X * 2,
+    h: lines.length * lineHeight + NOTE_PAD_Y * 2,
+    lines,
+    size,
+    lineHeight,
+  }
 }
 
 const HANDLE = 8
@@ -37,9 +75,32 @@ export interface RenderScope {
   palette: ChartPalette
 }
 
+/**
+ * 화면에 보일 앵커(시각·가격). 가격이 봉에서 나오는 그림은 저장된 가격 대신 계산한 자리를 쓴다 —
+ * 회귀 추세는 회귀선 위, 고정 범위 볼륨 프로파일은 상자 모서리(첫 점 위, 둘째 점 아래). 계산할 봉이 없으면 저장값.
+ */
+export function anchorPoints(d: Drawing, coords: Coords): DrawingPoint[] {
+  if (d.kind === 'regressionTrend') {
+    const reg = regressionFor(d, coords.candles)
+    if (!reg) return d.points
+    return d.points.map((p) => {
+      const lg = coords.timeToLogical(p.time)
+      return lg === null ? p : { time: p.time, price: regressionValue(reg, lg) }
+    })
+  }
+  if (d.kind === 'fixedRangeVolumeProfile') {
+    const vp = profileFor(d, coords.candles)
+    if (!vp) return d.points
+    const top = vp.rows[vp.rows.length - 1].high
+    const bottom = vp.rows[0].low
+    return d.points.map((p, i) => ({ time: p.time, price: i === 0 ? top : bottom }))
+  }
+  return d.points
+}
+
 /** 한 그림의 모든 앵커를 화면 좌표로. null 이면 좌표를 만들 수 없는 점. */
 export function resolvePts(d: Drawing, coords: Coords): (Pt | null)[] {
-  return d.points.map((p) => {
+  return anchorPoints(d, coords).map((p) => {
     const x = coords.timeToX(p.time)
     const y = coords.priceToY(p.price)
     return x === null || y === null ? null : { x, y }
@@ -248,8 +309,24 @@ export function renderDrawing(rc: RenderScope, d: Drawing, selected: boolean): v
       drawChannel(rc, d, pts)
       break
     }
+    case 'regressionTrend': {
+      drawRegression(rc, d, pts)
+      break
+    }
+    case 'pitchfork': {
+      drawPitchfork(rc, d, pts)
+      break
+    }
     case 'fibRetracement': {
       drawFib(rc, d, pts)
+      break
+    }
+    case 'fibExtension': {
+      drawFibExtension(rc, d, pts)
+      break
+    }
+    case 'fibTimeZone': {
+      drawFibTimeZone(rc, d, pts)
       break
     }
     case 'rectangle': {
@@ -317,6 +394,12 @@ export function renderDrawing(rc: RenderScope, d: Drawing, selected: boolean): v
       drawText(ctx, d, a)
       break
     }
+    case 'note': {
+      const a = pts[0]
+      if (!a) break
+      drawNote(rc, d, a)
+      break
+    }
     case 'arrowMarkUp':
     case 'arrowMarkDown': {
       const a = pts[0]
@@ -339,6 +422,10 @@ export function renderDrawing(rc: RenderScope, d: Drawing, selected: boolean): v
     }
     case 'datePriceRange': {
       drawDatePriceRange(rc, d, pts)
+      break
+    }
+    case 'fixedRangeVolumeProfile': {
+      drawFixedRangeProfile(rc, d, pts)
       break
     }
   }
@@ -419,25 +506,31 @@ function drawChannel(rc: RenderScope, d: Drawing, pts: (Pt | null)[]): void {
   ctx.restore()
 }
 
-function drawFib(rc: RenderScope, d: Drawing, pts: (Pt | null)[]): void {
-  const { ctx, coords } = rc
-  const [a, b] = pts
-  if (!a || !b) return
-  const s = d.style
-  const x1 = Math.min(a.x, b.x)
-  const x2 = Math.max(a.x, b.x)
-  // 추세선(시작→끝)을 점선으로 — 어느 쪽에서 그렸는지(0 이 어디인지) 보이게.
+/** 앵커를 잇는 옅은 점선 — 레벨 그림이 어느 점에서 어느 점으로 그려졌는지(0 이 어디인지) 보이게. */
+function guide(ctx: CanvasRenderingContext2D, s: DrawingStyle, a: Pt, b: Pt): void {
   ctx.save()
   ctx.setLineDash([4, 4])
   ctx.strokeStyle = withAlpha(s.color, 0.6)
   ctx.lineWidth = 1
   line(ctx, a, b)
   ctx.restore()
+}
+
+/** 피보나치 가격 레벨: x1~x2 가로선, 레벨 사이 옅은 띠, 오른쪽 끝에 "레벨  가격". */
+function drawFibLevels(
+  rc: RenderScope,
+  s: DrawingStyle,
+  levels: readonly number[],
+  priceOf: (level: number) => number,
+  x1: number,
+  x2: number,
+): void {
+  const { ctx, coords } = rc
   let prevY: number | null = null
-  FIB_LEVELS.forEach((lvl) => {
-    const price = fibPrice(d, lvl)
+  for (const lvl of levels) {
+    const price = priceOf(lvl)
     const y = coords.priceToY(price)
-    if (y === null) return
+    if (y === null) continue
     if (prevY !== null) {
       ctx.fillStyle = withAlpha(s.color, 0.08)
       ctx.fillRect(x1, Math.min(prevY, y), x2 - x1, Math.abs(y - prevY))
@@ -446,7 +539,199 @@ function drawFib(rc: RenderScope, d: Drawing, pts: (Pt | null)[]): void {
     stroke(ctx, s)
     line(ctx, { x: x1, y }, { x: x2, y })
     label(ctx, `${lvl}  ${coords.format(price)}`, x2 + 4, y, withAlpha(s.color, 0.85))
-  })
+  }
+}
+
+function drawFib(rc: RenderScope, d: Drawing, pts: (Pt | null)[]): void {
+  const [a, b] = pts
+  if (!a || !b) return
+  guide(rc.ctx, d.style, a, b)
+  drawFibLevels(rc, d.style, FIB_LEVELS, (lvl) => fibPrice(d, lvl), Math.min(a.x, b.x), Math.max(a.x, b.x))
+}
+
+/** 추세 기반 피보나치 확장 레벨선의 가로 구간: 셋째 점에서 1→2 움직임의 폭만큼 오른쪽(최소 40px). */
+export function fibExtensionSpan(a: Pt, b: Pt, c: Pt): [number, number] {
+  return [c.x, c.x + Math.max(Math.abs(b.x - a.x), 40)]
+}
+
+/** 추세 기반 피보나치 확장: 1→2→3 점선, 3 에서 1→2 움직임을 레벨 배로 이은 가격선. 셋째 점 전에는 1→2 만. */
+function drawFibExtension(rc: RenderScope, d: Drawing, pts: (Pt | null)[]): void {
+  const [a, b, c] = pts
+  if (!a || !b) return
+  const s = d.style
+  guide(rc.ctx, s, a, b)
+  if (!c) return
+  guide(rc.ctx, s, b, c)
+  const [x1, x2] = fibExtensionSpan(a, b, c)
+  const [p1, p2, p3] = d.points
+  drawFibLevels(rc, s, FIB_EXT_LEVELS, (lvl) => fibExtensionPrice(p1.price, p2.price, p3.price, lvl), x1, x2)
+}
+
+/** 피보나치 타임 존 세로선의 x 와 배수. 봉 수로 세므로 두 점의 논리 인덱스에서 바로 찍는다. */
+export function fibTimeZoneXs(d: Drawing, coords: Coords): { n: number; x: number }[] {
+  const [a, b] = d.points
+  const l0 = a ? coords.timeToLogical(a.time) : null
+  const l1 = b ? coords.timeToLogical(b.time) : null
+  if (l0 === null || l1 === null) return []
+  const out: { n: number; x: number }[] = []
+  for (const z of fibTimeZoneLogicals(l0, l1)) {
+    const x = coords.logicalToX(z.logical)
+    if (x !== null) out.push({ n: z.n, x })
+  }
+  return out
+}
+
+/** 피보나치 타임 존: 두 점 점선, 배수마다 전체 높이 세로선, 아래쪽에 배수 라벨(너무 붙은 라벨은 건너뛴다). */
+function drawFibTimeZone(rc: RenderScope, d: Drawing, pts: (Pt | null)[]): void {
+  const { ctx, height } = rc
+  const [a, b] = pts
+  if (!a || !b) return
+  const s = d.style
+  guide(ctx, s, a, b)
+  let lastLabelX = -Infinity
+  for (const z of fibTimeZoneXs(d, rc.coords)) {
+    stroke(ctx, s)
+    line(ctx, { x: z.x, y: 0 }, { x: z.x, y: height })
+    if (Math.abs(z.x - lastLabelX) < 22) continue
+    label(ctx, String(z.n), z.x + 4, height - 14, withAlpha(s.color, 0.85))
+    lastLabelX = z.x
+  }
+}
+
+/** 회귀 추세 세 선(기준·위·아래)의 두 끝 — 두 점 시각에서의 회귀값과 ±편차. 봉이 모자라면 null. */
+export function regressionChannel(
+  d: Drawing,
+  coords: Coords,
+): { base: [Pt, Pt]; upper: [Pt, Pt]; lower: [Pt, Pt]; r: number } | null {
+  const reg = regressionFor(d, coords.candles)
+  if (!reg || d.points.length < 2) return null
+  const dev = REGRESSION_DEVIATION * reg.stdev
+  const base: Pt[] = []
+  const upper: Pt[] = []
+  const lower: Pt[] = []
+  for (let i = 0; i < 2; i++) {
+    const lg = coords.timeToLogical(d.points[i].time)
+    if (lg === null) return null
+    const x = coords.logicalToX(lg)
+    const v = regressionValue(reg, lg)
+    const y = coords.priceToY(v)
+    const yu = coords.priceToY(v + dev)
+    const yl = coords.priceToY(v - dev)
+    if (x === null || y === null || yu === null || yl === null) return null
+    base.push({ x, y })
+    upper.push({ x, y: yu })
+    lower.push({ x, y: yl })
+  }
+  return { base: [base[0], base[1]], upper: [upper[0], upper[1]], lower: [lower[0], lower[1]], r: reg.r }
+}
+
+/** 회귀 추세: 종가 회귀선(점선)과 ±2 표준편차 선, 그 사이 채움(고른 경우), 아래 선 왼쪽 밑에 피어슨 R. */
+function drawRegression(rc: RenderScope, d: Drawing, pts: (Pt | null)[]): void {
+  const { ctx } = rc
+  const [a, b] = pts
+  if (!a || !b) return
+  const s = d.style
+  const ch = regressionChannel(d, rc.coords)
+  if (!ch) {
+    // 구간 안 봉이 둘 미만(미래·아직 받지 않은 과거) — 고른 구간만 점선으로 보인다.
+    guide(ctx, s, a, b)
+    return
+  }
+  const { base, upper, lower } = ch
+  if (s.fillColor) {
+    ctx.fillStyle = s.fillColor
+    ctx.beginPath()
+    ctx.moveTo(upper[0].x, upper[0].y)
+    ctx.lineTo(upper[1].x, upper[1].y)
+    ctx.lineTo(lower[1].x, lower[1].y)
+    ctx.lineTo(lower[0].x, lower[0].y)
+    ctx.closePath()
+    ctx.fill()
+  }
+  stroke(ctx, s)
+  line(ctx, upper[0], upper[1])
+  line(ctx, lower[0], lower[1])
+  ctx.setLineDash([6, 4])
+  line(ctx, base[0], base[1])
+  const left = lower[0].x <= lower[1].x ? lower[0] : lower[1]
+  label(ctx, `R ${ch.r.toFixed(2)}`, left.x, left.y + 16, withAlpha(s.color, 0.85))
+}
+
+/** 앤드루스 피치포크: 첫 점에서 2–3 가운데를 지나는 중앙선, 2·3 을 지나는 나란한 두 갈래(오른쪽으로 연장), 2–3 선분. */
+function drawPitchfork(rc: RenderScope, d: Drawing, pts: (Pt | null)[]): void {
+  const { ctx, width, height } = rc
+  const [a, b, c] = pts
+  if (!a || !b) return
+  const s = d.style
+  stroke(ctx, s)
+  if (!c) {
+    // 셋째 점을 찍기 전 미리보기: 첫 두 점만 잇는다.
+    line(ctx, a, b)
+    return
+  }
+  const u = pitchforkDir(a, b, c)
+  if (!u) {
+    line(ctx, b, c)
+    return
+  }
+  const far = Math.max(width, height) * 4
+  const ahead = (o: Pt): Pt => ({ x: o.x + u.x * far, y: o.y + u.y * far })
+  if (s.fillColor) {
+    const b2 = ahead(b)
+    const c2 = ahead(c)
+    ctx.fillStyle = s.fillColor
+    ctx.beginPath()
+    ctx.moveTo(b.x, b.y)
+    ctx.lineTo(c.x, c.y)
+    ctx.lineTo(c2.x, c2.y)
+    ctx.lineTo(b2.x, b2.y)
+    ctx.closePath()
+    ctx.fill()
+  }
+  line(ctx, a, ahead(a))
+  line(ctx, b, ahead(b))
+  line(ctx, c, ahead(c))
+  line(ctx, b, c)
+}
+
+/**
+ * 고정 범위 볼륨 프로파일: 고른 시각 구간을 감싼 옅은 상자, 왼쪽 끝에서 오른쪽으로 자라는 가격대별 거래량,
+ * 구간 끝까지 긋는 POC. a·b 는 프로파일이 있으면 그 가격 폭의 모서리다(anchorPoints). 봉이 없으면 점선 상자만.
+ */
+function drawFixedRangeProfile(rc: RenderScope, d: Drawing, pts: (Pt | null)[]): void {
+  const { ctx, coords, palette } = rc
+  const [a, b] = pts
+  if (!a || !b) return
+  const s = d.style
+  const x = Math.min(a.x, b.x)
+  const y = Math.min(a.y, b.y)
+  const w = Math.abs(a.x - b.x)
+  const h = Math.abs(a.y - b.y)
+  const vp = profileFor(d, coords.candles)
+  ctx.fillStyle = withAlpha(s.color, 0.06)
+  ctx.fillRect(x, y, w, h)
+  stroke(ctx, s, withAlpha(s.color, 0.5))
+  if (!vp) ctx.setLineDash([4, 4])
+  ctx.strokeRect(x, y, w, h)
+  if (!vp) return
+  drawVolumeProfile(
+    ctx,
+    vp,
+    { priceToY: (price) => coords.priceToY(price), x, width: profileWidth(w), direction: 'right' },
+    {
+      upColor: palette.up,
+      downColor: palette.down,
+      pocColor: s.color,
+      showPoc: false,
+      showValueArea: true,
+      valueAreaAlpha: 0.6,
+      outsideAlpha: 0.25,
+    },
+  )
+  const pocY = coords.priceToY(pocPrice(vp))
+  if (pocY === null) return
+  stroke(ctx, s)
+  line(ctx, { x, y: pocY }, { x: x + w, y: pocY })
 }
 
 function drawText(ctx: CanvasRenderingContext2D, d: Drawing, a: Pt): void {
@@ -460,6 +745,30 @@ function drawText(ctx: CanvasRenderingContext2D, d: Drawing, a: Pt): void {
   ctx.textBaseline = 'top'
   ctx.fillStyle = s.color
   ctx.fillText(text || '텍스트', a.x, a.y)
+  ctx.restore()
+}
+
+/** 노트: 불투명 바탕 위 채움 색 상자와 테두리, 안에 여러 줄 글. 뒤의 봉·선이 비치지 않는 메모지. */
+function drawNote(rc: RenderScope, d: Drawing, a: Pt): void {
+  const { ctx, palette } = rc
+  const s = d.style
+  const box = noteBox(d, a)
+  ctx.save()
+  ctx.beginPath()
+  ctx.roundRect(box.x, box.y, box.w, box.h, 4)
+  ctx.fillStyle = palette.background
+  ctx.fill()
+  ctx.fillStyle = fillOf(s)
+  ctx.fill()
+  stroke(ctx, s)
+  ctx.stroke()
+  ctx.font = `${box.size}px -apple-system, "Malgun Gothic", sans-serif`
+  ctx.textAlign = 'left'
+  ctx.textBaseline = 'middle'
+  ctx.fillStyle = s.text ? palette.text : palette.textDim
+  box.lines.forEach((l, i) => {
+    ctx.fillText(l, box.x + NOTE_PAD_X, box.y + NOTE_PAD_Y + box.lineHeight * (i + 0.5))
+  })
   ctx.restore()
 }
 

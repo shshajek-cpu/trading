@@ -40,6 +40,7 @@ import {
   type IndicatorKind,
 } from '../lib/indicatorConfig'
 import type { BandSpec } from './bandFill'
+import type { VisibleProfileSpec } from './volumeProfile'
 
 export type LegendFormat = 'price' | 'fixed2' | 'volume' | 'ratio'
 
@@ -97,6 +98,11 @@ export interface ComputedIndicator {
   parts?: IndicatorPart[]
   /** `displayParts` 로 편 부분이면 원래 지표의 instanceId. */
   parentId?: string
+  /**
+   * 보이는 구간 볼륨 프로파일(VPVR). 봉마다의 값이 아니라 화면에 보이는 구간에 따라 달라지므로 선이 없고,
+   * 차트가 프리미티브로 그리며 범례의 POC 도 차트가 알린다.
+   */
+  volumeProfile?: VisibleProfileSpec
 }
 
 export interface IndicatorPart {
@@ -224,6 +230,24 @@ export function computeIndicator(
       }
       break
     }
+    case 'vpvr':
+      base.volumeProfile = {
+        rows: Math.round(p.rows),
+        valueAreaPct: p.valueArea,
+        widthPct: p.width,
+        placement: p.placement === 1 ? 'left' : 'right',
+        style: {
+          upColor: c[0],
+          downColor: c[1],
+          pocColor: c[2],
+          showPoc: p.showPoc !== 0,
+          showValueArea: p.showValueArea !== 0,
+          // 막대는 캔들 뒤에 깔린다. 가치 영역은 또렷하게, 그 밖은 옅게.
+          valueAreaAlpha: 0.55,
+          outsideAlpha: 0.22,
+        },
+      }
+      break
     case 'maSet': {
       // 부분마다 원래 지표로 계산해 선에 부분 key 를 달아 모은다. 꺼 둔 부분은 칸도 만들지 않는다.
       base.parts = []

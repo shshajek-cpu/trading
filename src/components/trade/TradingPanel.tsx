@@ -5,6 +5,7 @@ import type {
   FillReason,
   OrderEnd,
   PaperOrder,
+  PaperOrderRecord,
   PaperPosition,
   PosSide,
   PaperPositionRecord,
@@ -61,6 +62,16 @@ const REASON_LABEL: Record<FillReason, string> = {
 }
 
 const END_LABEL: Record<OrderEnd, string> = { filled: '체결', canceled: '취소', rejected: '거절' }
+
+/** 주문 내역의 체결 수량 — 이 필드가 생기기 전 기록은 체결이면 전량, 아니면 0 으로 본다. */
+function filledOf(o: PaperOrderRecord): number {
+  return o.filledQty ?? (o.status === 'filled' ? o.qty : 0)
+}
+
+/** 주문 내역 상태 — 일부 체결된 뒤 취소된 주문은 따로 적는다. */
+function endLabel(o: PaperOrderRecord): string {
+  return o.status === 'canceled' && filledOf(o) > 0 ? '부분 체결 · 취소' : END_LABEL[o.status]
+}
 
 /** MM-DD HH:mm:ss (로컬 시각). */
 function fmtTime(ms: number): string {
@@ -491,8 +502,10 @@ export function TradingPanel({
                     <b>{priceCell(o)}</b>
                   </div>
                   <div>
-                    <span>수량</span>
-                    <b>{fmtQty(o.qty, step)}</b>
+                    <span>체결/수량</span>
+                    <b>
+                      {fmtQty(o.filledQty, step)} / {fmtQty(o.qty, step)}
+                    </b>
                   </div>
                   <div>
                     <span>증거금</span>
@@ -518,7 +531,7 @@ export function TradingPanel({
             <th>방향/동작</th>
             <th>종류</th>
             <th>가격/발동가</th>
-            <th>수량</th>
+            <th>체결/수량</th>
             <th>증거금</th>
             <th>시간</th>
             <th>취소</th>
@@ -535,7 +548,9 @@ export function TradingPanel({
               </td>
               <td>{orderKind(o)}</td>
               <td>{priceCell(o)}</td>
-              <td>{fmtQty(o.qty, stepOf(o.symbol))}</td>
+              <td>
+                {fmtQty(o.filledQty, stepOf(o.symbol))} / {fmtQty(o.qty, stepOf(o.symbol))}
+              </td>
               <td>{o.frozen > 0 ? fmtUsdt(o.frozen) : '-'}</td>
               <td className="tp-time">{fmtTime(o.createdAt)}</td>
               <td>
@@ -554,6 +569,12 @@ export function TradingPanel({
   const renderOrderHistory = () => {
     const rows = [...account.orderHistory].reverse()
     if (rows.length === 0) return <p className="tp-empty">주문 내역이 없습니다.</p>
+    // 일부만 체결되고 끝난 주문은 체결/주문 수량으로.
+    const qtyText = (o: PaperOrderRecord) => {
+      const step = stepOf(o.symbol)
+      const filled = filledOf(o)
+      return filled > 0 && filled < o.qty ? `${fmtQty(filled, step)} / ${fmtQty(o.qty, step)}` : fmtQty(o.qty, step)
+    }
     if (isMobile) {
       return (
         <div className="tp-cards">
@@ -564,13 +585,13 @@ export function TradingPanel({
                 <span className={o.side === 'long' ? 'up' : 'down'}>
                   {SIDE_LABEL[o.side]} {ACTION_LABEL[o.action]}
                 </span>
-                <span className={`tp-status tp-status-${o.status}`}>{END_LABEL[o.status]}</span>
+                <span className={`tp-status tp-status-${o.status}`}>{endLabel(o)}</span>
               </div>
               <div className="tp-card-line-sub">
                 <span>{fmtTime(o.endedAt)}</span>
                 <span>{TYPE_LABEL[o.type]}</span>
                 <span>{o.avgPrice != null ? fmtPrice(o.avgPrice, tickOf(o.symbol)) : o.price != null ? fmtPrice(o.price, tickOf(o.symbol)) : '-'}</span>
-                <span>{fmtQty(o.qty, stepOf(o.symbol))}</span>
+                <span>{qtyText(o)}</span>
               </div>
               {o.note && <div className="tp-note">{o.note}</div>}
             </div>
@@ -603,9 +624,9 @@ export function TradingPanel({
               </td>
               <td>{TYPE_LABEL[o.type]}</td>
               <td>{o.avgPrice != null ? fmtPrice(o.avgPrice, tickOf(o.symbol)) : o.price != null ? fmtPrice(o.price, tickOf(o.symbol)) : '-'}</td>
-              <td>{fmtQty(o.qty, stepOf(o.symbol))}</td>
+              <td>{qtyText(o)}</td>
               <td>
-                <span className={`tp-status tp-status-${o.status}`}>{END_LABEL[o.status]}</span>
+                <span className={`tp-status tp-status-${o.status}`}>{endLabel(o)}</span>
                 {o.note && <em className="tp-note-inline">{o.note}</em>}
               </td>
             </tr>

@@ -316,6 +316,29 @@ export async function fetchBookTicker(symbol: string, signal?: AbortSignal): Pro
   return { bid: Number(raw.bidPrice), ask: Number(raw.askPrice), time: raw.time }
 }
 
+/** 호가창 스냅숏. bids 는 높은 가격부터, asks 는 낮은 가격부터 [가격, 수량]. time 은 거래 엔진 시각(ms). */
+export interface OrderBook {
+  bids: [number, number][]
+  asks: [number, number][]
+  time: number
+}
+
+interface RawDepth {
+  T: number
+  bids: [string, string][]
+  asks: [string, string][]
+}
+
+/**
+ * 호가창(/fapi/v1/depth) — 시장가 체결가를 호가창을 훑어 정할 때 쓴다. 가중치는 50단계 2, 100단계 5 —
+ * 100단계는 50단계로 모자란 큰 주문만 받는다. 쿨다운 중이면 네트워크를 건드리지 않고 RateLimitError.
+ */
+export async function fetchDepth(symbol: string, limit: 50 | 100 = 50, signal?: AbortSignal): Promise<OrderBook> {
+  const raw = await getJson<RawDepth>('/fapi/v1/depth', { symbol: toRestSymbol(symbol), limit }, signal)
+  const levels = (rows: [string, string][]): [number, number][] => rows.map(([p, q]) => [Number(p), Number(q)])
+  return { bids: levels(raw.bids), asks: levels(raw.asks), time: raw.T }
+}
+
 /** 마크 가격·펀딩 정보. */
 export interface PremiumIndex {
   mark: number

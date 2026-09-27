@@ -29,6 +29,9 @@ export interface ObjectTreeProps {
 /** 가격이 곧 그림의 정체인 수평 계열 — 차트의 가격 라벨과 같은 묶음. */
 const PRICE_KINDS: Partial<Record<DrawingKind, true>> = { horizontal: true, horizontalRay: true, crossLine: true }
 
+/** 적은 글이 곧 그림의 정체인 종류 — 첫 줄을 보인다. */
+const TEXT_KINDS: Partial<Record<DrawingKind, true>> = { text: true, note: true }
+
 export function ObjectTree({
   symbol,
   drawings,
@@ -61,10 +64,11 @@ export function ObjectTree({
     [timezone],
   )
 
-  // 같은 종류가 여럿일 때 서로 가르는 값: 수평 계열은 가격, 그 밖에는 첫 점 시각.
+  // 같은 종류가 여럿일 때 서로 가르는 값: 수평 계열은 가격, 텍스트·노트는 글 첫 줄, 그 밖에는 첫 점 시각.
   const detailOf = (d: Drawing): string => {
     const p = d.points[0]
     if (!p) return ''
+    if (TEXT_KINDS[d.kind] && d.style.text) return d.style.text.split('\n')[0]
     return PRICE_KINDS[d.kind] ? formatPrice(p.price, pricePrecision) : timeFmt.format(p.time * 1000)
   }
 
@@ -103,7 +107,11 @@ export function ObjectTree({
                     <ToolIcon name={iconName} size={18} />
                   </span>
                   <span className="tv-objtree-name">{label}</span>
-                  {detail && <span className="tv-objtree-detail">{detail}</span>}
+                  {detail && (
+                    <span className={`tv-objtree-detail${TEXT_KINDS[d.kind] && d.style.text ? ' text' : ''}`}>
+                      {detail}
+                    </span>
+                  )}
                 </button>
                 {d.kind === 'horizontal' && (
                   <button

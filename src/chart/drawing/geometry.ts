@@ -27,6 +27,35 @@ export function distToLine(p: Pt, a: Pt, b: Pt): number {
   return Math.abs((p.x - a.x) * dy - (p.y - a.y) * dx) / len
 }
 
+/** 점 p 에서 o 에서 단위벡터 u 쪽으로 뻗는 반직선까지의 거리(px). o 뒤쪽은 o 까지의 거리. */
+export function distToRay(p: Pt, o: Pt, u: Pt): number {
+  const t = (p.x - o.x) * u.x + (p.y - o.y) * u.y
+  if (t <= 0) return Math.hypot(p.x - o.x, p.y - o.y)
+  return Math.abs((p.x - o.x) * u.y - (p.y - o.y) * u.x)
+}
+
+/** 앤드루스 피치포크의 방향: 첫 점 a 에서 b–c 가운데로 가는 단위벡터. a 가 가운데와 같으면 null. */
+export function pitchforkDir(a: Pt, b: Pt, c: Pt): Pt | null {
+  const dx = (b.x + c.x) / 2 - a.x
+  const dy = (b.y + c.y) / 2 - a.y
+  const len = Math.hypot(dx, dy)
+  return len === 0 ? null : { x: dx / len, y: dy / len }
+}
+
+/** 선분 b–c 에서 u 쪽으로 끝없이 뻗는 띠(피치포크 두 갈래 사이) 안인지. u 가 b–c 와 나란하면 false. */
+export function pointInHalfStrip(p: Pt, b: Pt, c: Pt, u: Pt): boolean {
+  // p − b = α(c − b) + βu 를 외적으로 푼다.
+  const wx = c.x - b.x
+  const wy = c.y - b.y
+  const px = p.x - b.x
+  const py = p.y - b.y
+  const det = wx * u.y - wy * u.x
+  if (Math.abs(det) < 1e-9) return false
+  const alpha = (px * u.y - py * u.x) / det
+  const beta = (wx * py - wy * px) / det
+  return alpha >= 0 && alpha <= 1 && beta >= 0
+}
+
 /** 두 점이 만드는 사각형 안(가장자리에서 `pad` px 바깥까지)인지. */
 export function pointInRect(p: Pt, a: Pt, b: Pt, pad = 0): boolean {
   const x1 = Math.min(a.x, b.x) - pad

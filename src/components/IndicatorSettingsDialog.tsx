@@ -190,6 +190,21 @@ function ParamField({
     )
   }
 
+  if (param.kind === 'choice') {
+    return (
+      <label className="tv-field">
+        <span className="tv-field-label">{param.label}</span>
+        <select className="tv-input ind-select" value={value} onChange={(e) => onCommit(Number(e.target.value))}>
+          {param.options?.map((label, i) => (
+            <option key={label} value={i}>
+              {label}
+            </option>
+          ))}
+        </select>
+      </label>
+    )
+  }
+
   const parsed = Number(text)
   const valid = text.trim() !== '' && Number.isFinite(parsed) && parsed >= param.min && parsed <= param.max
 

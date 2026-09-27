@@ -9,6 +9,7 @@ export type IndicatorKind =
   | 'maSet'
   | 'volume'
   | 'volumeSpike'
+  | 'vpvr'
   | 'multiMa'
   | 'sma'
   | 'ema'
@@ -46,8 +47,10 @@ export interface IndicatorParamDef {
   min: number
   max: number
   step?: number
-  /** 'flag' 는 0/1 스위치로, 나머지는 숫자 입력으로 그린다. */
-  kind?: 'number' | 'flag'
+  /** 'flag' 는 0/1 스위치로, 'choice' 는 options 중 하나(값 = 순번)를 고르는 목록으로, 나머지는 숫자 입력으로 그린다. */
+  kind?: 'number' | 'flag' | 'choice'
+  /** 'choice' 의 항목 이름. 값 0, 1, … 이 차례로 이 이름에 대응한다. */
+  options?: string[]
   /** 설정 창의 "스타일" 탭에 둔다(선 굵기 등). 없으면 "입력" 탭. */
   tab?: 'style'
   /** 설정 창에서 이 값 위에 붙는 묶음 제목(여러 지표를 합친 세트용). 바뀔 때마다 제목 줄이 생긴다. */
@@ -208,6 +211,24 @@ export const INDICATOR_DEFS: Record<IndicatorKind, IndicatorDef> = {
     colors: [],
   },
   volumeSpike: VOLUME_SPIKE_DEF,
+  vpvr: {
+    kind: 'vpvr',
+    name: '볼륨 프로파일 (보이는 구간)',
+    shortName: 'VPVR',
+    overlay: true,
+    category: '거래량',
+    params: [
+      { key: 'rows', label: '행 수', default: 24, min: 6, max: 200, step: 1 },
+      { key: 'valueArea', label: '가치 영역 (%)', default: 70, min: 1, max: 100, step: 1 },
+      { key: 'width', label: '폭 (가격 칸의 %)', default: 30, min: 5, max: 100, step: 1, tab: 'style' },
+      { key: 'placement', label: '위치', default: 0, min: 0, max: 1, kind: 'choice', options: ['오른쪽', '왼쪽'], tab: 'style' },
+      { key: 'showPoc', label: 'POC 선 표시', default: 1, min: 0, max: 1, kind: 'flag', tab: 'style' },
+      { key: 'showValueArea', label: '가치 영역 강조', default: 1, min: 0, max: 1, kind: 'flag', tab: 'style' },
+    ],
+    // 상승은 파랑, 하락은 호박색, POC 는 빨강 — 캔들 색과 겹치지 않게 고른다.
+    colors: ['#2962ff', '#fbc02d', '#f23645'],
+    colorLabels: ['상승 거래량', '하락 거래량', 'POC'],
+  },
   multiMa: MULTI_MA_DEF,
   sma: {
     kind: 'sma',
@@ -463,6 +484,8 @@ export function indicatorTitle(i: IndicatorInstance): string {
       return 'Vol'
     case 'volumeSpike':
       return `${def.shortName} ${p.count}`
+    case 'vpvr':
+      return `${def.shortName} ${p.rows} ${p.valueArea}`
     case 'multiMa': {
       const lens = multiMaSlots(i).map((s) => s.length)
       const name = p.ema ? 'EMA' : def.shortName

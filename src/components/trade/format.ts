@@ -25,6 +25,12 @@ export function fmtPct(v: number, digits = 2): string {
   return `${n > 0 ? '+' : n < 0 ? '−' : ''}${Math.abs(n).toFixed(digits)}%`
 }
 
+/** 슬리피지 같은 베이시스 포인트(1bp = 0.01%) — 0.35bp, 12.4bp. */
+export function fmtBp(v: number): string {
+  const n = Number.isFinite(v) ? v : 0
+  return `${n >= 10 ? n.toFixed(1) : n.toFixed(2)}bp`
+}
+
 const ratioFmt = new Intl.NumberFormat('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 1 })
 
 /** 증거금률 — 안전할수록 수만 % 까지 커지니 천 단위 쉼표를 넣는다. 교차 포지션이 없으면 —. */

@@ -6,6 +6,7 @@ import { displaySymbol, type SymbolInfo } from '../../lib/symbols'
 import {
   ACTION_LABEL,
   floorTo,
+  fmtBp,
   fmtMarginRatio,
   fmtPrice,
   fmtQty,
@@ -262,6 +263,20 @@ export function OrderPanel({ symbol, symbols, compact = false, draft, onDraftApp
     [canEstimate, coinQty, orderPrice, symbol, type, priceStr, triggerStr, execPriceStr, execType, settings.leverage, settings.marginMode],
   )
 
+  // 직전 시장가 주문(이 종목)의 체결 — 주문 버튼을 누를 때 받은 호가창을 훑어 정한 평균가·슬리피지를 보여 준다.
+  // 수량을 고칠 때마다 호가창을 받지 않는다.
+  const [lastMarket, setLastMarket] = useState<{ symbol: string; at: number } | null>(null)
+  const fills = paper.account.fills
+  const marketFill = useMemo(() => {
+    if (!lastMarket || lastMarket.symbol !== symbol) return null
+    // 끝에서 가까운 몇 건만 본다 — 같은 순간의 다른 체결(TP/SL 등)이 뒤에 붙었을 수 있다.
+    for (let i = fills.length - 1; i >= Math.max(0, fills.length - 20); i--) {
+      const f = fills[i]
+      if (f.symbol === symbol && f.reason === 'market' && f.at >= lastMarket.at) return f
+    }
+    return null
+  }, [lastMarket, symbol, fills])
+
   async function submit(side: PosSide) {
     if (busy) return
     if (tab === 'open' && !(Number.isFinite(coinQty) && coinQty > 0)) {
@@ -294,10 +309,12 @@ export function OrderPanel({ symbol, symbols, compact = false, draft, onDraftApp
     }
     setBusy(true)
     setError(null)
+    const startedAt = Date.now()
     const err = await paper.place(req)
     setBusy(false)
     if (err) setError(err)
     else {
+      if (req.type === 'market') setLastMarket({ symbol, at: startedAt })
       // 다음 주문에 앞 주문의 수량·익절/손절이 붙지 않게 비운다(켜 둔 토글은 그대로).
       setQtyStr('')
       setTpStr('')
@@ -322,6 +339,25 @@ export function OrderPanel({ symbol, symbols, compact = false, draft, onDraftApp
     : paper.sync.mode === 'local'
       ? '이 기기에만 저장됩니다. 동기화 코드를 정하면 PC·폰이 같은 계좌를 씁니다.'
       : paper.sync.message
+
+  // 시장가: 주문할 때 호가창을 훑어 정한 평균가·슬리피지(직전 주문). 주문 전에는 계산 방식만 알린다.
+  const marketRow = type === 'market' && (
+    <div className="op-info-row">
+      <span>{marketFill ? '직전 체결 평균가' : '예상 평균가'}</span>
+      {busy ? (
+        <b className="op-info-hint">호가창 확인 중…</b>
+      ) : marketFill ? (
+        <b>
+          {fmtPrice(marketFill.price, tick)}
+          {marketFill.depth === 'none'
+            ? ' · 호가창 없음'
+            : ` · 슬리피지 ${fmtBp(marketFill.slippage ?? 0)}${marketFill.depth === 'thin' ? ' (호가 부족)' : ''}`}
+        </b>
+      ) : (
+        <b className="op-info-hint">주문할 때 호가창으로 계산</b>
+      )}
+    </div>
+  )
 
   const notional = Number.isFinite(coinQty) ? coinQty * orderPrice : 0
 
@@ -647,6 +683,7 @@ export function OrderPanel({ symbol, symbols, compact = false, draft, onDraftApp
             <span>주문 금액</span>
             <b>{fmtUsdt(notional)} USDT</b>
           </div>
+          {marketRow}
           <div className="op-info-row">
             <span>필요 증거금</span>
             <b>{estLong ? `${fmtUsdt(estLong.margin)} USDT` : '—'}</b>
@@ -666,6 +703,7 @@ export function OrderPanel({ symbol, symbols, compact = false, draft, onDraftApp
         </div>
       ) : (
         <div className="op-info">
+          {marketRow}
           {[posLong, posShort].filter((p): p is NonNullable<typeof p> => !!p && p.qty > 0).map((p) => {
             // 입력한 만큼(비율·수량, 비면 전량)만 닫는다고 보고 테이커 수수료를 뺀다.
             const q = closeQtyOf(p)

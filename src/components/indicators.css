@@ -116,6 +116,9 @@
 .ind-num.invalid {
   border-color: var(--tv-down);
 }
+.ind-select {
+  width: 96px;
+}
 .ind-settings-empty {
   margin: 12px 0;
   color: var(--tv-text-dim);

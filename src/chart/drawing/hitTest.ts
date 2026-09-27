@@ -3,14 +3,27 @@ import type { Coords } from './coords'
 import {
   distToLine,
   distToPolyline,
+  distToRay,
   distToSegment,
   nearRectEdge,
+  pitchforkDir,
   pointInEllipse,
+  pointInHalfStrip,
   pointInRect,
   pointInTriangle,
   type Pt,
 } from './geometry'
-import { FIB_LEVELS, fibPrice, resolvePts, textBox } from './render'
+import {
+  FIB_LEVELS,
+  fibExtensionSpan,
+  fibPrice,
+  fibTimeZoneXs,
+  noteBox,
+  regressionChannel,
+  resolvePts,
+  textBox,
+} from './render'
+import { FIB_EXT_LEVELS, fibExtensionPrice } from './studies'
 
 export type Hit =
   | { type: 'anchor'; index: number }
@@ -127,6 +140,33 @@ function hitBody(
       const b2 = { x: b.x, y: b.y + dy }
       return distToSegment(p, a, b) <= tol || distToSegment(p, a2, b2) <= tol
     }
+    case 'regressionTrend': {
+      const ch = regressionChannel(d, coords)
+      if (!ch) {
+        const [a, b] = pts
+        return !!a && !!b && distToSegment(p, a, b) <= tol
+      }
+      const { base, upper, lower } = ch
+      if (
+        distToSegment(p, base[0], base[1]) <= tol ||
+        distToSegment(p, upper[0], upper[1]) <= tol ||
+        distToSegment(p, lower[0], lower[1]) <= tol
+      ) {
+        return true
+      }
+      // 채운 채널은 안쪽 어디를 눌러도 잡힌다(평행사변형 = 삼각형 둘).
+      return fill && (pointInTriangle(p, upper[0], upper[1], lower[1]) || pointInTriangle(p, upper[0], lower[1], lower[0]))
+    }
+    case 'pitchfork': {
+      const [a, b, c] = pts
+      if (!a || !b) return false
+      if (!c) return distToSegment(p, a, b) <= tol
+      if (distToSegment(p, b, c) <= tol) return true
+      const u = pitchforkDir(a, b, c)
+      if (!u) return false
+      if (distToRay(p, a, u) <= tol || distToRay(p, b, u) <= tol || distToRay(p, c, u) <= tol) return true
+      return fill && pointInHalfStrip(p, b, c, u)
+    }
     case 'fibRetracement': {
       const [a, b] = pts
       if (!a || !b) return false
@@ -138,6 +178,27 @@ function hitBody(
         return y !== null && Math.abs(p.y - y) <= tol
       })
     }
+    case 'fibExtension': {
+      const [a, b, c] = pts
+      if (!a || !b) return false
+      // 그려진 1→2(→3) 점선도 잡힌다.
+      if (distToSegment(p, a, b) <= tol) return true
+      if (!c) return false
+      if (distToSegment(p, b, c) <= tol) return true
+      const [x1, x2] = fibExtensionSpan(a, b, c)
+      if (p.x < x1 - tol || p.x > x2 + tol) return false
+      const [p1, p2, p3] = d.points
+      return FIB_EXT_LEVELS.some((lvl) => {
+        const y = coords.priceToY(fibExtensionPrice(p1.price, p2.price, p3.price, lvl))
+        return y !== null && Math.abs(p.y - y) <= tol
+      })
+    }
+    case 'fibTimeZone': {
+      const [a, b] = pts
+      if (!a || !b) return false
+      if (distToSegment(p, a, b) <= tol) return true
+      return fibTimeZoneXs(d, coords).some((z) => Math.abs(p.x - z.x) <= tol)
+    }
     case 'rectangle': {
       const [a, b] = pts
       if (!a || !b) return false
@@ -145,8 +206,10 @@ function hitBody(
     }
     case 'priceRange':
     case 'dateRange':
-    case 'datePriceRange': {
+    case 'datePriceRange':
+    case 'fixedRangeVolumeProfile': {
       // 높이나 폭이 0 인 범위(같은 가격·같은 봉)도 잡히게 가장자리 바깥까지 조금 넓힌다.
+      // 볼륨 프로파일의 두 앵커는 상자 모서리라(anchorPoints) 막대까지 이 상자 안이다.
       const [a, b] = pts
       return !!a && !!b && pointInRect(p, a, b, tol)
     }
@@ -168,6 +231,12 @@ function hitBody(
       const a = pts[0]
       if (!a) return false
       const box = textBox(d, a)
+      return pointInRect(p, { x: box.x, y: box.y }, { x: box.x + box.w, y: box.y + box.h }, tol)
+    }
+    case 'note': {
+      const a = pts[0]
+      if (!a) return false
+      const box = noteBox(d, a)
       return pointInRect(p, { x: box.x, y: box.y }, { x: box.x + box.w, y: box.y + box.h }, tol)
     }
     case 'arrowMarkUp':

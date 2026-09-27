@@ -28,6 +28,27 @@
   pointer-events: auto;
 }
 
+/* 노트: 여러 줄 입력칸. 줄 수만큼 커진다(rows). */
+.tv-draw-textedit.note {
+  min-width: 160px;
+  height: auto;
+  padding: 4px 6px;
+  line-height: 1.35;
+  resize: none;
+}
+
+/* 폰: 16px 미만 입력칸은 iOS 가 누르는 순간 화면을 확대한다. */
+@media (width <= 900px) {
+  .tv-draw-textedit {
+    height: 44px;
+    font-size: 16px;
+  }
+
+  .tv-draw-textedit.note {
+    height: auto;
+  }
+}
+
 /* ── 선택된 그림 플로팅 툴바 ── */
 .tv-draw-seltoolbar {
   position: absolute;

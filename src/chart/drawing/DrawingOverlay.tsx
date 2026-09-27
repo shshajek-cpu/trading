@@ -61,6 +61,9 @@ function isDrawingKind(tool: DrawingTool): tool is DrawingKind {
   return !isCursorTool(tool) && tool !== 'measure' && tool !== 'zoom'
 }
 
+/** 글을 적어 만드는 그림 — 인라인 편집기로 만들고 고친다. */
+type TextKind = Extract<DrawingKind, 'text' | 'note'>
+
 function nearestBar(candles: Candle[], time: number): Candle | null {
   const n = candles.length
   if (n === 0) return null
@@ -171,9 +174,16 @@ export function DrawingOverlay(props: DrawingOverlayProps) {
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [preview, setPreview] = useState<Drawing | null>(null)
   const [zoomBox, setZoomBox] = useState<{ x: number; y: number; w: number; h: number } | null>(null)
-  const [textEdit, setTextEdit] = useState<
-    { mode: 'create' | 'edit'; id?: string; dp: DrawingPoint; x: number; y: number; value: string } | null
-  >(null)
+  // 텍스트는 한 줄 입력칸, 노트는 여러 줄 입력칸으로 같은 흐름(누른 자리에서 열고, 완료하면 만들거나 고친다)을 탄다.
+  const [textEdit, setTextEdit] = useState<{
+    kind: TextKind
+    mode: 'create' | 'edit'
+    id?: string
+    dp: DrawingPoint
+    x: number
+    y: number
+    value: string
+  } | null>(null)
 
   const primitiveRef = useRef<DrawingPrimitive | null>(null)
   const pressRef = useRef<Press | null>(null)
@@ -333,8 +343,8 @@ export function DrawingOverlay(props: DrawingOverlayProps) {
   )
 
   const openTextEditor = useCallback(
-    (mode: 'create' | 'edit', dp: DrawingPoint, x: number, y: number, value: string, id?: string) => {
-      setTextEdit({ mode, dp, x, y, value, id })
+    (kind: TextKind, mode: 'create' | 'edit', dp: DrawingPoint, x: number, y: number, value: string, id?: string) => {
+      setTextEdit({ kind, mode, dp, x, y, value, id })
     },
     [],
   )
@@ -415,8 +425,8 @@ export function DrawingOverlay(props: DrawingOverlayProps) {
 
       if (isDrawingKind(t)) {
         const sp = makePoint(coords, l.candles, p, resolveMagnet(ctrl))
-        if (t === 'text') {
-          // 텍스트는 클릭 시 인라인 편집기를 연다(아래 up 에서 처리하지 않음).
+        if (t === 'text' || t === 'note') {
+          // 텍스트·노트는 클릭 시 인라인 편집기를 연다(아래 up 에서 처리하지 않음).
           pressRef.current = { mode: 'create', pointerId: e.pointerId, startPt: p, startPoint: sp, moved: false }
         } else if (t === 'brush') {
           const rp = { time: coords.xToTime(p.x) ?? 0, price: coords.yToPrice(p.y) ?? 0 }
@@ -668,10 +678,10 @@ export function DrawingOverlay(props: DrawingOverlayProps) {
         }
       }
 
-      // 텍스트: 놓은 자리에 인라인 편집기를 연다.
-      if (press.mode === 'create' && l.tool === 'text') {
+      // 텍스트·노트: 놓은 자리에 인라인 편집기를 연다.
+      if (press.mode === 'create' && (l.tool === 'text' || l.tool === 'note')) {
         const dp = makePoint(coords, l.candles, p, resolveMagnet(ctrl))
-        openTextEditor('create', dp, p.x, p.y, '')
+        openTextEditor(l.tool, 'create', dp, p.x, p.y, '')
         creatingRef.current = null
       }
     }
@@ -683,12 +693,13 @@ export function DrawingOverlay(props: DrawingOverlayProps) {
       const p = { x: e.clientX - rect.left, y: e.clientY - rect.top }
       const coords = coordsOf()
       const picked = l.hidden ? null : pickDrawing(l.drawings, coords, p)
-      if (picked && picked.drawing.kind === 'text' && !l.locked && !picked.drawing.locked) {
+      const kind = picked?.drawing.kind
+      if (picked && (kind === 'text' || kind === 'note') && !l.locked && !picked.drawing.locked) {
         const d = picked.drawing
         const x = coords.timeToX(d.points[0].time)
         const y = coords.priceToY(d.points[0].price)
         if (x !== null && y !== null) {
-          openTextEditor('edit', d.points[0], x, y, d.style.text ?? '', d.id)
+          openTextEditor(kind, 'edit', d.points[0], x, y, d.style.text ?? '', d.id)
           e.preventDefault()
           e.stopPropagation()
         }
@@ -891,21 +902,26 @@ export function DrawingOverlay(props: DrawingOverlayProps) {
       if (value) {
         onCreate({
           symbol: l.symbol,
-          kind: 'text',
+          kind: te.kind,
           points: [te.dp],
-          style: { ...defaultStyle('text'), text: value },
+          style: { ...defaultStyle(te.kind), text: value },
         })
       }
       setTextEdit(null)
       if (!l.stay) onToolDone()
     } else {
       if (te.id) {
-        if (value) onUpdate(te.id, { style: { ...(selected?.style ?? defaultStyle('text')), text: value } })
+        if (value) onUpdate(te.id, { style: { ...(selected?.style ?? defaultStyle(te.kind)), text: value } })
         else onRemove(te.id)
       }
       setTextEdit(null)
     }
   }, [onCreate, onUpdate, onRemove, onToolDone, selected])
+
+  const onEditorChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+    const value = e.target.value
+    setTextEdit((prev) => (prev ? { ...prev, value } : prev))
+  }
 
   return (
     <div className="tv-drawoverlay" style={{ pointerEvents: 'none' }} data-enabled={enabled}>
@@ -915,13 +931,13 @@ export function DrawingOverlay(props: DrawingOverlayProps) {
           style={{ left: zoomBox.x, top: zoomBox.y, width: zoomBox.w, height: zoomBox.h }}
         />
       )}
-      {textEdit && (
+      {textEdit?.kind === 'text' && (
         <input
           className="tv-draw-textedit"
           style={{ left: textEdit.x, top: textEdit.y }}
           autoFocus
           value={textEdit.value}
-          onChange={(e) => setTextEdit((prev) => (prev ? { ...prev, value: e.target.value } : prev))}
+          onChange={onEditorChange}
           onKeyDown={(e) => {
             if (e.key === 'Enter') {
               e.preventDefault()
@@ -934,6 +950,29 @@ export function DrawingOverlay(props: DrawingOverlayProps) {
           }}
           onBlur={commitText}
           placeholder="텍스트 입력"
+        />
+      )}
+      {textEdit?.kind === 'note' && (
+        // 노트는 여러 줄: Enter 는 줄바꿈, Ctrl/⌘+Enter 나 바깥을 누르면 완료, Esc 는 취소.
+        <textarea
+          className="tv-draw-textedit note"
+          style={{ left: textEdit.x, top: textEdit.y }}
+          rows={Math.max(2, textEdit.value.split('\n').length)}
+          autoFocus
+          value={textEdit.value}
+          onChange={onEditorChange}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+              e.preventDefault()
+              commitText()
+            } else if (e.key === 'Escape') {
+              e.preventDefault()
+              setTextEdit(null)
+            }
+            e.stopPropagation()
+          }}
+          onBlur={commitText}
+          placeholder="노트 입력 (Ctrl+Enter 완료)"
         />
       )}
       {selected && enabled && (
@@ -961,7 +1000,8 @@ export function DrawingOverlay(props: DrawingOverlayProps) {
             const coords = coordsOf()
             const x = coords.timeToX(d.points[0].time)
             const y = coords.priceToY(d.points[0].price)
-            openTextEditor('edit', d.points[0], x ?? 40, y ?? 40, d.style.text ?? '', d.id)
+            const kind: TextKind = d.kind === 'note' ? 'note' : 'text'
+            openTextEditor(kind, 'edit', d.points[0], x ?? 40, y ?? 40, d.style.text ?? '', d.id)
           }}
           palette={DRAWING_PALETTE}
         />

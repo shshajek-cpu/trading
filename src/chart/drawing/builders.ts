@@ -11,6 +11,7 @@ export function requiredPoints(kind: DrawingKind): number {
     case 'vertical':
     case 'crossLine':
     case 'text':
+    case 'note':
     case 'arrowMarkUp':
     case 'arrowMarkDown':
     case 'longPosition':
@@ -18,6 +19,8 @@ export function requiredPoints(kind: DrawingKind): number {
       return 1
     case 'parallelChannel':
     case 'triangle':
+    case 'fibExtension':
+    case 'pitchfork':
       return 3
     case 'brush':
       return 0

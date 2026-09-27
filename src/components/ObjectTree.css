@@ -97,6 +97,15 @@
   white-space: nowrap;
 }
 
+/* 텍스트·노트의 글 첫 줄 — 길면 말줄임표로 줄여 이름·동작 버튼을 밀어내지 않는다. */
+.tv-objtree-detail.text {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 55%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .tv-objtree-act {
   display: none;
   align-items: center;

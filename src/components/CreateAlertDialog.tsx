@@ -121,7 +121,9 @@ export function CreateAlertDialog({
   const dec = priceDecimals(symbol, infos)
   const tick = infos.find((i) => i.symbol === symbol)?.tickSize ?? 0
   const isEdit = Boolean(editing && onUpdate)
-  const canIndicator = Boolean(!isEdit && interval && onCreateIndicatorAlert && indicators.length > 0)
+  // 선 값이 없는 지표(볼륨 프로파일 등)는 알림 대상이 될 수 없다.
+  const alertable = useMemo(() => indicators.filter((i) => alertLines(i).length > 0), [indicators])
+  const canIndicator = Boolean(!isEdit && interval && onCreateIndicatorAlert && alertable.length > 0)
 
   const [source, setSource] = useState<string>(PRICE)
   const [priceKind, setPriceKind] = useState<PriceAlertKind>('cross')
@@ -137,7 +139,7 @@ export function CreateAlertDialog({
   // 열릴 때 채운 기준값 — 그 값이 입력칸에 그려진 뒤 포커스·전체 선택한다(바로 고쳐 치게).
   const selectOnOpen = useRef<string | null>(null)
 
-  const instance = source === PRICE ? null : (indicators.find((i) => i.id === source) ?? null)
+  const instance = source === PRICE ? null : (alertable.find((i) => i.id === source) ?? null)
   const lines = useMemo(() => (instance ? alertLines(instance) : []), [instance])
   const line = lines.find((l) => l.key === lineKey) ?? lines[0]
 
@@ -158,7 +160,7 @@ export function CreateAlertDialog({
   const pickSource = (next: string, fromOpen = false): string => {
     setSource(next)
     setError('')
-    const nextInstance = next === PRICE ? null : (indicators.find((i) => i.id === next) ?? null)
+    const nextInstance = next === PRICE ? null : (alertable.find((i) => i.id === next) ?? null)
     if (!nextInstance) {
       const start = (fromOpen ? initialPrice : null) ?? livePrice
       const initial = start != null ? fmt(start, dec) : ''
@@ -199,7 +201,7 @@ export function CreateAlertDialog({
     }
     setMessageDirty(false)
     setPriceKind('cross')
-    const preset = initialIndicatorId && indicators.some((i) => i.id === initialIndicatorId) ? initialIndicatorId : PRICE
+    const preset = initialIndicatorId && alertable.some((i) => i.id === initialIndicatorId) ? initialIndicatorId : PRICE
     selectOnOpen.current = pickSource(canIndicator ? preset : PRICE, true)
     // 열린 순간의 값만 초기값으로 쓴다.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -290,7 +292,7 @@ export function CreateAlertDialog({
             <span className="ca-label">대상</span>
             <select className="tv-input ca-select" value={source} onChange={(e) => pickSource(e.target.value)}>
               <option value={PRICE}>가격</option>
-              {indicators.map((i) => (
+              {alertable.map((i) => (
                 <option key={i.id} value={i.id}>
                   {indicatorTitle(i)}
                 </option>

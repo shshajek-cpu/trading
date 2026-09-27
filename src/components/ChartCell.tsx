@@ -44,6 +44,35 @@ interface ReplayBase {
 /** 늘 같은 빈 목록 — 비워 둘 때 차트·지표가 새 배열로 착각해 다시 계산하지 않게 한다. */
 const EMPTY_CANDLES: Candle[] = []
 
+/**
+ * 범례 지표 줄을 접어 두었는가 — 칸마다(PiP 는 따로) 기기에 기억한다. 안 기억하면 새로고침·종목·주기를
+ * 바꿀 때마다 도로 펼쳐져 접어 둔 사람이 매번 다시 접어야 한다.
+ */
+const LEGEND_COLLAPSED_KEY = 'trading.legendCollapsed.v1'
+
+function legendCollapsedSlot(cellIndex: number | null): string {
+  return cellIndex === null ? 'pip' : String(cellIndex)
+}
+
+function loadLegendCollapsed(cellIndex: number | null): boolean {
+  try {
+    const all = JSON.parse(localStorage.getItem(LEGEND_COLLAPSED_KEY) ?? '{}') as Record<string, unknown>
+    return all[legendCollapsedSlot(cellIndex)] === true
+  } catch {
+    return false
+  }
+}
+
+function saveLegendCollapsed(cellIndex: number | null, collapsed: boolean) {
+  try {
+    const all = JSON.parse(localStorage.getItem(LEGEND_COLLAPSED_KEY) ?? '{}') as Record<string, unknown>
+    all[legendCollapsedSlot(cellIndex)] = collapsed
+    localStorage.setItem(LEGEND_COLLAPSED_KEY, JSON.stringify(all))
+  } catch {
+    /* 저장 못 해도 이번 화면에서는 접힌 채로 둔다 */
+  }
+}
+
 export interface ChartCellProps {
   cellIndex: number | null
   symbol: string
@@ -179,7 +208,7 @@ export function ChartCell({
 }: ChartCellProps) {
   const [liveCandle, setLiveCandle] = useState<Candle | null>(null)
   const [hoverTime, setHoverTime] = useState<number | null>(null)
-  const [collapsed, setCollapsed] = useState(false)
+  const [collapsed, setCollapsed] = useState(() => loadLegendCollapsed(cellIndex))
   // 손가락으로 지표 줄을 눌러 조작 버튼을 편 지표(마우스는 올리기만 해도 보인다).
   const [ctlOpenFor, setCtlOpenFor] = useState<string | null>(null)
   const [panes, setPanes] = useState<{ list: PaneInfo[]; axisWidth: number }>({ list: [], axisWidth: 64 })
@@ -490,6 +519,18 @@ export function ChartCell({
     (id: string) => onIndicatorsChange(indicators.filter((i) => i.id !== id)),
     [indicators, onIndicatorsChange],
   )
+  // 볼륨 프로파일 POC — 스크롤·확대마다 바뀌므로 React 상태를 거치지 않고, 차트가 알릴 때 범례 글자를 바로 고친다.
+  // 값은 따로 들고 있다가 범례 줄이 새로 그려질 때 채운다.
+  const pocPricesRef = useRef(new Map<string, number | null>())
+  const pocElsRef = useRef(new Map<string, HTMLElement>())
+  const onVolumeProfilePoc = useCallback(
+    (id: string, price: number | null) => {
+      pocPricesRef.current.set(id, price)
+      const el = pocElsRef.current.get(id)
+      if (el) el.textContent = price === null ? '—' : formatPrice(price, pricePrecision)
+    },
+    [pricePrecision],
+  )
   // 미니창(PiP)은 보기 전용이다 — 설정·알림 창이 본 창에 뜨므로 범례 조작 버튼을 두지 않는다.
   const legendControls = cellIndex !== null
 
@@ -504,6 +545,17 @@ export function ChartCell({
   const ctlOpen = ctlOpenFor !== null && rowKeys.has(ctlOpenFor) ? ctlOpenFor : null
 
   const fmtPrice = (v: number) => formatPrice(v, pricePrecision)
+
+  /** POC 칸을 차트 알림과 잇는다. 글자는 React 가 아니라 이 함수와 onVolumeProfilePoc 가 채운다. */
+  const bindPoc = (id: string, el: HTMLElement | null) => {
+    if (!el) {
+      pocElsRef.current.delete(id)
+      return
+    }
+    pocElsRef.current.set(id, el)
+    const price = pocPricesRef.current.get(id) ?? null
+    el.textContent = price === null ? '—' : fmtPrice(price)
+  }
 
   /** 범례 한 줄. 조작 버튼(숨기기·설정·알림·삭제)은 원래 지표 전체에 건다 — 세트의 어느 줄에서 눌러도 같다. */
   const renderIndicatorRow = (inst: IndicatorInstance, comp: ComputedIndicator | null) => {
@@ -528,12 +580,20 @@ export function ChartCell({
           {comp?.title ?? indicatorTitle(inst)}
         </span>
         {inst.visible ? (
-          entries.map((e, i) => (
-            <span key={i} className="tv-ind-val" style={{ color: e.color }}>
-              {e.label ? <em>{e.label}</em> : null}
-              {e.text}
-            </span>
-          ))
+          <>
+            {entries.map((e, i) => (
+              <span key={i} className="tv-ind-val" style={{ color: e.color }}>
+                {e.label ? <em>{e.label}</em> : null}
+                {e.text}
+              </span>
+            ))}
+            {comp?.volumeProfile && (
+              <span className="tv-ind-val" style={{ color: comp.volumeProfile.style.pocColor }}>
+                <em>POC</em>
+                <span ref={(el) => bindPoc(rowKey, el)} />
+              </span>
+            )}
+          </>
         ) : (
           <span className="tv-ind-hidden">숨김</span>
         )}
@@ -557,7 +617,8 @@ export function ChartCell({
                 <Ctl name="gear" />
               </button>
             )}
-            {onIndicatorAlert && (
+            {/* 볼륨 프로파일은 봉마다의 값이 없어 알림을 걸 수 없다. */}
+            {onIndicatorAlert && inst.kind !== 'vpvr' && (
               <button
                 type="button"
                 {...tip('알림 추가', '이 지표 값이 정한 조건에 닿으면 알려 줍니다.')}
@@ -627,6 +688,7 @@ export function ChartCell({
           syncCrosshair={syncCrosshair}
           drawingSelectRequest={drawingSelectRequest}
           onEditIndicator={legendControls ? onEditIndicator : undefined}
+          onVolumeProfilePoc={onVolumeProfilePoc}
         />
 
         {/* 트레이딩뷰식 범례(왼쪽 위). */}
@@ -685,7 +747,11 @@ export function ChartCell({
                 className="tv-legend-collapse"
                 {...tip(collapsed ? '지표 펼치기' : '지표 접기', '가격 칸의 지표 이름 줄을 접거나 폅니다.')}
                 aria-expanded={!collapsed}
-                onClick={() => setCollapsed((v) => !v)}
+                onClick={() => {
+                  const next = !collapsed
+                  setCollapsed(next)
+                  saveLegendCollapsed(cellIndex, next)
+                }}
               >
                 <span className={collapsed ? 'flip' : undefined}>
                   <Ctl name="caret" />

@@ -5,10 +5,12 @@ import { DRAWING_PALETTE, withAlpha } from './theme'
 export type DrawingKind =
   | 'trend' | 'ray' | 'infoLine' | 'extended' | 'trendAngle'
   | 'horizontal' | 'horizontalRay' | 'vertical' | 'crossLine'
-  | 'parallelChannel' | 'fibRetracement'
+  | 'parallelChannel' | 'regressionTrend' | 'pitchfork'
+  | 'fibRetracement' | 'fibExtension' | 'fibTimeZone'
   | 'rectangle' | 'ellipse' | 'triangle' | 'brush'
-  | 'text' | 'arrowLine' | 'arrowMarkUp' | 'arrowMarkDown'
+  | 'text' | 'note' | 'arrowLine' | 'arrowMarkUp' | 'arrowMarkDown'
   | 'longPosition' | 'shortPosition' | 'priceRange' | 'dateRange' | 'datePriceRange'
+  | 'fixedRangeVolumeProfile'
 
 /** 커서(선택/이동)용 도구. */
 export type CursorTool = 'cross' | 'dot' | 'arrow' | 'eraser'
@@ -39,6 +41,10 @@ export interface DrawingStyle {
   fontSize?: number
   extendLeft?: boolean
   extendRight?: boolean
+  /** 고정 범위 볼륨 프로파일의 가격 행 수. 없으면 24. */
+  vpRows?: number
+  /** 고정 범위 볼륨 프로파일의 가치 영역 비율(%). 없으면 70. */
+  vpValueArea?: number
 }
 
 export interface Drawing {
@@ -70,12 +76,17 @@ export const DRAWING_LABELS: Record<DrawingKind, string> = {
   vertical: '수직선',
   crossLine: '교차선',
   parallelChannel: '평행 채널',
+  regressionTrend: '회귀 추세',
+  pitchfork: '피치포크',
   fibRetracement: '피보나치 되돌림',
+  fibExtension: '추세 기반 피보나치 확장',
+  fibTimeZone: '피보나치 타임 존',
   rectangle: '사각형',
   ellipse: '타원',
   triangle: '삼각형',
   brush: '브러시',
   text: '텍스트',
+  note: '노트',
   arrowLine: '화살표',
   arrowMarkUp: '위 화살표 표시',
   arrowMarkDown: '아래 화살표 표시',
@@ -84,6 +95,7 @@ export const DRAWING_LABELS: Record<DrawingKind, string> = {
   priceRange: '가격 범위',
   dateRange: '날짜 범위',
   datePriceRange: '날짜와 가격 범위',
+  fixedRangeVolumeProfile: '고정 범위 볼륨 프로파일',
 }
 
 /** 왼쪽 툴바의 한 도구 항목. 단축키 라벨은 lib/shortcuts 의 (바꿀 수 있는) 설정에서 온다. */
@@ -143,7 +155,24 @@ export const TOOL_GROUPS: ToolGroup[] = [
       },
       {
         title: '채널',
-        items: [{ tool: 'parallelChannel', label: '평행 채널', desc: '추세선과 나란한 선을 하나 더 그어 채널을 만듭니다.' }],
+        items: [
+          { tool: 'parallelChannel', label: '평행 채널', desc: '추세선과 나란한 선을 하나 더 그어 채널을 만듭니다.' },
+          {
+            tool: 'regressionTrend',
+            label: '회귀 추세',
+            desc: '두 시각 사이 종가의 선형 회귀선과 ±2 표준편차 선을 긋습니다.',
+          },
+        ],
+      },
+      {
+        title: '피치포크',
+        items: [
+          {
+            tool: 'pitchfork',
+            label: '피치포크',
+            desc: '세 점을 찍어 첫 점에서 나머지 두 점의 가운데를 지나는 중앙선과 나란한 두 갈래 선을 긋습니다.',
+          },
+        ],
       },
     ],
   },
@@ -157,6 +186,16 @@ export const TOOL_GROUPS: ToolGroup[] = [
             tool: 'fibRetracement',
             label: '피보나치 되돌림',
             desc: '두 점 사이에 0.236·0.382·0.5·0.618·0.786 되돌림 가격선을 긋습니다.',
+          },
+          {
+            tool: 'fibExtension',
+            label: '추세 기반 피보나치 확장',
+            desc: '세 점을 찍어 1→2 움직임을 3 에서 0.618·1·1.618·2.618 배로 이은 목표 가격선을 긋습니다.',
+          },
+          {
+            tool: 'fibTimeZone',
+            label: '피보나치 타임 존',
+            desc: '두 점 사이 간격을 1 로 보고 1·2·3·5·8·13·21… 배 떨어진 시각에 세로선을 긋습니다.',
           },
         ],
       },
@@ -183,6 +222,11 @@ export const TOOL_GROUPS: ToolGroup[] = [
       {
         items: [
           { tool: 'text', label: '텍스트', desc: '차트에 글자를 적습니다.' },
+          {
+            tool: 'note',
+            label: '노트',
+            desc: '배경과 테두리가 있는 메모 상자를 붙입니다. Enter 로 줄을 바꾸고, Ctrl+Enter 나 바깥을 눌러 마칩니다.',
+          },
           { tool: 'arrowLine', label: '화살표', desc: '두 점을 잇는 화살표를 그립니다.' },
           { tool: 'arrowMarkUp', label: '위 화살표 표시', desc: '봉 아래에 위쪽 화살표 표시를 붙입니다.' },
           { tool: 'arrowMarkDown', label: '아래 화살표 표시', desc: '봉 위에 아래쪽 화살표 표시를 붙입니다.' },
@@ -203,6 +247,16 @@ export const TOOL_GROUPS: ToolGroup[] = [
           { tool: 'datePriceRange', label: '날짜와 가격 범위', desc: '가격 차이·% 와 기간·봉 수를 함께 잽니다.' },
         ],
       },
+      {
+        title: '거래량 기반',
+        items: [
+          {
+            tool: 'fixedRangeVolumeProfile',
+            label: '고정 범위 볼륨 프로파일',
+            desc: '두 시각 사이 봉들의 가격대별 거래량과 POC·가치 영역을 그 구간 안에 표시합니다.',
+          },
+        ],
+      },
     ],
   },
 ]
@@ -211,10 +265,12 @@ export const TOOL_GROUPS: ToolGroup[] = [
 const DRAWING_KINDS: Record<DrawingKind, true> = {
   trend: true, ray: true, infoLine: true, extended: true, trendAngle: true,
   horizontal: true, horizontalRay: true, vertical: true, crossLine: true,
-  parallelChannel: true, fibRetracement: true,
+  parallelChannel: true, regressionTrend: true, pitchfork: true,
+  fibRetracement: true, fibExtension: true, fibTimeZone: true,
   rectangle: true, ellipse: true, triangle: true, brush: true,
-  text: true, arrowLine: true, arrowMarkUp: true, arrowMarkDown: true,
+  text: true, note: true, arrowLine: true, arrowMarkUp: true, arrowMarkDown: true,
   longPosition: true, shortPosition: true, priceRange: true, dateRange: true, datePriceRange: true,
+  fixedRangeVolumeProfile: true,
 }
 
 export const DRAWINGS_STORAGE_KEY = 'trading.drawings.v2'
@@ -231,9 +287,19 @@ export function defaultStyle(kind: DrawingKind): DrawingStyle {
     case 'parallelChannel':
       return { ...base, lineWidth: 1, fillColor: withAlpha(color, 0.2) }
     case 'fibRetracement':
+    case 'fibExtension':
+    case 'fibTimeZone':
       return { ...base, lineWidth: 1 }
+    case 'pitchfork':
+    case 'regressionTrend':
+      // 채움은 고를 수 있다(선택 도구 막대에서 "채우지 않음").
+      return { ...base, lineWidth: 1, fillColor: withAlpha(color, 0.12) }
+    case 'fixedRangeVolumeProfile':
+      return { ...base, lineWidth: 1, vpRows: 24, vpValueArea: 70 }
     case 'text':
       return { ...base, text: '', fontSize: 14 }
+    case 'note':
+      return { ...base, lineWidth: 1, text: '', fontSize: 14, fillColor: withAlpha(color, 0.2) }
     case 'arrowMarkUp':
     case 'arrowMarkDown':
       return { ...base, text: '', fontSize: 12 }
