@@ -129,6 +129,36 @@
   color: var(--tv-up);
 }
 
+/* 동기화 상태 점(저장 버튼·동기화 창): 맞춤 = 초록 · 동기화 중 = 주황 · 오프라인 = 빨강 */
+.tv-sync-dot {
+  display: inline-block;
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--tv-up);
+}
+
+.tv-sync-dot.syncing {
+  background: var(--tv-warn);
+}
+
+.tv-sync-dot.offline {
+  background: var(--tv-down);
+}
+
+.tv-save-icon {
+  position: relative;
+  display: inline-flex;
+}
+
+.tv-save-icon .tv-sync-dot {
+  position: absolute;
+  top: 1px;
+  right: 0;
+  box-shadow: 0 0 0 2px var(--tv-bg);
+}
+
 .tv-tb-label {
   font-size: var(--tv-fs-sm);
   white-space: nowrap;
@@ -852,26 +882,52 @@
 }
 
 /* ── Sync panel ── */
-.sync-code-row {
+.sync-head {
   display: flex;
-  gap: 6px;
   align-items: center;
-}
-
-.sync-code {
-  flex: 1;
-  padding: 8px 10px;
-  border-radius: var(--tv-radius-sm);
-  background: var(--tv-hover);
+  gap: 8px;
   color: var(--tv-text-strong);
-  font-family: var(--tv-font-mono);
-  letter-spacing: 0.04em;
+  font-weight: 600;
 }
 
-.sync-code-row button,
+.sync-status {
+  font-size: var(--tv-fs-sm);
+  color: var(--tv-text-dim);
+}
+
+.sync-status.syncing {
+  color: var(--tv-warn);
+}
+
+.sync-status.offline {
+  color: var(--tv-down);
+}
+
+.sync-recover {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 6px;
+  padding-top: 10px;
+  border-top: 1px solid var(--tv-gutter);
+}
+
+.sync-recover-title {
+  color: var(--tv-text-dim);
+  font-size: var(--tv-fs-sm);
+  font-weight: 600;
+}
+
+.sync-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
 .sync-actions button {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 5px;
   height: 34px;
   padding: 0 12px;
@@ -883,27 +939,14 @@
   cursor: pointer;
 }
 
-.sync-actions {
-  display: flex;
-  gap: 6px;
+.sync-actions button:hover:not(:disabled) {
+  background: var(--tv-hover);
 }
 
-.sync-actions button {
-  flex: 1;
-  justify-content: center;
-}
-
-.sync-status {
-  font-size: var(--tv-fs-sm);
-  color: var(--tv-text-dim);
-}
-
-.sync-status.error {
-  color: var(--tv-down);
-}
-
-.sync-status.syncing {
-  color: var(--tv-warn);
+.panel .sync-now:disabled,
+.sync-actions button:disabled {
+  opacity: 0.5;
+  cursor: default;
 }
 
 /* 폰: 입력 글자가 16px 보다 작으면 iOS 가 화면을 확대한다. 버튼·입력칸은 44px 이상으로 눌리게 한다. */
@@ -920,7 +963,7 @@
   }
 
   .panel .inline-form button,
-  .sync-code-row button,
+  .panel .sync-now,
   .sync-actions button {
     min-width: 44px;
     height: 44px;

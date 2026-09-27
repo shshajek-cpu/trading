@@ -14,6 +14,8 @@ import { Popover } from './ui/Popover'
 import { Icon } from './Icon'
 import { tip } from '../lib/tooltip'
 import type { ShortcutId } from '../lib/shortcuts'
+import { useLiveStore, type LiveStore } from '../lib/liveStore'
+import { syncStatusText, type SyncState } from '../hooks/useSync'
 
 export interface TopToolbarProps {
   displaySymbol: string
@@ -41,8 +43,10 @@ export interface TopToolbarProps {
   /** 레이아웃 메뉴 "모든 칸에 같이 적용"(심볼·차트 종류·십자선). */
   layoutSync: LayoutSync
   onLayoutSyncChange: (key: LayoutSyncKey, on: boolean) => void
+  /** 저장 버튼·Ctrl+S = 지금 동기화. saved = 방금 동기화에 성공함('저장됨'). */
   onSave: () => void
   saved: boolean
+  syncState: LiveStore<SyncState>
   onQuickSearch: () => void
   onSettings: () => void
   /** 왼쪽 위 범례(심볼 이름·시고저종 줄, 지표 이름 줄)가 보이는지. */
@@ -87,6 +91,7 @@ export function TopToolbar(props: TopToolbarProps) {
     onLayoutSyncChange,
     onSave,
     saved,
+    syncState,
     onQuickSearch,
     onSettings,
     legend,
@@ -293,19 +298,7 @@ export function TopToolbar(props: TopToolbarProps) {
         onSyncChange={onLayoutSyncChange}
       />
 
-      <button
-        type="button"
-        className={`tv-tb-btn wide${saved ? ' saved' : ''}`}
-        {...tip(
-          '저장',
-          '지금 설정(레이아웃·지표·그림·알림)을 동기화 서버에 올립니다. 동기화 코드가 없으면 동기화 창을 엽니다.',
-          shortcut('save'),
-        )}
-        onClick={onSave}
-      >
-        <Icon name="save" size={22} />
-        <span className="tv-tb-label">{saved ? '저장됨' : '저장'}</span>
-      </button>
+      <SaveButton sync={syncState} saved={saved} onSave={onSave} shortcutKey={shortcut('save')} />
 
       <button
         type="button"
@@ -382,5 +375,38 @@ export function TopToolbar(props: TopToolbarProps) {
         </button>
       )}
     </div>
+  )
+}
+
+/** 저장 버튼 — 누르면 지금 동기화한다. 아이콘 위 점이 동기화 상태(툴팁에 자세히)를 보여 준다. 상태가 바뀌어도 이 버튼만 다시 그린다. */
+function SaveButton({
+  sync,
+  saved,
+  onSave,
+  shortcutKey,
+}: {
+  sync: LiveStore<SyncState>
+  saved: boolean
+  onSave: () => void
+  shortcutKey: string | undefined
+}) {
+  const state = useLiveStore(sync)
+  return (
+    <button
+      type="button"
+      className={`tv-tb-btn wide${saved ? ' saved' : ''}`}
+      {...tip(
+        '저장',
+        `${syncStatusText(state)}. 설정(레이아웃·지표·그림·알림)은 모든 기기에 자동으로 맞춰집니다 — 누르면 지금 바로 동기화합니다.`,
+        shortcutKey,
+      )}
+      onClick={onSave}
+    >
+      <span className="tv-save-icon">
+        <Icon name="save" size={22} />
+        <span className={`tv-sync-dot ${state.status}`} aria-hidden="true" />
+      </span>
+      <span className="tv-tb-label">{saved ? '저장됨' : '저장'}</span>
+    </button>
   )
 }

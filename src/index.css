@@ -73,7 +73,6 @@ body {
 /* Values that must stay selectable/copyable. */
 input,
 textarea,
-.sync-code,
 .tv-clock-time {
   user-select: text;
   -webkit-user-select: text;

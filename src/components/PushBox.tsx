@@ -6,21 +6,19 @@ export interface PushProps {
   state: PushState
   message: string
   supported: boolean
-  enable: (codeOverride?: string) => Promise<void>
+  enable: () => Promise<void>
   disable: () => Promise<void>
 }
 
 interface PushBoxProps {
   push: PushProps
-  hasSyncCode: boolean
-  onCreateSyncCode: () => string
 }
 
 /**
  * 앱을 닫아도 오는 알림 안내. 관심 목록·알림 위젯 상단에 앉는 납작한 카드.
  * 켜지 않으면 앱을 띄워둬야만 동작한다는 걸 못박아 알린다.
  */
-export function PushBox({ push, hasSyncCode, onCreateSyncCode }: PushBoxProps) {
+export function PushBox({ push }: PushBoxProps) {
   if (!push.supported) {
     // 아이폰 사파리 탭에는 푸시 기능 자체가 없다. 홈 화면 앱으로 열면 된다는 걸 알려야 한다.
     if (!isIosSafari()) return null
@@ -54,11 +52,7 @@ export function PushBox({ push, hasSyncCode, onCreateSyncCode }: PushBoxProps) {
             type="button"
             className="tv-btn primary pb-btn"
             disabled={push.state === 'working'}
-            onClick={() => {
-              // 새 코드는 React 상태 반영을 기다리지 말고 같은 클릭에서 바로 등록에 쓴다.
-              const code = hasSyncCode ? undefined : onCreateSyncCode()
-              void push.enable(code)
-            }}
+            onClick={() => void push.enable()}
           >
             <Icon name="bell" size={16} />
             {push.state === 'working' ? '처리 중…' : '앱 꺼도 알림 받기'}

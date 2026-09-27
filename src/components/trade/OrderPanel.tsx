@@ -337,7 +337,7 @@ export function OrderPanel({ symbol, symbols, compact = false, draft, onDraftApp
   const syncLine = paper.catchingUp
     ? '꺼 둔 동안의 시세를 반영하는 중…'
     : paper.sync.mode === 'local'
-      ? '이 기기에만 저장됩니다. 동기화 코드를 정하면 PC·폰이 같은 계좌를 씁니다.'
+      ? '이 기기에만 저장되어 있습니다. 서버에 연결되면 모든 기기가 같은 계좌를 씁니다.'
       : paper.sync.message
 
   // 시장가: 주문할 때 호가창을 훑어 정한 평균가·슬리피지(직전 주문). 주문 전에는 계산 방식만 알린다.

@@ -44,8 +44,6 @@ interface AlertsWidgetProps {
   /** 시스템 알림 권한 요청 — 버튼을 눌렀을 때만 묻는다. */
   onRequestPermission: () => void
   push: PushProps
-  hasSyncCode: boolean
-  onCreateSyncCode: () => string
   /** panel = 데스크톱 오른쪽 위젯, page = 폰 앱의 "알림" 탭. */
   variant: 'panel' | 'page'
   /** 행을 누르면 그 종목을 차트에 띄운다(폰은 차트 탭으로 넘어간다). */
@@ -78,8 +76,6 @@ export function AlertsWidget({
   permission,
   onRequestPermission,
   push,
-  hasSyncCode,
-  onCreateSyncCode,
   variant,
   onPickSymbol,
   onReactivateAlert,
@@ -128,7 +124,7 @@ export function AlertsWidget({
           <p className="aw-hint">이 브라우저는 알림을 지원하지 않아 화면 안내로만 표시됩니다.</p>
         )}
 
-        <PushBox push={push} hasSyncCode={hasSyncCode} onCreateSyncCode={onCreateSyncCode} />
+        <PushBox push={push} />
 
         <ul className="aw-rows">
           {alerts.map((a) => {

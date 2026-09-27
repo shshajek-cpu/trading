@@ -11,5 +11,5 @@ export const WIDGET_TABS: { id: WidgetId; label: string; icon: IconName; desc: s
   { id: 'mtf', label: '멀티 타임프레임', icon: 'mtf', desc: '같은 종목을 여러 봉 주기로 나란히 봅니다.' },
   { id: 'pins', label: '핀', icon: 'pin', desc: '봉에 롱·숏·패스 핀을 찍어 기록하고, 모인 핀의 지표에서 공통 규칙을 찾습니다.' },
   { id: 'discover', label: '탐색', icon: 'discover', desc: '과거에 목표 수익에 닿았던 자리들의 공통점을 찾아 봅니다.' },
-  { id: 'sync', label: '동기화', icon: 'sync', desc: '동기화 코드로 다른 기기와 설정·그림·알림을 주고받습니다.' },
+  { id: 'sync', label: '동기화', icon: 'sync', desc: '설정·그림·알림이 모든 기기에 늘 맞춰집니다. 상태 확인·지금 동기화·복구.' },
 ]

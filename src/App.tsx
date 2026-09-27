@@ -354,7 +354,7 @@ function App() {
   /** 실시간 틱을 받는 칸(가린 칸 포함)의 종목들. PiP 는 활성 종목이라 여기에 들어 있다. */
   const feedKey = cells.slice(0, layout).map((c) => c.symbol).join(',')
 
-  // 모의 선물거래 — 계좌는 동기화 코드로 기기끼리 공유한다(D1). 주문창·거래 패널·차트 선이 PaperContext 로 읽는다.
+  // 모의 선물거래 — 계좌는 개인 동기화 공간(sync.code)으로 모든 기기가 공유한다(D1). 주문창·거래 패널·차트 선이 PaperContext 로 읽는다.
   const paperName = useCallback((s: string) => displaySymbol(s, symbols), [symbols])
   const paper = usePaperTrading({ code: sync.code, symbols, notify, toast: pushToast, displayName: paperName })
   /** 차트 우클릭 「여기에 지정가 주문」이 주문창에 채울 가격. nonce 가 바뀔 때마다 한 번 반영된다. */
@@ -722,13 +722,8 @@ function App() {
 
   // ── save / sync ───────────────────────────────────────────────────
   const handleSave = useCallback(() => {
-    if (!sync.code) {
-      if (isMobile) setMobileSheet('sync')
-      else setWidgetOpen('sync')
-      return
-    }
-    // 서버 충돌 검사를 지키는 저장 — 다른 기기가 먼저 바꿨으면 덮어쓰지 않고 이유를 알린다.
-    void sync.save().then((r) => {
+    // 저장 = 지금 동기화: 서버를 확인해 다른 기기 변경을 합치고, 이 기기 변경을 올린다.
+    void sync.syncNow().then((r) => {
       if (!r.ok) {
         pushToast(r.message)
         return
@@ -736,12 +731,6 @@ function App() {
       setSaved(true)
       window.setTimeout(() => setSaved(false), 1500)
     })
-  }, [sync, isMobile, pushToast])
-
-  const createSyncCode = useCallback(() => {
-    const code = sync.createCode()
-    pushToast(`동기화 코드 ${code} 를 만들었습니다`)
-    return code
   }, [sync, pushToast])
 
   /** 알림을 눌러 들어온 종목(알림 목록·푸시 알림·주소 ?symbol=)을 활성 칸에 연다. 폰은 차트 탭으로 간다. */
@@ -1263,8 +1252,6 @@ function App() {
                 permission={permission}
                 onRequestPermission={() => void requestPermission()}
                 push={push}
-                hasSyncCode={Boolean(sync.code)}
-                onCreateSyncCode={createSyncCode}
                 variant={variant}
               />
             )}
@@ -1345,12 +1332,10 @@ function App() {
       case 'sync':
         return (
           <SyncPanel
-            code={sync.code}
-            status={sync.status}
-            message={sync.message}
-            onSetCode={sync.setCode}
-            onPull={sync.pull}
-            onPush={sync.push}
+            state={sync.state}
+            onSyncNow={sync.syncNow}
+            onReplaceLocal={sync.replaceLocal}
+            onReplaceServer={sync.replaceServer}
           />
         )
     }
@@ -1391,6 +1376,7 @@ function App() {
     onLayoutSyncChange: setLayoutSync,
     onSave: handleSave,
     saved,
+    syncState: sync.state,
     onQuickSearch: () => setQuickOpen(true),
     onSettings: () => setSettingsOpen(true),
     legend: legendShown(settings),

@@ -1,181 +1,96 @@
 import { useState } from 'react'
-import { randomCode } from '../lib/syncCode'
-import type { PullResult, SyncStatus } from '../hooks/useSync'
+import { useLiveStore, type LiveStore } from '../lib/liveStore'
+import { syncStatusText, type PullResult, type SyncResult, type SyncState } from '../hooks/useSync'
 import { Icon } from './Icon'
 
 interface SyncPanelProps {
-  code: string
-  status: SyncStatus
-  message: string
-  onSetCode: (code: string) => void
-  onPull: (code: string) => Promise<PullResult>
-  onPush: (code: string) => Promise<void>
+  state: LiveStore<SyncState>
+  onSyncNow: () => Promise<SyncResult>
+  onReplaceLocal: () => Promise<PullResult>
+  onReplaceServer: () => Promise<SyncResult>
 }
 
-const STATUS_LABEL: Record<SyncStatus, string> = {
-  off: '꺼짐',
-  idle: '켜짐',
-  syncing: '동기화 중…',
-  error: '오류',
-}
-
-/** 서버(/api/settings)가 받는 형식. 앱이 만드는 코드는 소문자라 입력도 소문자로 맞춘다. */
-const CODE_RE = /^[a-z0-9-]{6,64}$/
-
-export function SyncPanel({ code, status, message, onSetCode, onPull, onPush }: SyncPanelProps) {
-  const [draft, setDraft] = useState('')
-  const [copied, setCopied] = useState(false)
-  // 연결 입력 안내(형식 오류·연결 취소·실패). 코드가 꺼지면 useSync 의 상태 문구도 지워지므로 여기서 들고 있는다.
+/** 늘 켜진 동기화의 상태와 복구 버튼. 코드 입력은 없다 — 모든 기기가 같은 개인 공간을 쓴다. */
+export function SyncPanel({ state, onSyncNow, onReplaceLocal, onReplaceServer }: SyncPanelProps) {
+  const sync = useLiveStore(state)
+  // 복구 결과 안내(서버에 기록 없음 등). 상태 줄은 useSync 가 맡는다.
   const [note, setNote] = useState('')
-
-  // 새 코드: 이 기기 설정을 서버에 올려 시작한다.
-  const createNew = () => {
-    const v = randomCode()
-    setNote('')
-    onSetCode(v)
-    void onPush(v)
-  }
-
-  // 기존 코드에 연결: 서버에 기록이 있으면 내려받고, 없으면 확인을 받은 뒤에만 이 기기 설정을 올린다.
-  const join = (value: string) => {
-    // 대문자로 치면 다른 KV 키가 되어 다른 기기와 갈린다 — 앱이 만드는 코드처럼 소문자로 맞춘다.
-    const v = value.trim().toLowerCase()
-    if (!CODE_RE.test(v)) {
-      setNote('코드는 영문·숫자·하이픈(-) 6~64자입니다. 예: abcd-efgh-jkmn')
-      return
-    }
-    if (!window.confirm('이 코드에 연결하면 이 기기의 설정이 서버에 저장된 설정으로 바뀝니다. 계속할까요?')) return
-    setNote('')
-    onSetCode(v)
-    void onPull(v).then((result) => {
-      // 서버에 기록이 있으면 내려받은 뒤 새로 읽어야 화면에 반영된다.
-      if (result === 'pulled') {
-        window.location.reload()
-        return
-      }
-      // 기록이 없으면 코드를 잘못 쳤을 수 있다 — 묻지 않고 올리면 조용히 새 동기화 공간이 생긴다.
-      if (result === 'empty' && window.confirm('이 코드로 저장된 설정이 없습니다. 이 기기 설정으로 새로 시작할까요?')) {
-        void onPush(v)
-        return
-      }
-      // 취소했거나 받기에 실패했으면 연결하지 않는다 — 실패했는데 올리면 서버 기록을 덮는다.
-      onSetCode('')
-      setDraft(v)
-      setNote(
-        result === 'empty'
-          ? '연결하지 않았습니다. 코드를 다시 확인하세요.'
-          : '서버에 연결하지 못했습니다. 잠시 뒤 다시 시도하세요.',
-      )
-    })
-  }
+  const busy = sync.status === 'syncing'
 
   return (
     <section className="panel sync-panel">
-      {code ? (
-        <>
-          <div className="sync-code-row">
-            <code className="sync-code">{code}</code>
-            <button
-              type="button"
-              onClick={() => {
-                void navigator.clipboard.writeText(code).then(() => {
-                  setCopied(true)
-                  setTimeout(() => setCopied(false), 1500)
-                })
-              }}
-            >
-              <Icon name={copied ? 'check' : 'copy'} size={15} />
-              {copied ? '복사됨' : '복사'}
-            </button>
-          </div>
+      <div className="sync-head">
+        <span className={`tv-sync-dot ${sync.status}`} aria-hidden="true" />
+        항상 동기화
+      </div>
+      <div className={`sync-status ${sync.status}`} role="status">
+        {syncStatusText(sync)}
+        {sync.status === 'offline' && sync.message && ` · ${sync.message}`}
+      </div>
 
-          <p className="hint">
-            다른 기기에서 이 코드를 넣으면 지표·그린 선·알림·레이아웃이 따라옵니다. 바꾼 설정은 자동으로 올리고,
-            앱을 열거나 돌아올 때 다른 기기에서 바꾼 설정을 받아옵니다.
-          </p>
+      <p className="hint">
+        레이아웃·지표·그린 선·알림·관심 목록이 이 앱을 여는 모든 기기에서 자동으로 맞춰집니다. 두 기기에서 따로 바꿔도
+        멈추지 않고 합쳐서 저장합니다.
+      </p>
 
-          <div className="sync-actions">
-            <button type="button" onClick={() => void onPush(code)} disabled={status === 'syncing'}>
-              <Icon name="arrowUp" size={15} />
-              지금 올리기
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                void onPull(code).then((result) => {
-                  // 불러온 설정은 새로 읽어야 화면에 반영된다.
-                  if (result === 'pulled') window.location.reload()
-                })
-              }}
-              disabled={status === 'syncing'}
-            >
-              <Icon name="arrowDown" size={15} />
-              내려받기
-            </button>
-          </div>
+      <button
+        type="button"
+        className="cta sync-now"
+        disabled={busy}
+        onClick={() => {
+          setNote('')
+          void onSyncNow()
+        }}
+      >
+        <Icon name="sync" size={16} />
+        지금 동기화
+      </button>
 
-          <div className={`sync-status ${status}`} role="status">
-            {STATUS_LABEL[status]}
-            {message && ` · ${message}`}
-          </div>
-
-          <p className="hint">
-            <b>지금 올리기</b>는 이 기기 설정으로 서버를 덮어씁니다(다른 기기 변경은 사라짐).{' '}
-            <b>내려받기</b>는 서버 설정을 가져옵니다(이 기기에서 아직 안 올린 변경은 사라짐).
-          </p>
-
+      <div className="sync-recover">
+        <div className="sync-recover-title">복구</div>
+        <p className="hint">평소에는 쓸 일이 없습니다. 설정이 꼬였을 때 한쪽 것으로 통째로 맞춥니다.</p>
+        <div className="sync-actions">
           <button
             type="button"
-            className="ghost-btn sync-off"
+            disabled={busy}
             onClick={() => {
-              if (window.confirm('동기화를 끄면 설정을 더 주고받지 않고, 앱을 꺼도 오던 알림도 꺼집니다. 끌까요?')) {
-                onSetCode('')
+              if (!window.confirm('서버 설정으로 이 기기를 덮어씁니다. 이 기기에서 아직 올리지 않은 변경은 사라집니다. 계속할까요?')) {
+                return
               }
+              setNote('')
+              void onReplaceLocal().then((result) => {
+                // 받은 설정은 새로 읽어야 화면에 반영된다.
+                if (result === 'pulled') window.location.reload()
+                else if (result === 'empty') setNote('서버에 저장된 설정이 없습니다')
+              })
             }}
           >
-            동기화 끄기
+            <Icon name="arrowDown" size={15} />
+            서버 설정으로 이 기기 덮어쓰기
           </button>
-        </>
-      ) : (
-        <>
-          <p className="hint">
-            코드를 만들어 다른 기기에 입력하면 설정이 공유됩니다. 계정은 필요 없습니다.
-          </p>
-          <button type="button" className="cta sync-new" onClick={createNew}>
-            <Icon name="plus" size={16} />
-            새 코드 만들기
-          </button>
-          <form
-            className="inline-form sync-join"
-            onSubmit={(e) => {
-              e.preventDefault()
-              join(draft)
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => {
+              if (!window.confirm('이 기기 설정으로 서버를 덮어씁니다. 다른 기기에서 바꿔 올린 설정은 이 기기 것으로 바뀝니다. 계속할까요?')) {
+                return
+              }
+              setNote('')
+              void onReplaceServer().then((result) => {
+                if (result.ok) setNote('서버를 이 기기 설정으로 덮어썼습니다')
+              })
             }}
           >
-            <input
-              type="text"
-              value={draft}
-              placeholder="기존 코드 입력"
-              aria-label="기존 코드 입력"
-              autoComplete="off"
-              autoCapitalize="none"
-              spellCheck={false}
-              onChange={(e) => {
-                setDraft(e.target.value)
-                setNote('')
-              }}
-            />
-            <button type="submit" disabled={draft.trim().length < 6}>
-              연결
-            </button>
-          </form>
-          {note && (
-            <div className="sync-status error" role="alert">
-              {note}
-            </div>
-          )}
-        </>
-      )}
+            <Icon name="arrowUp" size={15} />
+            이 기기 설정으로 서버 덮어쓰기
+          </button>
+        </div>
+        {note && (
+          <div className="sync-status" role="status">
+            {note}
+          </div>
+        )}
+      </div>
     </section>
   )
 }

@@ -42,7 +42,7 @@ export interface ShortcutDef {
 export const SHORTCUT_DEFS: ShortcutDef[] = [
   { id: 'openIndicators', label: '지표', group: '차트', defaults: ['Slash'] },
   { id: 'quickSearch', label: '빠른 검색', group: '차트', defaults: ['Ctrl+KeyK'] },
-  { id: 'save', label: '레이아웃 저장', group: '차트', defaults: ['Ctrl+KeyS'] },
+  { id: 'save', label: '지금 동기화(저장)', group: '차트', defaults: ['Ctrl+KeyS'] },
   { id: 'undo', label: '실행 취소', group: '차트', defaults: ['Ctrl+KeyZ'] },
   { id: 'redo', label: '다시 실행', group: '차트', defaults: ['Ctrl+KeyY', 'Ctrl+Shift+KeyZ'] },
   { id: 'zoomIn', label: '확대', group: '차트', defaults: ['Ctrl+ArrowUp'] },

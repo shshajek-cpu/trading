@@ -309,12 +309,11 @@ export function usePushAlerts(
   }, [supported, code, notifyServerFired])
 
   const enable = useCallback(
-    async (codeOverride?: string) => {
+    async () => {
       if (!supported || busyRef.current) return
-      const targetCode = codeOverride ?? code
-      if (!targetCode) {
+      if (!code) {
         setState('error')
-        setMessage('동기화 코드를 만들지 못했습니다')
+        setMessage('동기화 코드가 없습니다')
         return
       }
 
@@ -343,7 +342,7 @@ export function usePushAlerts(
 
         // 다른 코드에 남은 이 기기 등록은 지운다 — 두 코드로 같은 알림이 두 번 오지 않게.
         const prev = readReg()
-        if (prev && prev.code !== targetCode) {
+        if (prev && prev.code !== code) {
           await removeBucket(prev.code, sub.endpoint)
           writeReg(null)
         }
@@ -351,8 +350,8 @@ export function usePushAlerts(
         subRef.current = sub
         // 구독과 현재 감시 목록을 한 요청으로 저장해야 앱을 바로 닫아도 빠지지 않는다.
         const key = watchKeyRef.current
-        const result = await saveWatch(targetCode, watchRef.current, sub)
-        writeReg({ code: targetCode, watch: key })
+        const result = await saveWatch(code, watchRef.current, sub)
+        writeReg({ code, watch: key })
         notifyServerFired(result.firedIds)
         setState('on')
         setMessage('앱을 닫아도 알림이 옵니다')

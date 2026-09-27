@@ -1128,10 +1128,11 @@ export function usePaperTrading(opts: UsePaperTradingOptions): PaperApi {
         versionRef.current = 0
         await doSave()
       } else {
-        // 서버에 계좌가 있다 → 이전 로컬 계좌를 백업하고 서버 것을 받아들인다.
+        // 서버에 계좌가 있다 → 서버 것을 받아들인다. 다른 공간(이 기기만·다른 코드)에서 넘어왔으면 이 기기 계좌를 백업해 둔다.
+        // 같은 공간이면 서버와 같은 계좌라 백업하지 않는다 — 넘어올 때 남긴 백업을 다음 실행이 덮어쓰지 않게.
         try {
           const cur = localStorage.getItem(LOCAL_KEY)
-          if (cur) localStorage.setItem(BACKUP_KEY, cur)
+          if (cur && initial?.code !== code) localStorage.setItem(BACKUP_KEY, cur)
         } catch {
           /* 백업 실패는 무시 */
         }

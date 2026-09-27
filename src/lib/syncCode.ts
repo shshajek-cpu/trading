@@ -1,8 +1,5 @@
-/** 사람이 옮겨 적기 쉬운 코드를 만든다 — 헷갈리는 0/O/1/l 은 뺐다. */
-export function randomCode(): string {
-  const chars = 'abcdefghjkmnpqrstuvwxyz23456789'
-  const pick = Array.from(crypto.getRandomValues(new Uint8Array(12)))
-    .map((n) => chars[n % chars.length])
-    .join('')
-  return `${pick.slice(0, 4)}-${pick.slice(4, 8)}-${pick.slice(8, 12)}`
-}
+/**
+ * 이 앱의 단 하나뿐인 동기화 공간(주인 한 사람이 쓴다). 설정·모의 계좌(D1)·앱 꺼도 오는 알림이 모두 이 코드로 묶인다.
+ * 이미 쓰고 있던 코드라 서버 기록이 그대로 이어진다 — 바꾸면 모든 기기가 빈 공간에서 다시 시작한다.
+ */
+export const PERSONAL_SYNC_CODE = 'peb7-kt39-dwut'
