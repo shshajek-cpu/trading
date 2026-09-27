@@ -1206,6 +1206,8 @@ function App() {
         onNotice={pushToast}
         syncCrosshair={layoutState.syncCrosshair}
         drawingSelectRequest={drawingSelect?.cell === index ? drawingSelect.req : null}
+        // 폰에서는 가격 축을 끌 수 있다(분할 칸이 좁을 때). 데스크톱은 늘 보인다.
+        priceAxisVisible={!isMobile || prefs.mobilePriceAxis}
       />
       </ErrorBoundary>
     )
@@ -1580,6 +1582,13 @@ function App() {
     const toggleSetting = (key: 'showCountdown' | 'showPriceLine' | 'showLastPriceLabel') => () =>
       setSettings((prev) => ({ ...prev, [key]: !prev[key] }))
     const scaleEntries: MenuEntry[] = [
+      {
+        type: 'item',
+        label: '가격 축 표시',
+        checked: prefs.mobilePriceAxis,
+        onSelect: () => patchPrefs({ mobilePriceAxis: !prefs.mobilePriceAxis }),
+      },
+      { type: 'divider' },
       ...chartMenuEntries({ x: 0, y: 0, target: { kind: 'priceScale' }, cellIndex: active }),
       { type: 'divider' },
       { type: 'item', label: '봉 마감 카운트다운', checked: settings.showCountdown, onSelect: toggleSetting('showCountdown') },
@@ -1687,6 +1696,8 @@ function App() {
           onLayoutSyncChange={setLayoutSync}
           maximized={maximizedNow}
           onToggleMaximize={toggleMaximize}
+          priceAxis={prefs.mobilePriceAxis}
+          onPriceAxisChange={(v) => patchPrefs({ mobilePriceAxis: v })}
         />
         {dialogs}
       </PaperContext.Provider>

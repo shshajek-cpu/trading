@@ -16,6 +16,8 @@ export interface UiPrefs {
   /** 차트 아래 모의거래 패널을 펼쳐 두었는가, 펼친 높이(px) — 기기마다. 거래소처럼 펼친 채 시작한다. */
   tradePanelOpen: boolean
   tradePanelHeight: number
+  /** 폰에서 차트 오른쪽 가격 축을 보일지 — 분할 칸이 좁을 때 끄면 차트가 넓어진다. 기기마다. */
+  mobilePriceAxis: boolean
 }
 
 const STORAGE_KEY = 'trading.uiPrefs.v1'
@@ -28,6 +30,7 @@ const DEFAULTS: UiPrefs = {
   favoriteIntervals: DEFAULT_FAVORITE_INTERVALS,
   tradePanelOpen: true,
   tradePanelHeight: 260,
+  mobilePriceAxis: true,
 }
 
 function load(): UiPrefs {
@@ -47,6 +50,7 @@ function load(): UiPrefs {
       tradePanelOpen: typeof parsed.tradePanelOpen === 'boolean' ? parsed.tradePanelOpen : true,
       tradePanelHeight:
         typeof parsed.tradePanelHeight === 'number' && parsed.tradePanelHeight >= 120 ? parsed.tradePanelHeight : 260,
+      mobilePriceAxis: typeof parsed.mobilePriceAxis === 'boolean' ? parsed.mobilePriceAxis : true,
     }
   } catch {
     return DEFAULTS

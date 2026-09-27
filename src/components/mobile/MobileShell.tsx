@@ -91,6 +91,9 @@ export interface MobileShellProps {
   /** 분할 중 활성 칸 하나만 크게 보기. */
   maximized: boolean
   onToggleMaximize: () => void
+  /** 차트 오른쪽 가격 축 표시(폰 전용 설정). 분할 칸이 좁을 때 끄면 차트가 넓어진다. */
+  priceAxis: boolean
+  onPriceAxisChange: (on: boolean) => void
 }
 
 const CURSOR_TOOLS: Partial<Record<DrawingTool, string>> = { cross: '십자선', dot: '점', arrow: '화살표' }
@@ -243,22 +246,33 @@ export function MobileShell(props: MobileShellProps) {
             onSelect: then(() => props.onLayoutChange(o.mode)),
           }))}
         />
+        <SheetSection title="보기">
+          {props.layout > 1 && (
+            <SheetTiles
+              columns={3}
+              tiles={[
+                {
+                  key: 'maximize',
+                  label: props.maximized ? '분할로 돌아가기' : '이 칸 크게 보기',
+                  icon: tileIcon(props.maximized ? LAYOUT_ICON[props.layout] : 'layout1'),
+                  active: props.maximized,
+                  onSelect: then(props.onToggleMaximize),
+                },
+              ]}
+            />
+          )}
+          <label className="m-setting">
+            <span>가격 축 표시</span>
+            <input
+              className="tv-switch"
+              type="checkbox"
+              checked={props.priceAxis}
+              onChange={(e) => props.onPriceAxisChange(e.target.checked)}
+            />
+          </label>
+        </SheetSection>
         {props.layout > 1 && (
           <>
-            <SheetSection title="보기">
-              <SheetTiles
-                columns={3}
-                tiles={[
-                  {
-                    key: 'maximize',
-                    label: props.maximized ? '분할로 돌아가기' : '이 칸 크게 보기',
-                    icon: tileIcon(props.maximized ? LAYOUT_ICON[props.layout] : 'layout1'),
-                    active: props.maximized,
-                    onSelect: then(props.onToggleMaximize),
-                  },
-                ]}
-              />
-            </SheetSection>
             <SheetSection title="모든 칸에 같이 적용">
               {LAYOUT_SYNC_ITEMS.map((s) => (
                 <label key={s.key} className="m-setting">

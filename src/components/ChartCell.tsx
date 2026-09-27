@@ -129,6 +129,8 @@ export interface ChartCellProps {
   syncCrosshair?: boolean
   /** 밖(객체 트리)에서 고른 그림 — 이 칸에 있으면 선택한다. */
   drawingSelectRequest?: { id: string; nonce: number } | null
+  /** 오른쪽 가격 축을 보일지(폰 설정). */
+  priceAxisVisible?: boolean
 }
 
 /** 범례 조작용 소형 아이콘(직접 그린 SVG). */
@@ -205,6 +207,7 @@ export function ChartCell({
   onNotice,
   syncCrosshair,
   drawingSelectRequest,
+  priceAxisVisible,
 }: ChartCellProps) {
   const [liveCandle, setLiveCandle] = useState<Candle | null>(null)
   const [hoverTime, setHoverTime] = useState<number | null>(null)
@@ -689,6 +692,7 @@ export function ChartCell({
           drawingSelectRequest={drawingSelectRequest}
           onEditIndicator={legendControls ? onEditIndicator : undefined}
           onVolumeProfilePoc={onVolumeProfilePoc}
+          priceAxisVisible={priceAxisVisible}
         />
 
         {/* 트레이딩뷰식 범례(왼쪽 위). */}
@@ -807,7 +811,8 @@ export function ChartCell({
           <button
             type="button"
             className="cell-scale-btn"
-            style={{ width: panes.axisWidth }}
+            // 가격 축을 끄면 폭이 0 이 된다 — 다시 켤 수 있게 손가락 크기는 남긴다.
+            style={{ width: Math.max(panes.axisWidth, 44) }}
             aria-label="가격 축 설정"
             onClick={onScaleMenu}
           >

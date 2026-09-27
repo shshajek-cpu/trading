@@ -126,6 +126,8 @@ export interface ChartProps {
    * React 상태를 바꾸지 말고 범례 글자만 직접 고친다.
    */
   onVolumeProfilePoc?: (instanceId: string, price: number | null) => void
+  /** 오른쪽 가격 축을 보일지(폰에서 끌 수 있다). 끄면 현재가·카운트다운 배지도 숨긴다 — 값은 범례에 있다. */
+  priceAxisVisible?: boolean
 }
 
 const asTime = (t: number) => t as UTCTimestamp
@@ -136,6 +138,18 @@ const OLDER_CHUNK_BARS = 500
 const MAX_BACKFILL_CHUNKS = 40
 /** 지표 선을 두 번 누를 때 선 굵기 밖으로 더 봐 주는 거리(px). */
 const LINE_HIT_SLOP = 4
+
+/**
+ * 오른쪽 가격 축 폭(px). 축을 껐다가 막 다시 켠 직후에는 차트가 축을 아직 만들지 않아 width() 가 던진다 —
+ * 그때는 0 으로 보고, 다음 그리기·다음 틱에 제 폭을 얻는다.
+ */
+function rightAxisWidth(chart: IChartApi): number {
+  try {
+    return chart.priceScale('right').width()
+  } catch {
+    return 0
+  }
+}
 
 /** 시각 오름차순 봉 목록에서 time 을 품는 봉(time 이하인 마지막 봉). 첫 봉보다 앞이면 null. */
 function barAtOrBefore(candles: Candle[], time: number): Candle | null {
@@ -204,6 +218,7 @@ export function Chart({
   drawingSelectRequest,
   onEditIndicator,
   onVolumeProfilePoc,
+  priceAxisVisible = true,
 }: ChartProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const chartRef = useRef<IChartApi | null>(null)
@@ -488,7 +503,7 @@ export function Chart({
         vertLines: { color: palette.grid, visible: gridV },
         horzLines: { color: palette.grid, visible: gridH },
       },
-      rightPriceScale: { borderColor: palette.border },
+      rightPriceScale: { borderColor: palette.border, visible: priceAxisVisible },
       timeScale: {
         borderColor: palette.border,
         tickMarkFormatter: makeTickFormatter(settings.timezone),
@@ -517,7 +532,7 @@ export function Chart({
       watermarkRef.current.detach()
       watermarkRef.current = null
     }
-  }, [settings.grid, settings.showWatermark, settings.showLastPriceLabel, settings.timezone, palette, symbol, interval, mainSeries])
+  }, [settings.grid, settings.showWatermark, settings.showLastPriceLabel, settings.timezone, palette, symbol, interval, mainSeries, priceAxisVisible])
 
   // ── 6) 지표 시리즈: 구성이 바뀌면 다시 쌓고, 아니면 데이터만 갱신. ────
   useEffect(() => {
@@ -1018,7 +1033,7 @@ export function Chart({
       const series = mainSeries
       const last = candlesRef.current[candlesRef.current.length - 1]
       if (!el || !chart || !series || !last) return
-      if (!settings.showLastPriceLabel && !settings.showCountdown) {
+      if (!priceAxisVisible || (!settings.showLastPriceLabel && !settings.showCountdown)) {
         el.style.display = 'none'
         return
       }
@@ -1034,7 +1049,7 @@ export function Chart({
       }
       el.style.display = 'block'
       el.style.top = `${Math.round(y) - 10}px`
-      el.style.width = `${chart.priceScale('right').width()}px`
+      el.style.width = `${rightAxisWidth(chart)}px`
       el.style.background = last.close >= last.open ? settings.upColor : settings.downColor
       el.textContent = ''
       if (settings.showLastPriceLabel) {
@@ -1052,7 +1067,7 @@ export function Chart({
     tick()
     const timer = window.setInterval(tick, 1000)
     return () => window.clearInterval(timer)
-  }, [interval, mainSeries, settings.showCountdown, settings.showLastPriceLabel, settings.upColor, settings.downColor])
+  }, [interval, mainSeries, settings.showCountdown, settings.showLastPriceLabel, settings.upColor, settings.downColor, priceAxisVisible])
 
   // ── 14) 오실레이터 패널 위치 + 자동스케일 상태 보고, 패널 크기 저장. ──
   // oscKey 는 오실레이터 패널 구성(종류·개수)의 정체성이다. 이 값이 바뀔 때만 패널이 새로 쌓이므로
@@ -1092,7 +1107,7 @@ export function Chart({
       const c = chartRef.current
       if (!c) return
       const panes = c.panes()
-      const axisWidth = c.priceScale('right').width()
+      const axisWidth = rightAxisWidth(c)
       const oscillators = indicatorsRef.current.filter((x) => !x.overlay && !x.isVolume)
       const SEPARATOR = 1
       let top = panes[0]?.getHeight() ?? 0
@@ -1266,7 +1281,7 @@ export function Chart({
       setRealtimeBtn((prev) => {
         if (!away) return null
         if (prev) return prev
-        return { right: chart.priceScale('right').width() + 10, bottom: ts.height() + 10 }
+        return { right: rightAxisWidth(chart) + 10, bottom: ts.height() + 10 }
       })
     }
     ts.subscribeVisibleLogicalRangeChange(check)
