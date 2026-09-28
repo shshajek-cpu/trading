@@ -6,7 +6,7 @@
  */
 import { LineStyle } from 'lightweight-charts'
 import type { Candle } from '../lib/binance'
-import type { ChartPalette } from '../lib/theme'
+import { withAlpha, type ChartPalette } from '../lib/theme'
 import {
   volumeTiers,
   adx,
@@ -71,6 +71,8 @@ export interface PlotLine {
   displaced?: boolean
   /** 여러 칸에 걸친 지표(세트)에서 이 선이 속한 부분(`ComputedIndicator.parts` 의 key). */
   part?: string
+  /** 값이 above 보다 크거나 below 보다 작으면 범례 값을 그 강조색으로 쓴다(RSI 과매수·과매도). */
+  legendZones?: { above: number; below: number; aboveColor: string; belowColor: string }
 }
 
 export interface LevelLine {
@@ -134,6 +136,29 @@ export function displayParts(c: ComputedIndicator): ComputedIndicator[] {
   }))
 }
 
+/**
+ * 밴드 밖에 있는 봉의 패널 배경(RSI 과매수·과매도). 칸이 작아 선~기준선 채우기가 몇 px 뿐이어도 그 봉이 한눈에 보이게,
+ * 기준선에서 멀어질수록(0·100 쪽) 진하게 칠한다.
+ */
+function beyondColumns(
+  points: LinePoint<number>[],
+  upper: number,
+  lower: number,
+  aboveColor: string,
+  belowColor: string,
+): { time: number; color: string }[] {
+  const out: { time: number; color: string }[] = []
+  for (const pt of points) {
+    if (pt.value > upper) {
+      const depth = Math.min(1, (pt.value - upper) / Math.max(1, 100 - upper))
+      out.push({ time: pt.time, color: withAlpha(aboveColor, 0.22 + 0.38 * depth) })
+    } else if (pt.value < lower) {
+      const depth = Math.min(1, (lower - pt.value) / Math.max(1, lower))
+      out.push({ time: pt.time, color: withAlpha(belowColor, 0.22 + 0.38 * depth) })
+    }
+  }
+  return out
+}
 
 /** 볼륨 봉별 색: 급증 단계는 지표 색(스타일 탭, 기본 형광), 평소엔 방향색을 흐리게. */
 function volumeColors(candles: Candle[], instance: IndicatorInstance, palette: ChartPalette): string[] {
@@ -333,15 +358,19 @@ export function computeIndicator(
       break
     case 'rsi': {
       const points = rsi(candles, p.length)
-      base.lines = [{ key: 'rsi', type: 'line', points, color: c[0], legendLabel: '' }]
+      // 강조를 켜면 밴드 밖 값은 범례에서도 강조색(과매수 초록·과매도 빨강)으로 보인다.
+      const legendZones = p.fill ? { above: p.upper, below: p.lower, aboveColor: c[1], belowColor: c[2] } : undefined
+      base.lines = [{ key: 'rsi', type: 'line', points, color: c[0], legendLabel: '', legendZones }]
       base.levels = [lvl(p.upper), lvl(p.lower), { price: 50, color: dim, lineStyle: LineStyle.Dotted }]
-      // 70/30 밴드 사이를 RSI 색 10%로 채우고(트레이딩뷰 기본), 밴드 밖으로 나간 구간은 선~기준선 사이를 강조한다.
+      // 70/30 밴드 사이를 RSI 색 10%로 채우고(트레이딩뷰 기본), 밴드 밖으로 나간 구간은 선~기준선 사이 채우기와 선 색으로 강조한다.
       base.band = {
         top: p.upper,
         bottom: p.lower,
         color: `${c[0]}1a`,
         outside: p.fill ? { points, above: c[1], below: c[2], max: 100, min: 0 } : undefined,
       }
+      // 예전 인스턴스에는 bg 가 없다 — 기본값(켬)으로 본다.
+      if ((p.bg ?? 1) !== 0) base.highlights = beyondColumns(points, p.upper, p.lower, c[1], c[2])
       break
     }
     case 'macd': {
@@ -450,7 +479,9 @@ export function indicatorLegend(
           : fmt === 'ratio'
             ? `${point.value.toFixed(1)}x`
             : point.value.toFixed(2)
-    out.push({ label: line.legendLabel || undefined, text, color: line.color })
+    const z = line.legendZones
+    const color = z && point.value > z.above ? z.aboveColor : z && point.value < z.below ? z.belowColor : line.color
+    out.push({ label: line.legendLabel || undefined, text, color })
   }
   return out
 }
