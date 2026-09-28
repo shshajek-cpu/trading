@@ -8,7 +8,6 @@ import { LineStyle } from 'lightweight-charts'
 import type { Candle } from '../lib/binance'
 import type { ChartPalette } from '../lib/theme'
 import {
-  VOLUME_TIER_COLORS,
   volumeTiers,
   adx,
   atr,
@@ -136,7 +135,7 @@ export function displayParts(c: ComputedIndicator): ComputedIndicator[] {
 }
 
 
-/** 볼륨 봉별 색: 급증 단계는 형광, 평소엔 방향색을 흐리게. */
+/** 볼륨 봉별 색: 급증 단계는 지표 색(스타일 탭, 기본 형광), 평소엔 방향색을 흐리게. */
 function volumeColors(candles: Candle[], instance: IndicatorInstance, palette: ChartPalette): string[] {
   const surgeOn = (instance.params.surge ?? 1) !== 0
   const window = instance.params.window ?? VOLUME_SURGE_DEFAULTS.window
@@ -147,10 +146,13 @@ function volumeColors(candles: Candle[], instance: IndicatorInstance, palette: C
         high: instance.params.high ?? VOLUME_SURGE_DEFAULTS.high,
       })
     : null
+  // 색을 바꾸기 전에 만든 거래량 지표는 colors 가 비어 있다 — 기본색으로 채운다.
+  const defaults = INDICATOR_DEFS.volume.colors
+  const tierColors = [0, 1, 2].map((k) => instance.colors[k] ?? defaults[k])
   const dim = tiers ? '45' : '80'
   return candles.map((c, i) => {
     const tier = tiers ? tiers[i] : 0
-    if (tier > 0) return VOLUME_TIER_COLORS[tier as 1 | 2 | 3]
+    if (tier > 0) return tierColors[tier - 1]
     return c.close >= c.open ? `${palette.up}${dim}` : `${palette.down}${dim}`
   })
 }

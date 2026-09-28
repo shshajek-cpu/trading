@@ -168,13 +168,6 @@ export function macd<T>(
 /** 거래량 급증 단계. 0 은 평범, 1~3 은 세기. */
 export type VolumeTier = 0 | 1 | 2 | 3
 
-/** 단계별 형광색. 평범한 봉은 기존 초록·빨강을 그대로 쓴다. */
-export const VOLUME_TIER_COLORS: Record<Exclude<VolumeTier, 0>, string> = {
-  1: '#fff23d',
-  2: '#ff8a00',
-  3: '#ff17d4',
-}
-
 export const VOLUME_TIER_LABELS: Record<Exclude<VolumeTier, 0>, string> = {
   1: '보통',
   2: '강함',

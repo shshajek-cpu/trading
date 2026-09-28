@@ -214,7 +214,9 @@ export const INDICATOR_DEFS: Record<IndicatorKind, IndicatorDef> = {
       { key: 'mid', label: '급증 2단계 배율', default: VOLUME_SURGE_DEFAULTS.mid, min: 1, max: 20, step: 0.1 },
       { key: 'high', label: '급증 3단계 배율', default: VOLUME_SURGE_DEFAULTS.high, min: 1, max: 30, step: 0.1 },
     ],
-    colors: [],
+    // 급증 단계별 형광색(스타일 탭에서 바꾼다). 평범한 봉은 차트 양봉·음봉 색을 흐리게 쓴다.
+    colors: ['#fff23d', '#ff8a00', '#ff17d4'],
+    colorLabels: ['급증 1단계', '급증 2단계', '급증 3단계'],
   },
   volumeSpike: VOLUME_SPIKE_DEF,
   vpvr: {

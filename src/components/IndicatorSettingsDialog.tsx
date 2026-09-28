@@ -124,7 +124,8 @@ export function IndicatorSettingsDialog({ instance, onChange, onClose }: Indicat
                       className="tv-color"
                       value={instance.colors[item.idx] ?? item.fallback}
                       onChange={(e) => {
-                        const colors = [...instance.colors]
+                        // 저장된 색이 기본색 수보다 적으면(예전 인스턴스) 빈 칸이 null 로 저장되지 않게 기본색으로 채운다.
+                        const colors = def.colors.map((fallback, k) => instance.colors[k] ?? fallback)
                         colors[item.idx] = e.target.value
                         onChange({ ...instance, colors })
                       }}
