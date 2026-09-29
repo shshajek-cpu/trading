@@ -426,10 +426,12 @@ export async function loadCandles<K extends CandleRequest>(
   const futures = fallback.some((item) => marketOf(item.symbol) === 'binance')
   const tickers = futures && room(budget.tickers ? 0 : 1) > 0 ? await gateTickers(budget) : null
   const gateJobs: Promise<unknown>[] = []
-  // gate 봉 조회는 클라우드플레어에서 가끔 한 번씩 실패한다(나가는 IP 를 여러 워커가 같이 써 잠깐 막히는 등).
-  // 자리가 있으면 한 번 더 받아 본다 — 못 받으면 선물은 전체 시세의 현재가 점 하나로만 판정돼 1분 안의 고가·저가를 놓친다.
+  // gate 봉 조회는 클라우드플레어에서 가끔 429 로 막힌다(나가는 IP 를 여러 워커가 같이 써). 자리가 있으면 조금 기다렸다
+  // 한 번 더 받아 본다 — 못 받으면 선물은 전체 시세의 현재가 점 하나로만 판정돼 1분 안의 고가·저가를 놓친다
+  // (다음 분에 앞선 두 봉을 다시 읽어 메운다).
   const gateRetry = async (load: () => Promise<Candle[] | null>, item: K): Promise<void> => {
     for (let attempt = 0; attempt < 2; attempt++) {
+      if (attempt > 0) await new Promise((resolve) => setTimeout(resolve, TICKER_RETRY_WAIT_MS[1]))
       if (!take(1)) return
       if (keep(item, 'gate', await load())) return
     }
