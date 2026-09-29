@@ -168,6 +168,48 @@ function barAtOrBefore(candles: Candle[], time: number): Candle | null {
   return found >= 0 ? candles[found] : null
 }
 
+/**
+ * 자석 십자선(MagnetOHLC)이 붙는 가격 — 라이브러리 자석과 같은 규칙: 가격 칸에 보이는 시리즈(겹침 눈금인 거래량 등 제외)의
+ * 커서 봉 시가·고가·저가·종가(선은 값) 가운데 커서 y 에 가장 가까운 값. 붙을 값이 없으면 null.
+ * 크로스헤어 이벤트는 커서 자리만 알려 주므로, 다른 칸에 보낼 가격을 여기서 같은 규칙으로 구한다.
+ */
+function magnetPrice(param: MouseEventParams, y: number): number | null {
+  let best: number | null = null
+  let bestDist = Infinity
+  for (const [series, data] of param.seriesData) {
+    const options = series.options()
+    if (!options.visible || series.getPane().paneIndex() !== 0) continue
+    const scaleId = options.priceScaleId
+    if (scaleId !== undefined && scaleId !== 'right' && scaleId !== 'left') continue
+    const values = 'open' in data ? [data.open, data.high, data.low, data.close] : 'value' in data ? [data.value] : []
+    for (const value of values) {
+      const cy = series.priceToCoordinate(value)
+      if (cy === null) continue
+      const dist = Math.abs(cy - y)
+      if (dist < bestDist) {
+        bestDist = dist
+        best = value
+      }
+    }
+  }
+  return best
+}
+
+/** 십자선 가격 라벨 높이의 절반(px) — 12px 글씨 + 위아래 여백. */
+const CROSS_LABEL_HALF = 11
+
+/**
+ * 십자선 가격 라벨(y)이 현재가 배지와 겹치면 배지를 숨긴다. 배지는 캔버스 위 HTML 이라 그대로 두면 캔버스에 그린 라벨을 가린다
+ * (트레이딩뷰도 십자선 라벨이 현재가 라벨 위에 온다). y 가 null 이면 다시 보인다.
+ */
+function coverCountdown(el: HTMLElement | null, y: number | null): void {
+  if (!el) return
+  const top = parseFloat(el.style.top)
+  const covered =
+    y !== null && el.style.display !== 'none' && Number.isFinite(top) && y + CROSS_LABEL_HALF > top && y - CROSS_LABEL_HALF < top + el.offsetHeight
+  el.classList.toggle('is-covered', covered)
+}
+
 const SCALE_MODE_MAP: Record<ScaleMode, PriceScaleMode> = {
   normal: PriceScaleMode.Normal,
   log: PriceScaleMode.Logarithmic,
@@ -873,6 +915,36 @@ export function Chart({
     hidden[which] = show ? null : chart.options().crosshair[which].color
     chart.applyOptions({ crosshair: which === 'horzLine' ? { horzLine: line } : { vertLine: line } })
   }, [])
+
+  // 자석 십자선(차트 설정). 다른 칸이 맞춰 주는 동안은 일반으로 둔다 — 자석이면 받은 가격을 이 칸 봉에 다시 붙여
+  // 같은 종목 칸끼리도 가로선 가격이 달라진다. 커서가 이 칸에 오면 설정대로 되돌린다.
+  const crosshairMode = settings.crosshair === 'magnet' ? CrosshairMode.MagnetOHLC : CrosshairMode.Normal
+  const crosshairModeRef = useRef(crosshairMode)
+  crosshairModeRef.current = crosshairMode
+  const appliedModeRef = useRef<CrosshairMode>(CrosshairMode.Normal)
+  const applyCrosshairMode = useCallback((driven: boolean) => {
+    const chart = chartRef.current
+    const want = driven ? CrosshairMode.Normal : crosshairModeRef.current
+    if (!chart || appliedModeRef.current === want) return
+    appliedModeRef.current = want
+    chart.applyOptions({ crosshair: { mode: want } })
+  }, [])
+  useEffect(() => {
+    const chart = chartRef.current
+    if (!chart) return
+    // 늘 적용한다 — 차트를 새로 만들면(개발 모드의 이중 마운트 등) 새 차트는 일반 모드로 시작한다.
+    const want = syncDrivenRef.current ? CrosshairMode.Normal : crosshairMode
+    appliedModeRef.current = want
+    chart.applyOptions({ crosshair: { mode: want } })
+  }, [crosshairMode])
+
+  // 십자선 가격 라벨의 y(가격 칸에 있을 때, 없으면 null). 현재가 배지가 라벨을 가리지 않게 겹치는 동안 배지를 숨긴다(13).
+  const crossYRef = useRef<number | null>(null)
+  const coverBadge = useCallback((y: number | null) => {
+    crossYRef.current = y
+    coverCountdown(countdownRef.current, y)
+  }, [])
+
   useEffect(() => {
     const chart = chartRef.current
     if (!chart) return
@@ -885,6 +957,7 @@ export function Chart({
         syncDrivenRef.current = false
         showSyncLine('horzLine', true)
         showSyncLine('vertLine', true)
+        applyCrosshairMode(false)
       }
       const time = param.time === undefined ? null : Number(param.time)
       cbRef.current.onHoverTime?.(time)
@@ -898,23 +971,29 @@ export function Chart({
           el.style.display = 'none'
         }
       }
+      // 가격 칸에 있을 때 십자선 가로선의 가격 — 자석이면 커서가 붙은 값. 보조 지표 칸의 y 는 가격이 아니다.
+      const point = param.point
+      const crossPrice =
+        point && mainSeries && (param.paneIndex ?? 0) === 0
+          ? appliedModeRef.current === CrosshairMode.Normal
+            ? mainSeries.coordinateToPrice(point.y)
+            : (magnetPrice(param, point.y) ?? mainSeries.coordinateToPrice(point.y))
+          : null
+      coverBadge(crossPrice === null || !mainSeries ? null : mainSeries.priceToCoordinate(crossPrice))
       // 사용자 커서가 이 칸에 있으면 봉이나 가격이 바뀔 때만 발행한다.
       if (syncRef.current && (user || syncOwnRef.current)) {
-        syncOwnRef.current = param.point !== undefined
-        const nextTime = param.point ? time : null
-        // 가격 칸에 있을 때만 가격을 보낸다 — 보조 지표 칸의 y 는 가격이 아니다.
-        const nextPrice =
-          param.point && mainSeries && (param.paneIndex ?? 0) === 0 ? mainSeries.coordinateToPrice(param.point.y) : null
-        if (nextTime !== sent.time || nextPrice !== sent.price) {
+        syncOwnRef.current = point !== undefined
+        const nextTime = point ? time : null
+        if (nextTime !== sent.time || crossPrice !== sent.price) {
           sent.time = nextTime
-          sent.price = nextPrice
-          publishCrosshair(syncId, nextTime, nextPrice, symbolRef.current)
+          sent.price = crossPrice
+          publishCrosshair(syncId, nextTime, crossPrice, symbolRef.current)
         }
       }
     }
     chart.subscribeCrosshairMove(handler)
     return () => chart.unsubscribeCrosshairMove(handler)
-  }, [replayPick, syncId, mainSeries, showSyncLine])
+  }, [replayPick, syncId, mainSeries, showSyncLine, applyCrosshairMode, coverBadge])
 
   // 10b) 다른 칸이 발행한 십자선을 이 칸에 맞춘다: 세로선은 그 시각을 품는 봉, 가로선은 같은 종목일 때만 그 가격.
   // 차트 API 만 부르고 React 상태는 건드리지 않는다.
@@ -928,6 +1007,8 @@ export function Chart({
       showSyncLine('vertLine', true)
       if (!syncDrivenRef.current) return
       syncDrivenRef.current = false
+      coverBadge(null)
+      applyCrosshairMode(false)
       chart.clearCrosshairPosition()
     }
     const unsubscribe = subscribeCrosshair((sourceId, time, price, sourceSymbol) => {
@@ -950,9 +1031,11 @@ export function Chart({
         return
       }
       try {
+        applyCrosshairMode(true)
         chart.setCrosshairPosition(samePrice ? price : bar.close, bar.time as Time, series)
         showSyncLine('horzLine', samePrice)
         showSyncLine('vertLine', inView)
+        coverBadge(samePrice ? series.priceToCoordinate(price) : null)
         syncDrivenRef.current = true
       } catch {
         // 보이는 봉이 하나도 없으면(빈 구간으로 밀어 둔 경우) 가격 좌표를 못 구한다 — 맞추지 않는다.
@@ -970,7 +1053,7 @@ export function Chart({
         publishCrosshair(syncId, null, null, symbolRef.current)
       }
     }
-  }, [syncCrosshair, mainSeries, syncId, showSyncLine])
+  }, [syncCrosshair, mainSeries, syncId, showSyncLine, applyCrosshairMode, coverBadge])
 
   // ── 11) 핀/리플레이 클릭 캡처(시각 + 가격). ──────────────────────────
   useEffect(() => {
@@ -1101,6 +1184,8 @@ export function Chart({
         cdRow.textContent = formatCountdown(remain)
         el.append(cdRow)
       }
+      // 십자선 가격 라벨이 배지 자리에 있으면 계속 숨겨 둔다(가격이 움직여 배지가 라벨로 올 때도).
+      coverCountdown(el, crossYRef.current)
     }
     tick()
     const timer = window.setInterval(tick, 1000)

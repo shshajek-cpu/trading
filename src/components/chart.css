@@ -262,6 +262,10 @@
   font-size: 10px;
   opacity: 0.85;
 }
+/* 십자선 가격 라벨이 배지 자리에 오면 라벨이 보이게 배지를 잠시 숨긴다(Chart coverCountdown). */
+.candle-countdown.is-covered {
+  visibility: hidden;
+}
 
 /* ── "최근 봉으로" 버튼(과거로 밀었을 때) ── */
 .scroll-realtime-btn {
