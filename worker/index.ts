@@ -578,6 +578,10 @@ export default {
         fires: rec?.fires ?? [],
         // 판정에 쓰는 시세(출처와 1분봉).
         quotes: Object.fromEntries(quotes),
+        // gate.io 전체 시세를 끝내 못 받았으면 그 이유(바이낸스 선물 시세가 빠진 까닭).
+        gateTickersError: budget.tickersError ?? null,
+        // gate 봉 조회 실패(경로·상태). 재시도 뒤에도 못 받았으면 그 종목은 현재가 점 하나로 판정한다.
+        gateErrors: budget.errors,
         // 켜진 지표 알림과 지금 봉으로 계산한 값. feed 가 null 이면 봉을 읽지 않았다(이번 분 차례가 아님·요청 한도·gate 에 없는 종목 등).
         // judged: 판정한 봉(시작 시각, 초)·지표 값·조건 충족. null 이면 판정할 봉이나 값이 없다.
         indicators: indicators.map((a) => {

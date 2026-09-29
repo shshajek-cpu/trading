@@ -76,10 +76,14 @@ export interface Budget {
   binanceBlocked: boolean
   /** gate.io 전체 시세. 처음 필요할 때 한 번만 부른다. */
   tickers?: Promise<Map<string, GateTicker> | null>
+  /** 전체 시세를 끝내 못 받은 이유(HTTP 상태 또는 'network'·'parse') — /debug 로 본다. */
+  tickersError?: string
+  /** gate 봉 조회 실패 이유(호스트·상태) — /debug 로 본다. 최근 10개. */
+  errors: string[]
 }
 
 export function newBudget(): Budget {
-  return { used: 0, candles: 0, binanceBlocked: false }
+  return { used: 0, candles: 0, binanceBlocked: false, errors: [] }
 }
 
 /** gate.io 계약 이름, 바이낸스 표기로 바꾸는 가격 배율, 현재가(바이낸스 배율), 계약 1장의 바이낸스 표기 수량. */
@@ -92,38 +96,71 @@ export interface GateTicker {
 }
 
 /**
+ * 마지막으로 받은 gate 계약 목록(이 워커 인스턴스가 살아 있는 동안). 계약 이름·배율·1장 수량은 거의 안 바뀌므로,
+ * 전체 시세가 막힌 분에는 이것으로 봉을 읽는다 — 현재가(last)는 옛값이라 쓰지 않는다(NaN).
+ */
+let knownContracts: { at: number; map: Map<string, GateTicker> } | null = null
+const KNOWN_CONTRACTS_MAX_AGE_MS = 24 * 60 * 60_000
+/** 전체 시세가 429·연결 실패일 때 다시 받기 전 기다리는 시간(ms). 기다리는 동안 CPU 는 쓰지 않는다. */
+const TICKER_RETRY_WAIT_MS = [400, 1200]
+
+/**
  * gate.io 전체 시세. BTC_USDT 형식이라 밑줄을 빼 바이낸스 표기(BTCUSDT)로 맞춘다.
  * gate 는 1000 배 계약을 따로 상장하지 않고 원 코인만 둔다(PEPE_USDT 등).
  * 그래서 바이낸스 1000PEPEUSDT 도 찾을 수 있게 ×1000 항목을 함께 넣는다(같은 이름의 계약이 있으면 그쪽을 쓴다).
- * 호출 안에서 한 번만 부른다.
+ * 호출 안에서 한 번만 부른다. 클라우드플레어에서는 이 큰 응답이 가끔 429 로 막힌다 — 조금 기다렸다 두 번 더 받아 보고,
+ * 끝내 못 받으면 마지막으로 받은 계약 목록(현재가 없이)을 돌려준다.
  */
 export function gateTickers(budget: Budget): Promise<Map<string, GateTicker> | null> {
   budget.tickers ??= (async () => {
-    budget.used++
-    try {
-      const res = await fetch(TICKERS_URL, { headers: { Accept: 'application/json' } })
-      if (!res.ok) return null
-      const list = (await res.json()) as { contract: string; last: string; quanto_multiplier?: string }[]
-      const map = new Map<string, GateTicker>()
-      const scaled: [string, GateTicker][] = []
-      for (const t of list) {
-        const last = Number(t.last)
-        if (!Number.isFinite(last) || !t.contract.endsWith('_USDT')) continue
-        const symbol = t.contract.replace('_', '')
-        const multiplier = Number(t.quanto_multiplier)
-        map.set(symbol, { contract: t.contract, scale: 1, last, volume: multiplier })
-        scaled.push([
-          `1000${symbol}`,
-          { contract: t.contract, scale: 1000, last: last * 1000, volume: multiplier / 1000 },
-        ])
+    for (let attempt = 0; attempt <= TICKER_RETRY_WAIT_MS.length; attempt++) {
+      if (attempt > 0) {
+        if (budget.used >= SUBREQUEST_MAX) break
+        await new Promise((resolve) => setTimeout(resolve, TICKER_RETRY_WAIT_MS[attempt - 1]))
       }
-      for (const [symbol, ticker] of scaled) if (!map.has(symbol)) map.set(symbol, ticker)
-      return map
-    } catch {
-      return null
+      budget.used++
+      try {
+        const res = await fetch(TICKERS_URL, { headers: { Accept: 'application/json' } })
+        if (!res.ok) {
+          budget.tickersError = String(res.status)
+          continue
+        }
+        const list = (await res.json()) as { contract: string; last: string; quanto_multiplier?: string }[]
+        const map = new Map<string, GateTicker>()
+        const scaled: [string, GateTicker][] = []
+        for (const t of list) {
+          const last = Number(t.last)
+          if (!Number.isFinite(last) || !t.contract.endsWith('_USDT')) continue
+          const symbol = t.contract.replace('_', '')
+          const multiplier = Number(t.quanto_multiplier)
+          map.set(symbol, { contract: t.contract, scale: 1, last, volume: multiplier })
+          scaled.push([
+            `1000${symbol}`,
+            { contract: t.contract, scale: 1000, last: last * 1000, volume: multiplier / 1000 },
+          ])
+        }
+        for (const [symbol, ticker] of scaled) if (!map.has(symbol)) map.set(symbol, ticker)
+        budget.tickersError = undefined
+        knownContracts = { at: Date.now(), map }
+        return map
+      } catch (err) {
+        budget.tickersError = err instanceof SyntaxError ? 'parse' : 'network'
+      }
     }
+    if (!knownContracts || Date.now() - knownContracts.at > KNOWN_CONTRACTS_MAX_AGE_MS) return null
+    budget.tickersError = `${budget.tickersError} (계약 목록 캐시 사용)`
+    return new Map([...knownContracts.map].map(([symbol, t]) => [symbol, { ...t, last: Number.NaN }]))
   })()
   return budget.tickers
+}
+
+/**
+ * 전체 시세도 계약 목록 캐시도 없을 때 가격 봉만 읽는 계약 — BTCUSDT → BTC_USDT(배율 1). 거래량 환산값을 몰라 가격 전용
+ * 요청(priceOnly)에만 쓴다. 1000 배 표기 종목은 gate 계약 이름을 알 수 없어 null.
+ */
+function derivedContract(symbol: string): GateTicker | null {
+  if (!symbol.endsWith('USDT') || /^1000/.test(symbol)) return null
+  return { contract: `${symbol.slice(0, -4)}_USDT`, scale: 1, last: Number.NaN, volume: 1 }
 }
 
 /** 읽을 봉 — 심볼 id, 앱 주기, 마지막(진행 중일 수 있는 봉)부터 거슬러 센 개수. */
@@ -131,6 +168,8 @@ export interface CandleRequest {
   symbol: string
   interval: Interval
   bars: number
+  /** 가격만 쓴다(가격·선 알림 시세) — 거래량 환산을 몰라도 읽는다. 지표 봉은 거래량이 필요해 두지 않는다. */
+  priceOnly?: boolean
 }
 
 /** 읽은 봉(시간순, 비어 있지 않고 값이 모두 수). 마지막 봉은 진행 중일 수 있다. */
@@ -159,12 +198,26 @@ function valid(candles: Candle[]): boolean {
   )
 }
 
-/** JSON 응답. 실패(연결·상태·본문)는 null. */
-async function getJson<T>(url: string, headers: Record<string, string> = { Accept: 'application/json' }): Promise<T | null> {
+/** JSON 응답. 실패(연결·상태·본문)는 null — errors 를 주면 이유를 적는다(최근 10개). */
+async function getJson<T>(
+  url: string,
+  headers: Record<string, string> = { Accept: 'application/json' },
+  errors?: string[],
+): Promise<T | null> {
+  const note = (reason: string) => {
+    if (!errors) return
+    errors.push(`${new URL(url).pathname} ${reason}`)
+    if (errors.length > 10) errors.shift()
+  }
   try {
     const res = await fetch(url, { headers })
-    return res.ok ? ((await res.json()) as T) : null
-  } catch {
+    if (!res.ok) {
+      note(String(res.status))
+      return null
+    }
+    return (await res.json()) as T
+  } catch (err) {
+    note(err instanceof SyntaxError ? 'parse' : 'network')
     return null
   }
 }
@@ -200,12 +253,14 @@ async function binanceCandles(req: CandleRequest): Promise<Candle[] | 'blocked' 
 }
 
 /** gate.io 선물 봉(바이낸스 배율·기초 자산 수량으로 환산). 계약 1장의 수량을 모르면 거래량을 맞출 수 없어 null. */
-async function gateCandles(req: CandleRequest, ticker: GateTicker): Promise<Candle[] | null> {
+async function gateCandles(req: CandleRequest, ticker: GateTicker, errors: string[]): Promise<Candle[] | null> {
   if (!(ticker.volume > 0)) return null
   const source = GATE_SOURCE[req.interval] ?? req.interval
   const limit = Math.min(GATE_LIMIT, sourceCount(req, source))
   const rows = await getJson<{ t: number; o: string; h: string; l: string; c: string; v: number }[]>(
     `${GATE_CANDLES_URL}?contract=${ticker.contract}&interval=${source}&limit=${limit}`,
+    undefined,
+    errors,
   )
   if (!rows) return null
   const { scale, volume } = ticker
@@ -230,10 +285,14 @@ function gatePair(native: string): string | null {
  * gate.io 현물 봉. 행은 [시작(초), 거래대금, 종가, 고가, 저가, 시가, 거래량(기초 자산), 닫힘] 문자열 배열이다 —
  * 거래량은 바이낸스와 같은 기초 자산 수량(6 번)을 쓴다. gate 에 없는 쌍이면 null.
  */
-async function gateSpotCandles(req: CandleRequest, pair: string): Promise<Candle[] | null> {
+async function gateSpotCandles(req: CandleRequest, pair: string, errors: string[]): Promise<Candle[] | null> {
   const source = GATE_SPOT_SOURCE[req.interval] ?? req.interval
   const limit = Math.min(GATE_SPOT_LIMIT, sourceCount(req, source))
-  const rows = await getJson<string[][]>(`${GATE_SPOT_CANDLES_URL}?currency_pair=${pair}&interval=${source}&limit=${limit}`)
+  const rows = await getJson<string[][]>(
+    `${GATE_SPOT_CANDLES_URL}?currency_pair=${pair}&interval=${source}&limit=${limit}`,
+    undefined,
+    errors,
+  )
   if (!rows) return null
   const candles = rows.map((r) => ({
     time: Number(r[0]),
@@ -367,13 +426,21 @@ export async function loadCandles<K extends CandleRequest>(
   const futures = fallback.some((item) => marketOf(item.symbol) === 'binance')
   const tickers = futures && room(budget.tickers ? 0 : 1) > 0 ? await gateTickers(budget) : null
   const gateJobs: Promise<unknown>[] = []
+  // gate 봉 조회는 클라우드플레어에서 가끔 한 번씩 실패한다(나가는 IP 를 여러 워커가 같이 써 잠깐 막히는 등).
+  // 자리가 있으면 한 번 더 받아 본다 — 못 받으면 선물은 전체 시세의 현재가 점 하나로만 판정돼 1분 안의 고가·저가를 놓친다.
+  const gateRetry = async (load: () => Promise<Candle[] | null>, item: K): Promise<void> => {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      if (!take(1)) return
+      if (keep(item, 'gate', await load())) return
+    }
+  }
   for (const item of fallback) {
     if (marketOf(item.symbol) === 'binance') {
-      const ticker = tickers?.get(item.symbol)
-      if (ticker && take(1)) gateJobs.push(gateCandles(item, ticker).then((c) => keep(item, 'gate', c)))
+      const ticker = tickers?.get(item.symbol) ?? (item.priceOnly ? derivedContract(item.symbol) : null)
+      if (ticker) gateJobs.push(gateRetry(() => gateCandles(item, ticker, budget.errors), item))
     } else {
       const pair = gatePair(nativeSymbol(item.symbol))
-      if (pair && take(1)) gateJobs.push(gateSpotCandles(item, pair).then((c) => keep(item, 'gate', c)))
+      if (pair) gateJobs.push(gateRetry(() => gateSpotCandles(item, pair, budget.errors), item))
     }
   }
   await Promise.all(gateJobs)
@@ -443,7 +510,7 @@ export async function loadQuotes(
   const items = [...new Set(symbols)]
     .filter(isSymbolId)
     .sort()
-    .map((symbol): CandleRequest => ({ symbol, interval: '1m', bars: Math.max(BAR_LIMIT, barsFor?.(symbol) ?? 0) }))
+    .map((symbol): CandleRequest => ({ symbol, interval: '1m', bars: Math.max(BAR_LIMIT, barsFor?.(symbol) ?? 0), priceOnly: true }))
   if (items.length === 0) return quotes
 
   const loaded = await loadCandles(items, budget, CANDLE_FETCH_MAX - reserve)
@@ -456,7 +523,8 @@ export async function loadQuotes(
   const now = Date.now()
   for (const { symbol } of missing) {
     const ticker = tickers.get(symbol)
-    if (!ticker) continue
+    // 계약 목록 캐시(현재가 NaN)는 현재가 점으로 쓰지 않는다.
+    if (!ticker || !Number.isFinite(ticker.last)) continue
     const { last } = ticker
     quotes.set(symbol, { source: 'gate', bars: [{ t: now, end: now, closed: true, o: last, h: last, l: last, c: last }] })
   }
