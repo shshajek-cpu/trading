@@ -13,6 +13,7 @@ import { PaperContext, usePaperLive } from '../../lib/paper/context'
 import type { PaperApi, PaperPosition, PaperOrder, PositionView, PaperQuote } from '../../lib/paper/types'
 import { Icon } from '../../components/Icon'
 import { ACTION_LABEL, SIDE_LABEL, fmtPct, fmtPrice, fmtQty, fmtSigned, pnlClass, roundTo } from '../../components/trade/format'
+import { supportsPaperTrading } from '../../lib/market/ids'
 import './tradeOverlay.css'
 
 /** 캔버스 가격선 색 — tokens 의 시장색과 같은 값(선은 문자열 색이 필요하다). */
@@ -28,10 +29,10 @@ export interface TradeOverlayProps {
   interactive: boolean
 }
 
-/** PaperContext 가 없으면(모의거래 미설정) 아무것도 그리지 않는다. */
+/** PaperContext 가 없거나(모의거래 미설정) 모의거래를 지원하지 않는 시장이면 아무것도 그리지 않는다. */
 export function TradeOverlay(props: TradeOverlayProps) {
   const api = useContext(PaperContext)
-  if (!api) return null
+  if (!api || !supportsPaperTrading(props.symbol)) return null
   return <TradeOverlayInner {...props} api={api} />
 }
 

@@ -6,6 +6,7 @@ import { Icon } from '../Icon'
 import { Popover, MenuItem } from '../ui/Popover'
 import { SymbolSearchDialog } from '../SymbolSearchDialog'
 import { describeSymbol, displaySymbol, priceDecimals, type SymbolInfo } from '../../lib/symbols'
+import { useSymbols } from '../../hooks/useSymbols'
 import './widgets.css'
 
 interface WatchlistWidgetProps {
@@ -49,6 +50,8 @@ export function WatchlistWidget({
   variant,
 }: WatchlistWidgetProps) {
   const rows = useLiveStore(rowsStore)
+  // 목록에 현물·업비트 종목이 있으면 그 시장 목록(이름·표시 자릿수)을 받기 시작한다. infos 는 같은 저장소라 받으면 다시 그린다.
+  useSymbols(symbols)
   const [sortCol, setSortCol] = useState<SortCol>('symbol')
   const [sortDir, setSortDir] = useState<SortDir>('none')
   const [addOpen, setAddOpen] = useState(false)
@@ -199,7 +202,7 @@ export function WatchlistWidget({
               onDrop={() => canDrag && onDrop(idx)}
               onClick={isEditing ? undefined : () => onPick(s)}
             >
-              <CoinIcon base={infos.find((i) => i.symbol === s)?.baseAsset ?? s.replace(/USDT.*/, '')} size={isPage ? 32 : 18} />
+              <CoinIcon symbol={s} size={isPage ? 32 : 18} />
               {isPage && (
                 <div className="wl-full-main">
                   <span className="wl-full-sym">{displaySymbol(s, infos)}</span>

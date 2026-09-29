@@ -10,7 +10,7 @@ import type {
   Time,
 } from 'lightweight-charts'
 import type { CanvasRenderingTarget2D } from 'fancy-canvas'
-import type { Candle, Interval } from '../../lib/binance'
+import type { Candle, Interval } from '../../lib/market/types'
 import { readableTextOn, type ChartPalette } from '../../lib/theme'
 import type { Drawing } from '../../lib/drawings'
 import { Coords } from './coords'

@@ -1,17 +1,18 @@
 import { useRef, useState } from 'react'
-import type { Interval } from '../lib/binance'
+import type { Interval } from '../lib/market/types'
 import type { ChartType } from '../lib/chartTypes'
 import { INTERVAL_INFO, INTERVALS } from '../lib/intervals'
-import type { LayoutMode, LayoutSync, LayoutSyncKey } from '../lib/layoutConfig'
+import type { LayoutControls } from '../lib/layoutConfig'
 import type { IndicatorInstance } from '../lib/indicatorConfig'
 import { IndicatorTemplatesMenu } from './IndicatorTemplatesMenu'
 import { ChartTypeMenu } from './menus/ChartTypeMenu'
-import { CHART_TYPE_ICON, LAYOUT_ICON } from '../lib/chartTypeIcons'
-import { IntervalMenu } from './menus/IntervalMenu'
+import { CHART_TYPE_ICON } from '../lib/chartTypeIcons'
+import { IntervalMenu, UNSUPPORTED_INTERVAL } from './menus/IntervalMenu'
+import { supportsInterval } from '../lib/market/ids'
 import { LayoutMenu } from './menus/LayoutMenu'
 import { SnapshotMenu } from './menus/SnapshotMenu'
 import { Popover } from './ui/Popover'
-import { Icon } from './Icon'
+import { Icon, LayoutIcon } from './Icon'
 import { tip } from '../lib/tooltip'
 import type { ShortcutId } from '../lib/shortcuts'
 import { useLiveStore, type LiveStore } from '../lib/liveStore'
@@ -19,6 +20,8 @@ import { syncStatusText, type SyncState } from '../hooks/useSync'
 
 export interface TopToolbarProps {
   displaySymbol: string
+  /** 활성 칸 종목 id — 이 시장에서 못 그리는 주기를 끈다. */
+  symbol: string
   onOpenSymbolSearch: () => void
   onOpenCompare: () => void
   interval: Interval
@@ -37,12 +40,8 @@ export interface TopToolbarProps {
   canRedo: boolean
   onUndo: () => void
   onRedo: () => void
-  layout: LayoutMode
-  onLayoutChange: (mode: LayoutMode) => void
-  onEqualize: () => void
-  /** 레이아웃 메뉴 "모든 칸에 같이 적용"(심볼·차트 종류). */
-  layoutSync: LayoutSync
-  onLayoutSyncChange: (key: LayoutSyncKey, on: boolean) => void
+  /** 레이아웃 메뉴(프리셋·직접 만들기·내 레이아웃·균등 분할·모든 칸에 같이 적용). */
+  layout: LayoutControls
   /** 저장 버튼·Ctrl+S = 지금 동기화. saved = 방금 동기화에 성공함('저장됨'). */
   onSave: () => void
   saved: boolean
@@ -66,6 +65,7 @@ export interface TopToolbarProps {
 export function TopToolbar(props: TopToolbarProps) {
   const {
     displaySymbol,
+    symbol,
     onOpenSymbolSearch,
     onOpenCompare,
     interval,
@@ -85,10 +85,6 @@ export function TopToolbar(props: TopToolbarProps) {
     onUndo,
     onRedo,
     layout,
-    onLayoutChange,
-    onEqualize,
-    layoutSync,
-    onLayoutSyncChange,
     onSave,
     saved,
     syncState,
@@ -146,17 +142,24 @@ export function TopToolbar(props: TopToolbarProps) {
       {div}
 
       <div className="tv-interval-group">
-        {shownFavorites.map((iv) => (
-          <button
-            key={iv}
-            type="button"
-            className={`tv-interval-btn${iv === interval ? ' active' : ''}`}
-            {...tip(`${INTERVAL_INFO[iv].label} 봉`)}
-            onClick={() => onIntervalChange(iv)}
-          >
-            {INTERVAL_INFO[iv].short}
-          </button>
-        ))}
+        {shownFavorites.map((iv) => {
+          const off = !supportsInterval(symbol, iv)
+          return (
+            <button
+              key={iv}
+              type="button"
+              className={`tv-interval-btn${iv === interval ? ' active' : ''}${off ? ' unsupported' : ''}`}
+              {...tip(`${INTERVAL_INFO[iv].label} 봉`, off ? UNSUPPORTED_INTERVAL : undefined)}
+              // disabled 대신 aria-disabled — 꺼진 버튼에도 툴팁이 떠야 이유를 안다.
+              aria-disabled={off || undefined}
+              onClick={() => {
+                if (!off) onIntervalChange(iv)
+              }}
+            >
+              {INTERVAL_INFO[iv].short}
+            </button>
+          )
+        })}
         <button
           ref={ivRef}
           type="button"
@@ -172,6 +175,7 @@ export function TopToolbar(props: TopToolbarProps) {
         anchor={ivRef.current}
         open={ivOpen}
         onClose={() => setIvOpen(false)}
+        symbol={symbol}
         value={interval}
         favorites={favorites}
         onChange={onIntervalChange}
@@ -281,22 +285,13 @@ export function TopToolbar(props: TopToolbarProps) {
         ref={layoutRef}
         type="button"
         className="tv-tb-btn"
-        {...tip('레이아웃', '차트를 1·2·4 칸으로 나눠 여러 종목·주기를 함께 봅니다.')}
+        {...tip('레이아웃', '차트를 최대 9칸으로 나눠 여러 종목·주기를 함께 봅니다. 직접 만든 격자와 내 레이아웃도 여기서.')}
         aria-label="레이아웃"
         onClick={() => setLayoutOpen((v) => !v)}
       >
-        <Icon name={LAYOUT_ICON[layout]} size={22} />
+        <LayoutIcon shape={layout.grid} size={22} />
       </button>
-      <LayoutMenu
-        anchor={layoutRef.current}
-        open={layoutOpen}
-        onClose={() => setLayoutOpen(false)}
-        value={layout}
-        onChange={onLayoutChange}
-        onEqualize={onEqualize}
-        sync={layoutSync}
-        onSyncChange={onLayoutSyncChange}
-      />
+      <LayoutMenu anchor={layoutRef.current} open={layoutOpen} onClose={() => setLayoutOpen(false)} controls={layout} />
 
       <SaveButton sync={syncState} saved={saved} onSave={onSave} shortcutKey={shortcut('save')} />
 

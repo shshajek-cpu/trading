@@ -11,6 +11,15 @@ export type IconName =
   | 'text' | 'note' | 'arrowLine' | 'arrowMarkUp' | 'arrowMarkDown'
   | 'longPosition' | 'shortPosition' | 'priceRange' | 'dateRange' | 'datePriceRange'
   | 'fixedRangeVolumeProfile'
+  | 'disjointChannel' | 'flatTopBottom' | 'schiffPitchfork' | 'modifiedSchiffPitchfork' | 'insidePitchfork'
+  | 'fibChannel' | 'fibTimeTrend' | 'fibCircles' | 'fibSpeedFan' | 'fibSpeedArcs' | 'fibWedge' | 'fibSpiral' | 'pitchfan'
+  | 'gannBox' | 'gannSquareFixed' | 'gannFan'
+  | 'rotatedRectangle' | 'path' | 'circle' | 'polyline' | 'arc' | 'curve' | 'doubleCurve'
+  | 'xabcd' | 'cypher' | 'abcd' | 'headShoulders' | 'trianglePattern' | 'threeDrives'
+  | 'elliottImpulse' | 'elliottCorrection' | 'elliottTriangle' | 'elliottDoubleCombo' | 'elliottTripleCombo'
+  | 'cyclicLines' | 'timeCycles' | 'sineLine'
+  | 'callout' | 'priceLabel' | 'priceNote' | 'signpost' | 'flagMark' | 'comment'
+  | 'forecast' | 'barsPattern' | 'projection' | 'anchoredVwap' | 'anchoredVolumeProfile'
   | 'measure' | 'zoom'
   | 'magnet' | 'magnetStrong' | 'stay' | 'lockAll' | 'hideAll' | 'remove'
   | 'bell' | 'lock' | 'unlock' | 'eye' | 'eyeOff' | 'trash' | 'clone'
@@ -94,6 +103,56 @@ function paths(name: IconName): ReactElement {
       return <><rect x="6" y="7" width="16" height="14" rx="1" {...S} /><path d="M10 11 L18 17 M10 17 L18 11" stroke="currentColor" fill="none" strokeWidth={1} /></>
     case 'fixedRangeVolumeProfile':
       return <><rect x="4.5" y="5" width="19" height="18" rx="1" {...S} strokeDasharray="2 2" /><line x1="4.5" y1="9" x2="11" y2="9" {...S} strokeWidth={2.4} strokeLinecap="butt" /><line x1="4.5" y1="13" x2="17" y2="13" {...S} strokeWidth={2.4} strokeLinecap="butt" /><line x1="4.5" y1="17" x2="13" y2="17" {...S} strokeWidth={2.4} strokeLinecap="butt" /><line x1="4.5" y1="20.5" x2="8" y2="20.5" {...S} strokeWidth={2.4} strokeLinecap="butt" /></>
+    case 'xabcd':
+      return <><path d="M4 20 L9 8 L13 16 L19 6 L24 18" {...S} /><path d="M4 20 L13 16 M9 8 L19 6" {...S} strokeDasharray="2 2" /></>
+    case 'cypher':
+      return <><path d="M4 18 L9 7 L13 14 L18 4 L24 21" {...S} /><path d="M4 18 L13 14 L24 21" {...S} strokeDasharray="2 2" /></>
+    case 'abcd':
+      return <><path d="M5 21 L11 8 L16 15 L23 5" {...S} /><path d="M5 21 L16 15 M11 8 L23 5" {...S} strokeDasharray="2 2" /></>
+    case 'headShoulders':
+      return <><path d="M3 21 L7 13 L10 17 L14 6 L18 17 L21 13 L25 21" {...S} /><line x1="6" y1="17" x2="22" y2="17" {...S} strokeDasharray="2 2" /></>
+    case 'trianglePattern':
+      return <><path d="M4 6 L9 21 L14 9 L19 17" {...S} /><path d="M4 6 L24 13 M9 21 L24 15" {...S} strokeDasharray="2 2" /></>
+    case 'threeDrives':
+      return <path d="M3 23 L7 16 L10 19 L15 11 L18 15 L24 5" {...S} />
+    case 'elliottImpulse':
+      return <><path d="M3 22 L8 14 L11 18 L17 6 L20 11 L25 4" {...S} /><circle cx="17" cy="6" r="1.6" fill="currentColor" /></>
+    case 'elliottCorrection':
+      return <><path d="M4 6 L11 18 L16 11 L24 23" {...S} /><circle cx="11" cy="18" r="1.6" fill="currentColor" /></>
+    case 'elliottTriangle':
+      return <path d="M3 14 L7 5 L11 21 L15 8 L18 18 L21 11 L25 14" {...S} />
+    case 'elliottDoubleCombo':
+      return <><path d="M4 5 L10 16 L15 10 L24 22" {...S} /><circle cx="10" cy="16" r="1.6" fill="currentColor" /><circle cx="15" cy="10" r="1.6" fill="currentColor" /></>
+    case 'elliottTripleCombo':
+      return <><path d="M3 5 L7 13 L10 9 L14 17 L17 13 L24 23" {...S} /><circle cx="10" cy="9" r="1.4" fill="currentColor" /><circle cx="17" cy="13" r="1.4" fill="currentColor" /></>
+    case 'cyclicLines':
+      return <><line x1="5" y1="5" x2="5" y2="23" {...S} /><line x1="11" y1="5" x2="11" y2="23" {...S} /><line x1="17" y1="5" x2="17" y2="23" {...S} /><line x1="23" y1="5" x2="23" y2="23" {...S} /></>
+    case 'timeCycles':
+      return <><path d="M3 19 A4 4 0 0 1 11 19 A4 4 0 0 1 19 19 A4 4 0 0 1 27 19" {...S} /><line x1="2" y1="19" x2="26" y2="19" {...S} strokeDasharray="2 2" /></>
+    case 'sineLine':
+      return <path d="M3 14 Q7 3 11 14 T19 14 T27 14" {...S} />
+    case 'callout':
+      return <path d="M10 5 H24 V15 H15 L5 23 L12 15 H10 Z" {...S} />
+    case 'priceLabel':
+      return <><path d="M4 14 L9 8 H24 V20 H9 Z" {...S} /><line x1="12" y1="14" x2="20" y2="14" {...S} /></>
+    case 'priceNote':
+      return <><circle cx="6" cy="21" r="2" fill="currentColor" /><line x1="6" y1="21" x2="14" y2="12" {...S} /><rect x="14" y="7" width="10" height="7" rx="1" {...S} /></>
+    case 'signpost':
+      return <><rect x="6" y="5" width="16" height="8" rx="1.5" {...S} /><line x1="14" y1="13" x2="14" y2="23" {...S} /><circle cx="14" cy="23" r="1.6" fill="currentColor" /></>
+    case 'flagMark':
+      return <><line x1="8" y1="5" x2="8" y2="23" {...S} /><path d="M8 5 L21 9 L8 14" {...S} /></>
+    case 'comment':
+      return <path d="M5 6 H23 V17 H12 L7 22 V17 H5 Z" {...S} />
+    case 'forecast':
+      return <><line x1="6" y1="20" x2="21" y2="8" {...S} /><circle cx="6" cy="20" r="2.2" {...S} /><circle cx="21" cy="8" r="2.2" {...S} /></>
+    case 'barsPattern':
+      return <><line x1="7" y1="8" x2="7" y2="21" {...S} /><rect x="5" y="11" width="4" height="7" {...S} /><line x1="14" y1="5" x2="14" y2="18" {...S} strokeDasharray="2 2" /><rect x="12" y="8" width="4" height="6" {...S} strokeDasharray="2 2" /><line x1="21" y1="9" x2="21" y2="23" {...S} strokeDasharray="2 2" /><rect x="19" y="13" width="4" height="7" {...S} strokeDasharray="2 2" /></>
+    case 'projection':
+      return <><path d="M5 21 L12 7 L23 17 Z" {...S} /><path d="M19 4 A 11 11 0 0 1 23 17" {...S} strokeDasharray="2 2" /></>
+    case 'anchoredVwap':
+      return <><path d="M6 20 C10 11 15 17 24 7" {...S} /><circle cx="6" cy="20" r="2" fill="currentColor" /><path d="M6 14 C11 6 15 11 24 3" {...S} strokeDasharray="2 2" /></>
+    case 'anchoredVolumeProfile':
+      return <><line x1="5" y1="4" x2="5" y2="24" {...S} strokeDasharray="2 2" /><line x1="5" y1="8" x2="12" y2="8" {...S} strokeWidth={2.4} strokeLinecap="butt" /><line x1="5" y1="12" x2="20" y2="12" {...S} strokeWidth={2.4} strokeLinecap="butt" /><line x1="5" y1="16" x2="15" y2="16" {...S} strokeWidth={2.4} strokeLinecap="butt" /><line x1="5" y1="20" x2="9" y2="20" {...S} strokeWidth={2.4} strokeLinecap="butt" /></>
     case 'measure':
       return <><rect x="5" y="9" width="18" height="10" rx="1" {...S} /><line x1="10" y1="9" x2="10" y2="13" {...S} /><line x1="14" y1="9" x2="14" y2="14" {...S} /><line x1="18" y1="9" x2="18" y2="13" {...S} /></>
     case 'zoom':
@@ -135,6 +194,52 @@ function paths(name: IconName): ReactElement {
       return <path d="M11 8 L16 14 L11 20" {...S} />
     case 'indicator':
       return <path d="M5 18 L10 12 L14 15 L19 7 L23 11" {...S} />
+    case 'disjointChannel':
+      return <><line x1="4" y1="11" x2="24" y2="5" {...S} /><line x1="4" y1="17" x2="24" y2="23" {...S} /></>
+    case 'flatTopBottom':
+      return <><line x1="4" y1="7" x2="24" y2="16" {...S} /><line x1="4" y1="21" x2="24" y2="21" {...S} /></>
+    case 'schiffPitchfork':
+      return <><line x1="5" y1="10" x2="24" y2="14" {...S} /><line x1="11" y1="7" x2="11" y2="21" {...S} /><line x1="11" y1="7" x2="24" y2="9.5" {...S} /><line x1="11" y1="21" x2="24" y2="18.5" {...S} /><line x1="5" y1="5" x2="5" y2="16" {...S} strokeDasharray="2 2" /><circle cx="5" cy="10" r="1.8" fill="currentColor" /></>
+    case 'modifiedSchiffPitchfork':
+      return <><line x1="7" y1="12" x2="24" y2="14" {...S} /><line x1="12" y1="7" x2="12" y2="21" {...S} /><line x1="12" y1="7" x2="24" y2="8.5" {...S} /><line x1="12" y1="21" x2="24" y2="19.5" {...S} /><line x1="3" y1="18" x2="11" y2="6" {...S} strokeDasharray="2 2" /><circle cx="7" cy="12" r="1.8" fill="currentColor" /></>
+    case 'insidePitchfork':
+      return <><line x1="6" y1="14" x2="24" y2="14" {...S} /><path d="M24 7 L10 7 L6 14 L10 21 L24 21" {...S} /><circle cx="6" cy="14" r="1.8" fill="currentColor" /></>
+    case 'pitchfan':
+      return <><line x1="4" y1="14" x2="24" y2="5" {...S} /><line x1="4" y1="14" x2="24" y2="14" {...S} /><line x1="4" y1="14" x2="24" y2="23" {...S} /><line x1="17" y1="8" x2="17" y2="20" {...S} /><circle cx="4" cy="14" r="1.8" fill="currentColor" /></>
+    case 'fibChannel':
+      return <><line x1="4" y1="12" x2="24" y2="4" {...S} /><line x1="4" y1="17" x2="24" y2="9" {...S} /><line x1="4" y1="20" x2="24" y2="12" {...S} /><line x1="4" y1="25" x2="24" y2="17" {...S} /></>
+    case 'fibTimeTrend':
+      return <><path d="M4 20 L9 10 L12 16" {...S} strokeDasharray="2.5 2" /><line x1="14" y1="5" x2="14" y2="23" {...S} /><line x1="18" y1="5" x2="18" y2="23" {...S} /><line x1="24" y1="5" x2="24" y2="23" {...S} /></>
+    case 'fibCircles':
+      return <><circle cx="14" cy="14" r="3.5" {...S} /><circle cx="14" cy="14" r="6.5" {...S} /><circle cx="14" cy="14" r="10" {...S} /></>
+    case 'fibSpeedFan':
+      return <><line x1="4" y1="24" x2="24" y2="4" {...S} /><line x1="4" y1="24" x2="24" y2="11" {...S} /><line x1="4" y1="24" x2="24" y2="17" {...S} /><line x1="4" y1="24" x2="11" y2="4" {...S} /><line x1="4" y1="24" x2="17" y2="4" {...S} /></>
+    case 'fibSpeedArcs':
+      return <><path d="M9 22 A5 5 0 0 1 19 22" {...S} /><path d="M5 22 A9 9 0 0 1 23 22" {...S} /><line x1="3" y1="22" x2="25" y2="22" {...S} strokeDasharray="2 2" /><circle cx="14" cy="22" r="1.8" fill="currentColor" /></>
+    case 'fibWedge':
+      return <><line x1="5" y1="22" x2="24" y2="6" {...S} /><line x1="5" y1="22" x2="24" y2="20" {...S} /><path d="M14 14.5 A10 10 0 0 1 15 21" {...S} /><path d="M20 9.5 A17 17 0 0 1 22 20.5" {...S} /><circle cx="5" cy="22" r="1.8" fill="currentColor" /></>
+    case 'fibSpiral':
+      return <path d="M14 14 C14 12 16 12 16 14 C16 17 12 17 11.5 14 C11 10 17 9 19 13 C21 18 15 22 10.5 20 C5 17.5 6 9 11 6.5 C16 4 23 6.5 24 12" {...S} />
+    case 'gannBox':
+      return <><rect x="4.5" y="5.5" width="19" height="17" {...S} /><line x1="4.5" y1="11" x2="23.5" y2="11" {...S} /><line x1="4.5" y1="17" x2="23.5" y2="17" {...S} /><line x1="11" y1="5.5" x2="11" y2="22.5" {...S} /><line x1="17" y1="5.5" x2="17" y2="22.5" {...S} /></>
+    case 'gannSquareFixed':
+      return <><rect x="5" y="5" width="18" height="18" {...S} /><line x1="5" y1="23" x2="23" y2="5" {...S} /><line x1="5" y1="23" x2="23" y2="14" {...S} /><line x1="5" y1="23" x2="14" y2="5" {...S} /><path d="M14 23 A9 9 0 0 0 5 14" {...S} /></>
+    case 'gannFan':
+      return <><line x1="4" y1="24" x2="24" y2="4" {...S} /><line x1="4" y1="24" x2="24" y2="14" {...S} /><line x1="4" y1="24" x2="24" y2="20" {...S} /><line x1="4" y1="24" x2="14" y2="4" {...S} /><line x1="4" y1="24" x2="8" y2="4" {...S} /></>
+    case 'rotatedRectangle':
+      return <path d="M4 16 L15 5 L24 14 L13 25 Z" {...S} />
+    case 'path':
+      return <><path d="M4 21 L10 9 L17 17 L23 7" {...S} /><path d="M23 7 L18 8.5 M23 7 L22.5 12" {...S} /></>
+    case 'circle':
+      return <><circle cx="14" cy="14" r="9" {...S} /><circle cx="14" cy="14" r="1.6" fill="currentColor" /></>
+    case 'polyline':
+      return <><path d="M4 20 L9 7 L16 15 L24 6 L21 22 Z" {...S} /></>
+    case 'arc':
+      return <><path d="M4 20 A11 11 0 0 1 24 20" {...S} /><circle cx="4" cy="20" r="1.8" fill="currentColor" /><circle cx="24" cy="20" r="1.8" fill="currentColor" /></>
+    case 'curve':
+      return <><path d="M4 21 Q14 0 24 21" {...S} /><circle cx="4" cy="21" r="1.8" fill="currentColor" /><circle cx="24" cy="21" r="1.8" fill="currentColor" /></>
+    case 'doubleCurve':
+      return <><path d="M4 14 Q9 2 14 14 Q19 26 24 14" {...S} /><circle cx="4" cy="14" r="1.8" fill="currentColor" /><circle cx="24" cy="14" r="1.8" fill="currentColor" /></>
     default:
       return <rect x="6" y="6" width="16" height="16" rx="2" {...S} />
   }

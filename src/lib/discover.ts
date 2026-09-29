@@ -1,4 +1,4 @@
-import type { Candle } from './binance'
+import type { Candle } from './market/types'
 import { computeFeatures, FEATURE_LABELS, formatFeature, MIN_HISTORY, type FeatureSet } from './features'
 
 export interface DiscoverConfig {

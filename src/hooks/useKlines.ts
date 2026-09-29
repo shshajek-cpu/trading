@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { fetchKlines, RateLimitError, rateLimitedUntil, type Candle, type Interval } from '../lib/binance'
+import { fetchCandles, fetchOlder, rateLimitedUntil } from '../lib/market'
+import { RateLimitError, type Candle, type Interval } from '../lib/market/types'
 import { INTERVAL_SECONDS } from '../lib/intervals'
 
-export interface UseBinanceKlinesResult {
+export interface UseKlinesResult {
   candles: Candle[]
   loading: boolean
   error: Error | null
@@ -22,7 +23,6 @@ export interface UseBinanceKlinesResult {
 
 const MAX_ATTEMPTS = 4
 const BASE_DELAY_MS = 700
-const OLDER_CHUNK = 500
 
 const sleep = (ms: number, signal?: AbortSignal) =>
   new Promise<void>((resolve, reject) => {
@@ -52,11 +52,15 @@ function mergeLatest(prev: Candle[], fresh: Candle[], step: number): Candle[] {
   return [...older, ...fresh]
 }
 
-export function useBinanceKlines(
+/**
+ * 차트 한 칸의 봉 목록 — 최신 limit 개를 받고, 왼쪽 끝에 닿으면 과거를 한 묶음씩 앞에 붙인다.
+ * 시장(바이낸스·업비트·야후)은 lib/market 이 가른다.
+ */
+export function useKlines(
   symbol: string,
   interval: Interval,
   limit = 1000,
-): UseBinanceKlinesResult {
+): UseKlinesResult {
   const [candles, setCandles] = useState<Candle[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<Error | null>(null)
@@ -82,7 +86,7 @@ export function useBinanceKlines(
       // 모바일에선 화면 전환·신호 끊김으로 한 번씩 실패한다. 몇 번 더 두드려본다.
       for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
         try {
-          const data = await fetchKlines(symbol, interval, limit, signal)
+          const data = await fetchCandles(symbol, interval, limit, signal)
           // 받는 사이 종목·주기가 바뀌었으면 버린다(다른 차트 캔들이 섞이지 않게).
           if (signal?.aborted || seriesKeyRef.current !== key) return
           setCandles((prev) => mergeLatest(prev, data, INTERVAL_SECONDS[interval]))
@@ -142,7 +146,7 @@ export function useBinanceKlines(
   useEffect(() => {
     const retry = () => {
       // 한도 초과 중엔 두드리지 않는다 — 쿨다운이 끝나면 load 가 스스로 재시도한다.
-      if (document.visibilityState === 'visible' && rateLimitedUntil() <= Date.now()) reloadRef.current?.()
+      if (document.visibilityState === 'visible' && rateLimitedUntil(symbol) <= Date.now()) reloadRef.current?.()
     }
     document.addEventListener('visibilitychange', retry)
     window.addEventListener('online', retry)
@@ -150,10 +154,10 @@ export function useBinanceKlines(
       document.removeEventListener('visibilitychange', retry)
       window.removeEventListener('online', retry)
     }
-  }, [])
+  }, [symbol])
 
   const loadOlder = useCallback(async () => {
-    if (busyRef.current || exhausted || rateLimitedUntil() > Date.now()) return
+    if (busyRef.current || exhausted || rateLimitedUntil(symbol) > Date.now()) return
     const oldest = candlesRef.current[0]
     if (!oldest) return
 
@@ -165,26 +169,16 @@ export function useBinanceKlines(
     busyRef.current = true
     setLoadingOlder(true)
     try {
-      // endTime 은 포함이라 1ms 빼서 겹침을 피한다.
-      const older = await fetchKlines(
-        symbol,
-        interval,
-        OLDER_CHUNK,
-        controller.signal,
-        oldest.time * 1000 - 1,
-      )
+      const page = await fetchOlder(symbol, interval, oldest.time, controller.signal)
       if (controller.signal.aborted || seriesKeyRef.current !== token) return
       const current = candlesRef.current[0]
       // 그 사이 새로 불러왔다면 기준점이 달라졌다는 뜻이다. 버린다.
       if (!current || current.time !== oldest.time) return
 
-      const fresh = older.filter((c) => c.time < oldest.time)
-      if (fresh.length === 0) {
-        setExhausted(true)
-      } else {
-        setCandles((prev) => [...fresh, ...prev])
-        if (fresh.length < OLDER_CHUNK) setExhausted(true)
-      }
+      const fresh = page.candles.filter((c) => c.time < oldest.time)
+      if (fresh.length > 0) setCandles((prev) => [...fresh, ...prev])
+      // 더 받을 과거가 없거나(상장 첫 봉·공급자 보관 한도) 아무것도 오지 않으면 그만 부른다.
+      if (page.done || fresh.length === 0) setExhausted(true)
     } catch {
       /* 과거 로딩 실패는 조용히 넘긴다 — 이미 보고 있는 차트는 멀쩡하다. */
     } finally {
@@ -205,7 +199,7 @@ export function useBinanceKlines(
       if (!last || candle.time < last.time) return
       if (candle.time - last.time > INTERVAL_SECONDS[interval] * 1.5) {
         // 붙이면 그 사이 봉이 빠진 채 이어져 가격이 뚝 끊겨 보인다 — 다시 받아 메운다.
-        if (rateLimitedUntil() <= Date.now()) reloadRef.current?.()
+        if (rateLimitedUntil(symbol) <= Date.now()) reloadRef.current?.()
         return
       }
       setCandles((prev) => {
@@ -215,7 +209,7 @@ export function useBinanceKlines(
         return [...prev, candle]
       })
     },
-    [interval],
+    [symbol, interval],
   )
 
   return { candles, loading, error, reload, loadOlder, loadingOlder, exhausted, commit }

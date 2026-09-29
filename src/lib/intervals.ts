@@ -1,4 +1,4 @@
-import type { Interval } from './binance'
+import type { Interval } from './market/types'
 
 export const INTERVAL_SECONDS: Record<Interval, number> = {
   '1m': 60,

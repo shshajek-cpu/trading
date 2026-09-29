@@ -1,4 +1,4 @@
-import type { Interval } from '../../lib/binance'
+import type { Interval } from '../../lib/market/types'
 import type { Drawing, NewDrawing } from '../../lib/drawings'
 import { cloneOffset } from './builders'
 

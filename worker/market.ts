@@ -1,25 +1,70 @@
 /**
- * 감시기가 시세를 읽는 공통 부분 — 가격·수평선 알림의 1분봉(index.ts)과 지표 알림의 주기별 봉(indicatorAlerts.ts)이 함께 쓴다.
+ * 감시기가 시세를 읽는 공통 부분 — 가격·선 알림의 1분봉(loadQuotes)과 지표 알림의 주기별 봉(indicatorAlerts.ts)이 함께 쓴다.
  *
- * 앱과 같은 바이낸스 USDT-M 을 먼저 부른다. 바이낸스가 데이터센터 IP·지역을 막거나(403/451) 요청 한도에 걸리면(418/429)
- * 이번 호출 동안은 다시 부르지 않고 같은 무기한 선물의 gate.io 봉으로 대신한다. 운영(Cloudflare)에서는 바이낸스가 막혀 있어
- * 실제로는 gate.io 를 쓴다. 두 쪽 봉 조회는 한 호출에서 CANDLE_FETCH_MAX 번까지 — 넘는 것은 다음 분에 읽는다.
+ * 심볼 id(src/lib/market/ids.ts)로 거래소를 고른다.
+ *  - BTCUSDT(바이낸스 USDT-M 선물): fapi.binance.com → 막혔거나 실패하면 같은 무기한 선물의 gate.io 봉.
+ *  - BSPOT:BTCUSDT(바이낸스 현물): api.binance.com → 막혔거나 실패하면 gate.io 현물 봉(BTC_USDT).
+ *  - UPBIT:KRW-BTC(업비트 원화): api.upbit.com 캔들. 대체 시세는 없다.
+ *  - YF:AAPL(야후 — 주식·지수·환율·선물): query1.finance.yahoo.com chart(브라우저 User-Agent 를 붙인다). 대체 시세는 없다.
+ * 바이낸스가 데이터센터 IP·지역을 막거나(403/451) 요청 한도에 걸리면(418/429) 이번 호출 동안은 선물·현물 모두 다시
+ * 부르지 않고 gate.io 로 대신한다. 운영(Cloudflare)에서는 바이낸스가 막혀 있어 실제로는 gate.io 를 쓴다.
+ * 거래소에 없는 주기는 더 작은 주기를 묶어(src/lib/market/bars.ts 의 aggregate) 만든다.
+ * 봉 조회는 요청 하나마다(업비트 여러 쪽은 쪽마다) 1회로 세어 한 호출에서 CANDLE_FETCH_MAX 번까지 — 넘는 것은 다음 분에 읽는다.
  */
+import { INTERVAL_SECONDS } from '../src/lib/intervals'
+import { aggregate } from '../src/lib/market/bars'
+import { isSymbolId, marketOf, nativeSymbol, upbitPlan, yahooPlan } from '../src/lib/market/ids'
+import type { Candle, Interval } from '../src/lib/market/types'
+import { parseUpbitCandles, UPBIT_PAGE, upbitCandlesUrl, type UpbitCandleRow } from '../src/lib/market/upbit'
+import {
+  parseYahooChart,
+  YAHOO_CHART_URL,
+  YAHOO_WINDOW,
+  yahooChartParams,
+  yahooOldest,
+  type YahooChartJson,
+} from '../src/lib/market/yahoo'
 
-export const KLINES_URL = 'https://fapi.binance.com/fapi/v1/klines'
-export const GATE_CANDLES_URL = 'https://api.gateio.ws/api/v4/futures/usdt/candlesticks'
+const KLINES_URL = 'https://fapi.binance.com/fapi/v1/klines'
+const SPOT_KLINES_URL = 'https://api.binance.com/api/v3/klines'
+const GATE_CANDLES_URL = 'https://api.gateio.ws/api/v4/futures/usdt/candlesticks'
+const GATE_SPOT_CANDLES_URL = 'https://api.gateio.ws/api/v4/spot/candlesticks'
 const TICKERS_URL = 'https://api.gateio.ws/api/v4/futures/usdt/tickers'
 
 /** 무료 플랜의 호출 하나당 외부 요청(하위 요청) 한도. 시세·봉 조회와 푸시 발송이 함께 쓴다. */
 export const SUBREQUEST_MAX = 50
-/** 봉 조회(바이낸스·gate 합계, 가격 시세와 지표 봉 합계) 상한. 남는 14회는 전체 시세 한 번과 푸시 발송 몫이다. */
+/** 봉 조회(모든 거래소 합계, 가격 시세와 지표 봉 합계) 상한. 남는 14회는 전체 시세 한 번과 푸시 발송 몫이다. */
 export const CANDLE_FETCH_MAX = 36
-/** 바이낸스 표기(BTCUSDT, 1000PEPEUSDT, BTCUSDT_250328). 모양이 다른 값으로는 요청을 쓰지 않는다. */
-export const SYMBOL_RE = /^[0-9A-Z_]{2,40}$/
 /** 이 응답이면 이번 호출 동안 바이낸스를 다시 부르지 않는다 — 지역·IP 차단(403/451)과 요청 한도(418/429). */
-export const BINANCE_BLOCKED = new Set([403, 418, 429, 451])
+const BINANCE_BLOCKED = new Set([403, 418, 429, 451])
+/** 요청 한 번의 최대 봉 수. 바이낸스 선물 1500·현물 1000, gate 선물 2000·현물 1000. */
+const BINANCE_LIMIT = 1500
+const SPOT_LIMIT = 1000
+const GATE_LIMIT = 2000
+const GATE_SPOT_LIMIT = 1000
+/** 지표 봉 하나가 업비트에 쓰는 최대 쪽 수(쪽마다 UPBIT_PAGE 개, 요청 1회). 가격 시세는 1 쪽. */
+export const UPBIT_FEED_PAGES = 3
+/** 야후가 브라우저가 아닌 요청을 막지 않게 붙인다. */
+const YAHOO_HEADERS = {
+  'User-Agent':
+    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
+  Accept: 'application/json',
+}
+const HOUR = 3_600
+const DAY = 86_400
 
-export type PriceSource = 'binance' | 'gate'
+/**
+ * gate.io 에 없는 주기와, 묶어서 만들 더 작은 gate 주기(나머지는 바이낸스와 경계가 같다 — UTC 배수, 1w 는 월요일).
+ * 선물: 1m 5m 15m 30m 1h 2h 4h 6h 8h 12h 1d 1w 가 있고 3m·3d 가 없다.
+ * 현물: 1m 3m 5m 15m 30m 1h 2h 4h 6h 8h 12h 1d 3d 1w(=7d) 가 있지만 3d 는 Unix 3 일 배수 경계라 바이낸스(1970-01-02 부터)와 다르다.
+ * 둘 다 30d 는 달력 월이 아니라 1M 은 일봉을 묶는다.
+ */
+const GATE_SOURCE: Partial<Record<Interval, Interval>> = { '3m': '1m', '3d': '1d', '1M': '1d' }
+const GATE_SPOT_SOURCE: Partial<Record<Interval, Interval>> = { '3d': '1d', '1M': '1d' }
+/** 바이낸스 현물 심볼을 gate 현물 쌍(BTC_USDT)으로 나눌 때 보는 호가 자산(긴 것부터). */
+const SPOT_QUOTES = ['FDUSD', 'USDT', 'USDC', 'BTC']
+
+export type PriceSource = 'binance' | 'gate' | 'upbit' | 'yahoo'
 
 /** 이번 호출에서 쓴 외부 요청과, 호출 안에서 한 번만 알아내면 되는 것. */
 export interface Budget {
@@ -81,55 +126,339 @@ export function gateTickers(budget: Budget): Promise<Map<string, GateTicker> | n
   return budget.tickers
 }
 
+/** 읽을 봉 — 심볼 id, 앱 주기, 마지막(진행 중일 수 있는 봉)부터 거슬러 센 개수. */
+export interface CandleRequest {
+  symbol: string
+  interval: Interval
+  bars: number
+}
+
+/** 읽은 봉(시간순, 비어 있지 않고 값이 모두 수). 마지막 봉은 진행 중일 수 있다. */
+export interface LoadedCandles {
+  source: PriceSource
+  candles: Candle[]
+}
+
+/** 묶어서 interval 봉 bars 개를 만드는 데 드는 source 봉 수(맨 앞 덜 찬 봉 하나를 버리고, 1M 은 한 달 최대 31 일). */
+function sourceCount(req: CandleRequest, source: Interval): number {
+  if (source === req.interval) return req.bars
+  const ratio = req.interval === '1M' ? 31 : INTERVAL_SECONDS[req.interval] / INTERVAL_SECONDS[source]
+  return (req.bars + 1) * ratio
+}
+
+/** 작은 주기로 받았으면 묶는다. anchor 는 장 시작 기준으로 묶는 야후 봉에만 준다. */
+function grouped(candles: Candle[], interval: Interval, source: Interval, anchor?: number): Candle[] {
+  return source === interval ? candles : aggregate(candles, interval, anchor)
+}
+
+/** 비어 있지 않고 모든 값이 수다. */
+function valid(candles: Candle[]): boolean {
+  return (
+    candles.length > 0 &&
+    candles.every((c) => [c.time, c.open, c.high, c.low, c.close, c.volume].every(Number.isFinite))
+  )
+}
+
+/** JSON 응답. 실패(연결·상태·본문)는 null. */
+async function getJson<T>(url: string, headers: Record<string, string> = { Accept: 'application/json' }): Promise<T | null> {
+  try {
+    const res = await fetch(url, { headers })
+    return res.ok ? ((await res.json()) as T) : null
+  } catch {
+    return null
+  }
+}
+
+/** 바이낸스 선물·현물 봉(모든 앱 주기가 있다). 막혔으면 'blocked', 이 항목만 실패했으면 null. */
+async function binanceCandles(req: CandleRequest): Promise<Candle[] | 'blocked' | null> {
+  const spot = marketOf(req.symbol) === 'bspot'
+  const limit = Math.min(req.bars, spot ? SPOT_LIMIT : BINANCE_LIMIT)
+  let res: Response
+  try {
+    res = await fetch(
+      `${spot ? SPOT_KLINES_URL : KLINES_URL}?symbol=${nativeSymbol(req.symbol)}&interval=${req.interval}&limit=${limit}`,
+    )
+  } catch {
+    // 연결부터 안 되면 다른 종목도 마찬가지다.
+    return 'blocked'
+  }
+  if (BINANCE_BLOCKED.has(res.status)) return 'blocked'
+  if (!res.ok) return null
+  try {
+    const rows = (await res.json()) as unknown[][]
+    return rows.map((r) => ({
+      time: Math.floor(Number(r[0]) / 1000),
+      open: Number(r[1]),
+      high: Number(r[2]),
+      low: Number(r[3]),
+      close: Number(r[4]),
+      volume: Number(r[5]),
+    }))
+  } catch {
+    return null
+  }
+}
+
+/** gate.io 선물 봉(바이낸스 배율·기초 자산 수량으로 환산). 계약 1장의 수량을 모르면 거래량을 맞출 수 없어 null. */
+async function gateCandles(req: CandleRequest, ticker: GateTicker): Promise<Candle[] | null> {
+  if (!(ticker.volume > 0)) return null
+  const source = GATE_SOURCE[req.interval] ?? req.interval
+  const limit = Math.min(GATE_LIMIT, sourceCount(req, source))
+  const rows = await getJson<{ t: number; o: string; h: string; l: string; c: string; v: number }[]>(
+    `${GATE_CANDLES_URL}?contract=${ticker.contract}&interval=${source}&limit=${limit}`,
+  )
+  if (!rows) return null
+  const { scale, volume } = ticker
+  const candles = rows.map((r) => ({
+    time: r.t,
+    open: Number(r.o) * scale,
+    high: Number(r.h) * scale,
+    low: Number(r.l) * scale,
+    close: Number(r.c) * scale,
+    volume: Number(r.v) * volume,
+  }))
+  return grouped(candles, req.interval, source)
+}
+
+/** 바이낸스 현물 심볼 → gate 현물 쌍(BTCUSDT → BTC_USDT). 호가 자산을 모르면 null. */
+function gatePair(native: string): string | null {
+  const quote = SPOT_QUOTES.find((q) => native.length > q.length && native.endsWith(q))
+  return quote ? `${native.slice(0, -quote.length)}_${quote}` : null
+}
+
 /**
- * 항목마다 봉을 읽는다 — 바이낸스 먼저, 막혔거나 실패한 항목은 gate.io 로(gate 에 없는 종목에는 요청을 쓰지 않는다).
- * 첫 항목으로 바이낸스가 막혔는지 먼저 보고, 막혔으면 나머지 항목에는 바이낸스 요청을 쓰지 않는다.
- * 봉 조회 수가 ceiling(CANDLE_FETCH_MAX 이하)에 닿거나 외부 요청이 SUBREQUEST_MAX 에 닿으면 남은 항목은 이번 분에
- * 읽지 않는다(결과에 없다).
+ * gate.io 현물 봉. 행은 [시작(초), 거래대금, 종가, 고가, 저가, 시가, 거래량(기초 자산), 닫힘] 문자열 배열이다 —
+ * 거래량은 바이낸스와 같은 기초 자산 수량(6 번)을 쓴다. gate 에 없는 쌍이면 null.
  */
-export async function loadCandles<K extends { symbol: string }, V>(
+async function gateSpotCandles(req: CandleRequest, pair: string): Promise<Candle[] | null> {
+  const source = GATE_SPOT_SOURCE[req.interval] ?? req.interval
+  const limit = Math.min(GATE_SPOT_LIMIT, sourceCount(req, source))
+  const rows = await getJson<string[][]>(`${GATE_SPOT_CANDLES_URL}?currency_pair=${pair}&interval=${source}&limit=${limit}`)
+  if (!rows) return null
+  const candles = rows.map((r) => ({
+    time: Number(r[0]),
+    open: Number(r[5]),
+    high: Number(r[3]),
+    low: Number(r[4]),
+    close: Number(r[2]),
+    volume: Number(r[6]),
+  }))
+  return grouped(candles, req.interval, source)
+}
+
+/**
+ * 업비트 봉. 최신 쪽부터 to(가장 오래된 봉 시각, 미포함)로 거슬러 pages 쪽까지 차례로 받는다. pages 만큼 봉 조회를 미리
+ * 잡아 두고, 과거가 모자라 덜 부른 만큼은 돌려준다. 업비트는 거래가 없던 분의 봉을 주지 않는다.
+ */
+async function upbitCandles(req: CandleRequest, pages: number, budget: Budget): Promise<Candle[] | null> {
+  const plan = upbitPlan(req.interval)
+  const market = nativeSymbol(req.symbol)
+  let need = Math.min(sourceCount(req, plan.source), pages * UPBIT_PAGE)
+  let candles: Candle[] = []
+  let to: number | undefined
+  let made = 0
+  try {
+    while (made < pages && need > 0) {
+      made++
+      const rows = await getJson<UpbitCandleRow[]>(upbitCandlesUrl(market, plan.source, need, to))
+      if (!rows) return null
+      const page = parseUpbitCandles(rows)
+      candles = page.concat(candles)
+      if (page.length === 0 || rows.length < Math.min(need, UPBIT_PAGE)) break
+      need -= rows.length
+      to = page[0].time
+    }
+  } finally {
+    budget.used -= pages - made
+    budget.candles -= pages - made
+  }
+  return plan.group ? aggregate(candles, req.interval) : candles
+}
+
+/**
+ * 야후 봉(요청 1회). 기간은 bars × 주기를 장이 서는 시간 비율(분·시간봉 ×4 — 하루 6.5 시간 안팎, 일봉 ×1.5 — 주말·휴일,
+ * 주·월봉 ×1.1)로 늘린 것의 두 배에 1 시간(지연 시세 여유)을 더하고, YAHOO_WINDOW(한 요청 기간)와 야후 보관 한도
+ * (yahooOldest)로 자른다. 2h~12h·3m 은 장 시작 시각(chart.anchor)부터 묶는다. 3d 는 계획이 없다(null).
+ */
+async function yahooCandles(req: CandleRequest): Promise<Candle[] | null> {
+  const plan = yahooPlan(req.interval)
+  if (!plan) return null
+  const now = Math.floor(Date.now() / 1000)
+  const size = INTERVAL_SECONDS[req.interval]
+  const factor = size < DAY ? 4 : size === DAY ? 1.5 : 1.1
+  const span = Math.min(YAHOO_WINDOW[plan.source] ?? Infinity, 2 * req.bars * size * factor + HOUR)
+  const from = Math.max(yahooOldest(plan.source, now), now - span)
+  const json = await getJson<YahooChartJson>(
+    `${YAHOO_CHART_URL}${encodeURIComponent(nativeSymbol(req.symbol))}?${yahooChartParams(plan.source, from, now)}`,
+    YAHOO_HEADERS,
+  )
+  const chart = json && parseYahooChart(json, plan.source)
+  if (!chart) return null
+  return grouped(chart.candles, req.interval, plan.source, plan.group === 'session' ? chart.anchor : undefined)
+}
+
+/**
+ * 항목마다 봉을 읽는다(심볼 id 로 거래소를 고른다 — 머리말 참고).
+ * - 바이낸스(선물·현물): 첫 항목으로 막혔는지 먼저 보고, 막혔으면 나머지에는 바이낸스 요청을 쓰지 않는다. 막혔거나 실패한
+ *   항목은 gate.io 로 — 선물은 전체 시세에 있는 계약만(없는 종목에는 요청을 쓰지 않는다), 현물은 쌍 이름을 알 때만.
+ * - 업비트: upbitPages 쪽까지(가격 1분봉은 1 쪽, 지표 봉은 UPBIT_FEED_PAGES). 쪽 수만큼 자리가 없으면 읽지 않는다.
+ * - 야후: 요청 1회. 계획이 없는 주기(3d)는 요청을 쓰지 않는다.
+ * 봉 조회 수가 ceiling(CANDLE_FETCH_MAX 이하)에 닿거나 외부 요청이 SUBREQUEST_MAX 에 닿으면 남은 항목은 이번 분에
+ * 읽지 않는다(결과에 없다). 결과의 봉은 마지막 bars 개다(과거가 모자라면 더 적다).
+ */
+export async function loadCandles<K extends CandleRequest>(
   items: K[],
   budget: Budget,
   ceiling: number,
-  viaBinance: (item: K) => Promise<V | 'blocked' | null>,
-  viaGate: (item: K, ticker: GateTicker) => Promise<V | null>,
-): Promise<Map<K, { source: PriceSource; value: V }>> {
-  const out = new Map<K, { source: PriceSource; value: V }>()
-  const fallback: K[] = []
+  upbitPages = 1,
+): Promise<Map<K, LoadedCandles>> {
+  const out = new Map<K, LoadedCandles>()
   // 이번 호출에 더 할 수 있는 봉 조회 수. reserve: 그 전에 따로 써야 할 외부 요청 수.
   const room = (reserve = 0) =>
     Math.max(0, Math.min(ceiling - budget.candles, SUBREQUEST_MAX - budget.used - reserve))
-  const tryBinance = async (item: K): Promise<void> => {
-    budget.candles++
-    const value = await viaBinance(item)
-    if (value === 'blocked') budget.binanceBlocked = true
-    if (value !== null && value !== 'blocked') out.set(item, { source: 'binance', value })
-    else fallback.push(item)
+  // 봉 조회 n 회를 잡는다(요청 수와 봉 조회 수 모두). 자리가 모자라면 하나도 잡지 않는다.
+  const take = (n: number): boolean => {
+    if (n < 1 || room() < n) return false
+    budget.used += n
+    budget.candles += n
+    return true
   }
-  let next = 0
-  if (!budget.binanceBlocked && items.length > 0 && room() > 0) {
-    await tryBinance(items[0])
-    next = 1
+  const keep = (item: K, source: PriceSource, candles: Candle[] | null): boolean => {
+    const last = candles?.slice(-item.bars)
+    if (!last || !valid(last)) return false
+    out.set(item, { source, candles: last })
+    return true
   }
-  const rest = budget.binanceBlocked ? [] : items.slice(next, next + room())
-  await Promise.all(rest.map(tryBinance))
-  fallback.push(...items.slice(next + rest.length))
-  // gate 로 읽으려면 전체 시세(아직 안 불렀으면 1회) 뒤에 봉 조회 1회가 들어갈 자리가 있어야 한다.
-  if (fallback.length === 0 || room(budget.tickers ? 0 : 1) === 0) return out
+  const failed = new Set<K>()
+  const viaBinance = async (item: K): Promise<void> => {
+    const got = await binanceCandles(item)
+    if (got === 'blocked') budget.binanceBlocked = true
+    if (got === 'blocked' || !keep(item, 'binance', got)) failed.add(item)
+  }
+
+  // 바이낸스가 막혔는지 첫 바이낸스(선물·현물) 항목으로 먼저 본다.
+  const first = budget.binanceBlocked
+    ? undefined
+    : items.find((item) => marketOf(item.symbol) === 'binance' || marketOf(item.symbol) === 'bspot')
+  const probed = first && take(1) ? first : undefined
+  if (probed) await viaBinance(probed)
+  const jobs: Promise<unknown>[] = []
+  for (const item of items) {
+    if (item === probed) continue
+    const market = marketOf(item.symbol)
+    if (market === 'upbit') {
+      // 필요한 source 봉 수를 한 쪽(UPBIT_PAGE)씩 — upbitPages 쪽까지.
+      const need = sourceCount(item, upbitPlan(item.interval).source)
+      const pages = Math.min(upbitPages, Math.ceil(need / UPBIT_PAGE))
+      if (take(pages)) jobs.push(upbitCandles(item, pages, budget).then((c) => keep(item, 'upbit', c)))
+    } else if (market === 'yahoo') {
+      if (yahooPlan(item.interval) && take(1)) jobs.push(yahooCandles(item).then((c) => keep(item, 'yahoo', c)))
+    } else if (!budget.binanceBlocked && take(1)) {
+      jobs.push(viaBinance(item))
+    } else {
+      failed.add(item)
+    }
+  }
+  await Promise.all(jobs)
+
+  const fallback = items.filter((item) => failed.has(item))
+  if (fallback.length === 0) return out
+  // 선물을 gate 로 읽으려면 전체 시세(아직 안 불렀으면 1회) 뒤에 봉 조회 1회가 들어갈 자리가 있어야 한다.
+  const futures = fallback.some((item) => marketOf(item.symbol) === 'binance')
+  const tickers = futures && room(budget.tickers ? 0 : 1) > 0 ? await gateTickers(budget) : null
+  const gateJobs: Promise<unknown>[] = []
+  for (const item of fallback) {
+    if (marketOf(item.symbol) === 'binance') {
+      const ticker = tickers?.get(item.symbol)
+      if (ticker && take(1)) gateJobs.push(gateCandles(item, ticker).then((c) => keep(item, 'gate', c)))
+    } else {
+      const pair = gatePair(nativeSymbol(item.symbol))
+      if (pair && take(1)) gateJobs.push(gateSpotCandles(item, pair).then((c) => keep(item, 'gate', c)))
+    }
+  }
+  await Promise.all(gateJobs)
+  return out
+}
+
+/**
+ * 가격·선 알림이 종목마다 읽는 1분봉 수의 최소 — 진행 중인 봉과 앞선 두 봉. 크론이 한 번 늦거나 건너뛰어도 구간이
+ * 끊기지 않는다. 이동 % 알림은 loadQuotes 의 barsFor 로 더 읽는다(바이낸스 선물 1500·현물 1000, gate 선물 2000·현물 1000,
+ * 업비트 200(1 쪽), 야후 5 일까지).
+ */
+export const BAR_LIMIT = 3
+const MINUTE_MS = 60_000
+
+/** 1분봉 하나(가격은 바이낸스 표기 배율). 전체 시세의 현재가는 시작·끝이 같은 점 하나로 담는다. */
+export interface Bar {
+  /** 시작 시각(ms) */
+  t: number
+  /** 이 자료가 덮는 끝 시각(ms). 닫힌 봉은 t + 1분, 진행 중인 봉은 조회 시각. */
+  end: number
+  /** 더 바뀌지 않는 자료. 기준(SideMark)은 닫힌 자료로만 적는다 — 진행 중인 봉은 닫힌 뒤 다시 본다. */
+  closed: boolean
+  o: number
+  h: number
+  l: number
+  c: number
+}
+
+/** 종목 하나의 시세. bars 는 시간순이고 비어 있지 않다. */
+export interface Quote {
+  source: PriceSource
+  bars: Bar[]
+}
+
+/**
+ * 1분 캔들(시간순, 비어 있지 않음)을 봉으로 바꾼다. 마지막 봉만 진행 중일 수 있다.
+ * lastOpen: 늦게 오는 시세(야후 — 거래소에 따라 10~20분 지연)는 마지막 봉이 끝난 시각이 지나도 아직 채워지는 중일 수 있어
+ * 늘 진행 중으로 본다(그 봉으로 기준을 적지 않는다).
+ */
+function toBars(candles: Candle[], lastOpen = false): Bar[] {
+  const now = Date.now()
+  const bars = candles.map(({ time, open, high, low, close }): Bar => {
+    const t = time * 1000
+    return { t, end: t + MINUTE_MS, closed: true, o: open, h: high, l: low, c: close }
+  })
+  const last = bars[bars.length - 1]
+  if (lastOpen || last.end > now) {
+    last.closed = false
+    last.end = Math.max(now, last.t)
+  }
+  return bars
+}
+
+/**
+ * 종목별 시세를 모은다. 거래소별 1분봉(loadCandles — 바이낸스 → gate.io, 업비트, 야후) → 봉을 못 읽은 바이낸스 선물은
+ * gate.io 현재가. 종목마다 max(BAR_LIMIT, barsFor(종목)) 개를 읽는다(거래소 한도까지).
+ * 봉 조회는 CANDLE_FETCH_MAX 에서 지표 봉 몫(reserve)을 뺀 만큼까지 — 넘는 선물 종목과 봉을 못 읽은 선물 종목은
+ * 전체 시세 한 번(현재가 점 하나)으로 보고, 현물·업비트·야후 종목은 이번 분에 보지 않는다(결과에 없다).
+ */
+export async function loadQuotes(
+  symbols: string[],
+  budget: Budget,
+  reserve: number,
+  barsFor?: (symbol: string) => number,
+): Promise<Map<string, Quote>> {
+  const quotes = new Map<string, Quote>()
+  const items = [...new Set(symbols)]
+    .filter(isSymbolId)
+    .sort()
+    .map((symbol): CandleRequest => ({ symbol, interval: '1m', bars: Math.max(BAR_LIMIT, barsFor?.(symbol) ?? 0) }))
+  if (items.length === 0) return quotes
+
+  const loaded = await loadCandles(items, budget, CANDLE_FETCH_MAX - reserve)
+  for (const [{ symbol }, { source, candles }] of loaded) quotes.set(symbol, { source, bars: toBars(candles, source === 'yahoo') })
+  const missing = items.filter(({ symbol }) => !quotes.has(symbol) && marketOf(symbol) === 'binance')
+  if (missing.length === 0) return quotes
 
   const tickers = await gateTickers(budget)
-  if (!tickers) return out
-  const listed = fallback.flatMap((item) => {
-    const ticker = tickers.get(item.symbol)
-    return ticker ? [{ item, ticker }] : []
-  })
-  const picked = listed.slice(0, room())
-  budget.candles += picked.length
-  await Promise.all(
-    picked.map(async ({ item, ticker }) => {
-      const value = await viaGate(item, ticker)
-      if (value !== null) out.set(item, { source: 'gate', value })
-    }),
-  )
-  return out
+  if (!tickers) return quotes
+  const now = Date.now()
+  for (const { symbol } of missing) {
+    const ticker = tickers.get(symbol)
+    if (!ticker) continue
+    const { last } = ticker
+    quotes.set(symbol, { source: 'gate', bars: [{ t: now, end: now, closed: true, o: last, h: last, l: last, c: last }] })
+  }
+  return quotes
 }

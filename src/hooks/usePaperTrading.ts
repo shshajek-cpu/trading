@@ -28,6 +28,7 @@ import {
 import { applyCommand, wasApplied, type Command, type CommandBody } from '../lib/paper/commands'
 import { loadRules } from '../lib/paper/rules'
 import {
+  binanceRateLimitedUntil,
   fetchAggTrades,
   fetchBookTicker,
   fetchDepth,
@@ -35,15 +36,13 @@ import {
   fetchKlines,
   fetchMarkKlines,
   paperStreamUrl,
-  rateLimitedUntil,
-  RateLimitError,
   type AggTradeEvent,
-  type Candle,
   type CombinedStreamMessage,
-  type Interval,
   type MarkPriceEvent,
   type OrderBook,
-} from '../lib/binance'
+} from '../lib/market/binance'
+import { RateLimitError, type Candle, type Interval } from '../lib/market/types'
+import { supportsPaperTrading } from '../lib/market/ids'
 import { ACTION_LABEL, fmtBp, fmtPrice, fmtQty, fmtUsdt, roundTo, SIDE_LABEL, TYPE_LABEL } from '../components/trade/format'
 import type { SymbolInfo } from '../lib/symbols'
 import {
@@ -268,7 +267,8 @@ export function usePaperTrading(opts: UsePaperTradingOptions): PaperApi {
   }
 
   function ensureRules(symbol: string): void {
-    if (rulesMapRef.current.has(symbol) || rulesLoadingRef.current.has(symbol)) return
+    // 선물이 아닌 종목(현물·업비트·주식)은 모의거래 대상이 아니다 — 규칙·시세를 부르지 않는다.
+    if (!supportsPaperTrading(symbol) || rulesMapRef.current.has(symbol) || rulesLoadingRef.current.has(symbol)) return
     rulesLoadingRef.current.add(symbol)
     void loadRules(symbol, infoOf(symbol)).then((r) => {
       rulesMapRef.current.set(symbol, r)
@@ -660,8 +660,8 @@ export function usePaperTrading(opts: UsePaperTradingOptions): PaperApi {
 
   /** 요청 간격을 벌리고, 쿨다운 중이면 즉시 중단(상위에서 재개 예약). */
   async function space(): Promise<void> {
-    const until = rateLimitedUntil()
-    if (until) throw new RateLimitError(until)
+    const until = binanceRateLimitedUntil('futures')
+    if (until) throw new RateLimitError('Binance', until)
     const wait = REQ_SPACING_MS - (Date.now() - lastReqRef.current)
     if (wait > 0) await delay(wait)
     lastReqRef.current = Date.now()
@@ -966,6 +966,7 @@ export function usePaperTrading(opts: UsePaperTradingOptions): PaperApi {
       return null
     },
     watch: (symbol) => {
+      if (!supportsPaperTrading(symbol)) return () => {}
       const m = watchedRef.current
       const count = (m.get(symbol) ?? 0) + 1
       m.set(symbol, count)

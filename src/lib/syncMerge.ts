@@ -18,6 +18,9 @@ export const SYNCED_KEYS = [
   'trading.panes.v1',
   'trading.chartSettings.v1',
   'trading.watchlist.v1',
+  'trading.savedLayouts.v1',
+  'trading.alertSettings.v1',
+  'trading.alertLog.v1',
 ] as const
 
 /**
@@ -30,6 +33,8 @@ const FIRST_SYNC: Partial<Record<string, 'byId' | 'list'>> = {
   'trading.priceAlerts.v1': 'byId',
   'trading.indicatorAlerts.v1': 'byId',
   'trading.watchlist.v1': 'list',
+  'trading.savedLayouts.v1': 'byId',
+  'trading.alertLog.v1': 'byId',
 }
 
 /* ── 정규형·지문 ───────────────────────────────────────────────────── */
@@ -117,10 +122,16 @@ function isStringList(list: unknown[]): list is string[] {
   return list.every((v) => typeof v === 'string')
 }
 
+/** id 없는 객체 목록(레이아웃 칸처럼 자리 번호가 곧 정체인 것). */
+function isPlainList(list: unknown[]): list is Record<string, unknown>[] {
+  return list.every(isPlain)
+}
+
 /**
  * 3-way 합치기. 한쪽만 바꿨으면 그쪽을, 둘 다 바꿨으면 모양에 따라 합친다:
- * id 가 있는 객체 목록은 id 별로 · 문자열 목록은 집합으로 · 객체는 속성별로 · 나머지(숫자·모양이 다름 등)는 이 기기 것.
- * 숫자 목록(패널 높이 비율 등)은 한 덩어리 값이라 집합으로 섞지 않는다.
+ * id 가 있는 객체 목록은 id 별로 · 문자열 목록은 집합으로 · 길이가 셋 다 같은 id 없는 객체 목록(레이아웃 칸)은 자리별로 ·
+ * 객체는 속성별로 · 나머지(숫자·모양이 다름 등)는 이 기기 것.
+ * 숫자 목록(패널 높이 비율·칸 크기 등)은 한 덩어리 값이라 섞지 않는다.
  */
 function merge3(base: unknown, local: unknown, server: unknown): unknown {
   if (same(local, server)) return local
@@ -132,6 +143,9 @@ function merge3(base: unknown, local: unknown, server: unknown): unknown {
     const b: unknown[] = Array.isArray(base) ? base : []
     if (isIdList(local) && isIdList(server) && isIdList(b)) return mergeById(b, local, server)
     if (isStringList(local) && isStringList(server) && isStringList(b)) return mergeSet(b, local, server)
+    if (b.length === local.length && b.length === server.length && isPlainList(local) && isPlainList(server) && isPlainList(b)) {
+      return local.map((item, i) => merge3(b[i], item, server[i]))
+    }
     return local
   }
   if (isPlain(local) && isPlain(server)) return mergeObject(isPlain(base) ? base : {}, local, server)

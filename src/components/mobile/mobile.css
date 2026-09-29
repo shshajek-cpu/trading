@@ -31,10 +31,9 @@
   min-width: 0;
 }
 
-/* 분할 레이아웃(데스크톱과 같은 레이아웃). 칸 사이는 1px 경계. 세로 화면의 2분할은 위아래로, 가로 화면은 좌우로. */
+/* 분할 레이아웃(데스크톱과 같은 격자, ChartGrid). 칸 사이는 1px 경계. 세로 화면에서 칸이 너무 좁으면 줄 방향을 뒤집어 보인다. */
 .m-chart-grid {
-  display: grid;
-  gap: 1px;
+  position: relative;
   background: var(--tv-border);
 }
 
@@ -44,22 +43,49 @@
   background: var(--tv-bg);
 }
 
-.m-chart-grid.grid-1 {
-  grid-template: 1fr / 1fr;
+/* 칸 크기 조절 손잡이 — 경계 한가운데, 손가락 기준 44px. */
+.m-chart-grid > .m-grid-handle {
+  position: absolute;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 44px;
+  height: 44px;
+  transform: translate(-50%, -50%);
+  border-radius: 22px;
+  background: none;
+  touch-action: none;
+  outline: none;
 }
 
-.m-chart-grid.grid-2 {
-  grid-template: 1fr 1fr / 1fr;
+.m-grid-handle-pill {
+  border: 2px solid var(--tv-bg);
+  border-radius: 5px;
+  background: var(--tv-accent);
+  box-shadow: var(--tv-shadow);
 }
 
-.m-chart-grid.grid-4 {
-  grid-template: 1fr 1fr / 1fr 1fr;
+.m-grid-handle.col .m-grid-handle-pill {
+  width: 10px;
+  height: 32px;
 }
 
-@media (orientation: landscape) {
-  .m-chart-grid.grid-2 {
-    grid-template: 1fr / 1fr 1fr;
-  }
+.m-grid-handle.row .m-grid-handle-pill {
+  width: 32px;
+  height: 10px;
+}
+
+/* 차트 칸 안의 겹침 요소(z 8 까지)보다 위. */
+.m-chart-grid > .m-grid-chip {
+  z-index: 21;
+}
+
+.m-grid-chip .m-grid-chip-text {
+  width: auto;
+  padding: 0 12px;
+  font: inherit;
+  font-size: 13px;
 }
 
 .m-page {
@@ -456,6 +482,12 @@
   background: var(--tv-accent);
   color: #fff;
   font-weight: 600;
+}
+
+/* 이 시장에서 못 그리는 주기 — 보이되 흐리게 */
+.m-chip:disabled {
+  color: var(--tv-text-faint);
+  cursor: not-allowed;
 }
 
 /* 목록 행 */

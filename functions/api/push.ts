@@ -6,7 +6,7 @@
  * 무엇을 감시할지는 여기서 받지 않는다 — 감시기(worker/index.ts)가 동기화 설정(s:<code>)에서 매분 뽑는다.
  *
  *   GET    /api/push?key=1                     → 구독을 만들 때 쓰는 VAPID 공개키
- *   GET    /api/push?code=xxx[&endpoint=…]     → 구독 여부, 이 기기 등록 여부, 서버가 울렸고 아직 아무 기기도 받지 않은 id
+ *   GET    /api/push?code=xxx[&endpoint=…]     → 구독 여부, 이 기기 등록 여부, 서버가 울렸고 아직 아무 기기도 받지 않은 id, 최근 발송
  *   PUT    /api/push?code=xxx  { subs?, ack? } → 구독 등록, 서버가 울린 알림을 받았다는 확인
  *   DELETE /api/push?code=xxx&endpoint=…       → 이 기기 구독 해제(endpoint 가 없으면 모든 기기)
  */
@@ -32,29 +32,38 @@ export interface PushSubscriptionRecord {
   keys: { p256dh: string; auth: string }
 }
 
-/** 감시기가 적어 둔 기준 쪽과 그것을 확인한 시각(ms). 감시기(worker/index.ts)와 모양이 같아야 한다. */
-export interface SideMark {
-  side: 'above' | 'below'
+/** 감시기가 알림마다 적어 둔 판정 상태와 그것을 확인한 시각(ms). 감시기(worker/alertJudge.ts RuleMark)와 모양이 같아야 한다. */
+export interface RuleMark {
+  target: 'up' | 'down' | 'in' | 'out' | null
   at: number
+  firedAt?: number
+}
+
+/** 감시기가 보낸 푸시 하나(최근 발송). 앱이 알림 기록에 적는다 — lib/alertLog 의 ServerFire 와 모양이 같아야 한다. */
+export interface ServerFire {
+  id: string
+  at: number
+  symbol: string
+  text: string
 }
 
 /**
  * 코드마다의 감시 기록(w:<code>). 구독은 여기서, 나머지는 감시기가 쓴다 — 감시기(worker/index.ts)와 모양이 같아야 한다.
- * 예전 기록의 기기별 감시 목록(alertsBy·linesBy·alerts 등)은 다음에 쓸 때 빠진다. 예전 앱이 PUT 에 함께 보내는
- * 감시 목록(alerts·lines)은 받기만 하고 버린다.
+ * 예전 기록의 기기별 감시 목록(alertsBy·linesBy·alerts 등)과 옛 판정 기록(lineMarks·armMarks)은 다음에 쓸 때 빠진다.
+ * 예전 앱이 PUT 에 함께 보내는 감시 목록(alerts·lines)은 받기만 하고 버린다.
  */
 export interface WatchRecord {
   subs: PushSubscriptionRecord[]
-  /** 수평선마다 감시기가 처음 잡은 기준 쪽. */
-  lineMarks?: Record<string, SideMark>
-  /** 걸린 교차 알림이 기다리는 쪽. */
-  armMarks?: Record<string, SideMark>
+  /** 가격·선 알림마다 감시기가 적은 판정 기록. */
+  ruleMarks?: Record<string, RuleMark>
   /** 지표 알림(봉마다·봉 마감 시)마다 감시기가 마지막으로 푸시한 봉의 시작 시각(초). */
   barMarks?: Record<string, number>
-  /** 감시기가 울렸고 아직 확인되지 않은 알림·수평선·지표 알림('한 번만') id. 감시기는 여기 있는 동안 다시 울리지 않는다. */
+  /** 감시기가 울렸고 아직 확인되지 않은 한 번만 알림·선·지표 알림 id. 감시기는 여기 있는 동안 다시 울리지 않는다. */
   firedIds: string[]
   /** 앱이 받았다고 알린 시각(ms, id 별). 감시기는 이 뒤에 설정이 저장되면 확인된 것으로 보고 firedIds 에서 뺀다. */
   acks?: Record<string, number>
+  /** 감시기가 최근에 보낸 푸시(최신이 앞). 앱이 알림 기록에 적는다 — 「매번」 알림은 이것으로만 안다. */
+  fires?: ServerFire[]
 }
 
 /** 감시기(worker/index.ts)가 매분 읽는 감시 대상 코드 목록. 두 곳의 키 이름이 같아야 한다. */
@@ -93,11 +102,11 @@ function readRecord(raw: string | null): WatchRecord | null {
 function buildRecord(prev: WatchRecord | null, subs: PushSubscriptionRecord[], acks: Record<string, number>): WatchRecord {
   return {
     subs,
-    ...(prev?.lineMarks ? { lineMarks: prev.lineMarks } : {}),
-    ...(prev?.armMarks ? { armMarks: prev.armMarks } : {}),
+    ...(prev?.ruleMarks ? { ruleMarks: prev.ruleMarks } : {}),
     ...(prev?.barMarks ? { barMarks: prev.barMarks } : {}),
     firedIds: prev?.firedIds ?? [],
     ...(Object.keys(acks).length > 0 ? { acks } : {}),
+    ...(prev?.fires && prev.fires.length > 0 ? { fires: prev.fires } : {}),
   }
 }
 
@@ -143,7 +152,9 @@ export const onRequestPut: PagesFunction<Env> = async ({ request, env }) => {
   // 같은 내용을 다시 올리면 쓰지 않는다 — 무료 플랜 KV 쓰기 한도(하루 1,000회) 아끼기.
   if (next !== prevRaw) await env.SETTINGS.put(key, next)
   await syncIndex(env, code, record.subs.length > 0)
-  return new Response(JSON.stringify({ ok: true, firedIds: unacked(record) }), { headers: JSON_HEADERS })
+  return new Response(JSON.stringify({ ok: true, firedIds: unacked(record), fires: record.fires ?? [] }), {
+    headers: JSON_HEADERS,
+  })
 }
 
 export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
@@ -168,6 +179,8 @@ export const onRequestGet: PagesFunction<Env> = async ({ request, env }) => {
       registered: endpoint ? (record?.subs ?? []).some((s) => s.endpoint === endpoint) : undefined,
       // 앱을 열거나 탭으로 돌아올 때 서버가 먼저 울린 알림을 로컬에서 끄는 데 쓴다.
       firedIds: unacked(record),
+      // 서버가 최근에 보낸 푸시 — 앱이 알림 기록에 적는다(이미 적은 것은 앱이 건너뛴다).
+      fires: record?.fires ?? [],
     }),
     { headers: JSON_HEADERS },
   )

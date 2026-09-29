@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import type { Interval } from '../lib/binance'
+import type { Interval } from '../lib/market/types'
 import type { ScaleMode } from '../lib/chartTypes'
 import { DATE_RANGES, rangeBounds, type DateRange } from '../lib/dateRanges'
 import { intlZone } from '../lib/timezone'

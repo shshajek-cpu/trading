@@ -83,7 +83,8 @@
   align-items: center;
   gap: 6px;
   flex: none;
-  width: 92px;
+  width: 104px;
+  min-width: 0;
   justify-content: flex-end;
   color: var(--tv-text-dim);
 }
@@ -99,6 +100,21 @@
   color: #fff;
   font-size: 10px;
   font-weight: 700;
+}
+
+.ss-exch-binance,
+.ss-exch-bspot {
+  background: var(--tv-warn);
+}
+
+.ss-exch-yahoo {
+  background: var(--tv-text-dim);
+}
+
+.ss-exch-name {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
 
 .ss-check {

@@ -15,7 +15,8 @@ import { tip } from './lib/tooltip'
 import { QuickSearchDialog } from './components/QuickSearchDialog'
 import { QuickIntervalBox } from './components/QuickIntervalBox'
 import { Toasts, type ToastItem } from './components/Toasts'
-import { Icon, type IconName } from './components/Icon'
+import { Icon, LayoutIcon, type IconName } from './components/Icon'
+import { ChartGrid } from './components/ChartGrid'
 import { ShortcutsDialog } from './components/ShortcutsDialog'
 import { ContextMenu, type MenuEntry } from './components/ContextMenu'
 import { GoToDateDialog } from './components/GoToDateDialog'
@@ -32,11 +33,23 @@ import type { MobileTab } from './components/mobile/MobileBars'
 import { IndicatorsDialog } from './components/IndicatorsDialog'
 import { SymbolSearchDialog } from './components/SymbolSearchDialog'
 import { CreateAlertDialog } from './components/CreateAlertDialog'
+import { LineAlertDialog } from './components/LineAlertDialog'
 
 import type { OrderDraft } from './components/trade/OrderPanel'
 import { TradingPanel } from './components/trade/TradingPanel'
 
-import { usePriceAlerts, type PriceAlert, type AlertCondition, type PriceAlertExtra } from './hooks/usePriceAlerts'
+import { usePriceAlerts } from './hooks/usePriceAlerts'
+import {
+  describeLineAlert,
+  describePriceAlert,
+  isExpired,
+  lineAlertMode,
+  type PriceAlert,
+  type PriceAlertInput,
+} from './lib/alertRules'
+import { alertSettings } from './lib/alertSettings'
+import { logAppAlert, logServerFires, type ServerFire } from './lib/alertLog'
+import { playAlertSound, primeAlertSound } from './lib/alertSound'
 import { useIndicatorAlerts } from './hooks/useIndicatorAlerts'
 import {
   describeIndicatorAlert,
@@ -49,6 +62,7 @@ import { useSymbols } from './hooks/useSymbols'
 import { usePipWindow } from './hooks/usePipWindow'
 import { useDrawings } from './hooks/useDrawings'
 import { useIsMobile } from './hooks/useIsMobile'
+import { useSavedLayouts } from './hooks/useSavedLayouts'
 import { useInstallPrompt } from './hooks/useInstallPrompt'
 import { useSync } from './hooks/useSync'
 import { usePushAlerts } from './hooks/usePushAlerts'
@@ -64,17 +78,24 @@ import { usePaperTrading } from './hooks/usePaperTrading'
 import { PaperContext } from './lib/paper/context'
 
 import {
-  clampSplit,
+  applySavedLayout,
+  captureLayout,
+  cellCount,
   DEFAULT_LAYOUT,
+  equalGrid,
   layoutSync,
   loadLayout,
   saveLayout,
+  shapeForCount,
+  SINGLE_SHAPE,
+  withGrid,
   type CellConfig,
-  type LayoutMode,
+  type GridShape,
+  type LayoutControls,
+  type LayoutGrid,
   type LayoutState,
   type LayoutSyncKey,
 } from './lib/layoutConfig'
-import { LAYOUT_ICON } from './lib/chartTypeIcons'
 import { createIndicator, indicatorTitle, type IndicatorInstance, type IndicatorKind } from './lib/indicatorConfig'
 import { loadIndicators, saveIndicators } from './lib/indicatorStorage'
 import {
@@ -90,15 +111,14 @@ import type { PinSide } from './lib/pins'
 import type { FeatureSet } from './lib/features'
 import { getChart } from './lib/chartRegistry'
 import { SCALE_MODES, type ChartType, type ScaleMode } from './lib/chartTypes'
-import type { Interval } from './lib/binance'
+import type { Interval } from './lib/market/types'
+import { supportsInterval, supportsPaperTrading } from './lib/market/ids'
 import type { ChartMenuRequest } from './lib/chartMenu'
 import { INTERVAL_SECONDS } from './lib/intervals'
 import { TOOL_SHORTCUTS, type ShortcutId } from './lib/shortcuts'
 import { createLiveStore, useLiveStore, type LiveStore } from './lib/liveStore'
 
 const TOAST_MS = 6000
-/** 최대화 중 가린 칸. 언마운트하지 않아야 되돌렸을 때 보던 위치·불러온 옛 봉·리플레이가 그대로 남는다. */
-const HIDDEN_CELL: React.CSSProperties = { display: 'none' }
 const COMPARE_SCALE_MSG = '비교 중에는 퍼센트 눈금만 쓸 수 있습니다'
 /** 바이낸스 선물 심볼 모양 — 주소(?symbol=)·알림 클릭으로 들어온 값을 거른다. */
 const SYMBOL_RE = /^[A-Z0-9]{2,30}$/
@@ -282,6 +302,8 @@ function App() {
   const [cursorLocks, setCursorLocks] = useState<Record<number, number | null>>({})
   /** 분할 화면에서 활성 차트만 크게(Alt+Enter). */
   const [maximized, setMaximized] = useState(false)
+  /** 폰: 칸 경계 손잡이를 띄운 칸 크기 조절 모드(레이아웃 시트 「칸 크기 조절」). 데스크톱은 경계 막대를 늘 끈다. */
+  const [cellResize, setCellResize] = useState(false)
   const [menuOpen, setMenuOpen] = useState(false)
   const [shortcutsOpen, setShortcutsOpen] = useState(false)
   // 오른쪽 위젯 페이지는 접힌 채로 시작한다(차트를 넓게). 탭을 누르면 펼친다.
@@ -336,17 +358,19 @@ function App() {
     }
   }, [pinStore.pins])
 
-  const { layout, active, cells, splitCol, splitRow } = layoutState
+  const { grid, active, cells } = layoutState
+  /** 격자 칸 수 — cells 는 늘 MAX_CELLS 개이고 앞에서부터 이만큼 보인다. */
+  const count = cellCount(grid)
   const activeCell = cells[active] ?? cells[0]
   const activeSymbol = activeCell.symbol
   const activeSymbolRef = useRef(activeSymbol)
   activeSymbolRef.current = activeSymbol
   // 한 칸 크게 보기(데스크톱 Alt+Enter, 폰 레이아웃 시트): 분할 화면에서도 활성 칸 하나만 보인다(나머지 칸은 가린 채 마운트해 둔다).
-  const maximizedNow = maximized && layout > 1
+  const maximizedNow = maximized && count > 1
   /** 지금 눈에 보이는 칸의 종목들. */
-  const shownSymbols = maximizedNow ? [activeSymbol] : cells.slice(0, layout).map((c) => c.symbol)
+  const shownSymbols = maximizedNow ? [activeSymbol] : cells.slice(0, count).map((c) => c.symbol)
   /** 실시간 틱을 받는 칸(가린 칸 포함)의 종목들. PiP 는 활성 종목이라 여기에 들어 있다. */
-  const feedKey = cells.slice(0, layout).map((c) => c.symbol).join(',')
+  const feedKey = cells.slice(0, count).map((c) => c.symbol).join(',')
 
   // 모의 선물거래 — 계좌는 개인 동기화 공간(sync.code)으로 모든 기기가 공유한다(D1). 주문창·거래 패널·차트 선이 PaperContext 로 읽는다.
   const paperName = useCallback((s: string) => displaySymbol(s, symbols), [symbols])
@@ -354,16 +378,25 @@ function App() {
   /** 차트 우클릭 「여기에 지정가 주문」이 주문창에 채울 가격. nonce 가 바뀔 때마다 한 번 반영된다. */
   const [tradeDraft, setTradeDraft] = useState<OrderDraft | null>(null)
 
+  // 앱 안에서 울린 알림: 시스템 알림·토스트·(켜 두면) 소리·알림 기록. 태그(price-·line-·ind-)는 푸시와 같아 OS 가 하나로 합친다.
+  const announce = useCallback(
+    (title: string, message: string, tag: string, alertId: string, symbol: string) => {
+      notify(title, message, tag)
+      pushToast(message)
+      if (alertSettings.get().sound) playAlertSound()
+      logAppAlert(alertId, symbol, message)
+    },
+    [notify, pushToast],
+  )
+
   // price alerts
   const handleTrigger = useCallback(
     (alert: PriceAlert, price: number) => {
-      const custom = (alert as PriceAlert & { message?: string }).message
-      const label = alert.condition === 'above' ? '이상' : '이하'
-      const message = custom || `${alert.symbol} ${alert.price} ${label} 도달 (현재 ${price})`
-      notify('가격 알림', message, `price-${alert.id}`)
-      pushToast(message)
+      const name = displaySymbol(alert.symbol, symbols)
+      const message = alert.message || `${name} ${describePriceAlert(alert, String)} (현재 ${price})`
+      announce('가격 알림', message, `price-${alert.id}`, alert.id, alert.symbol)
     },
-    [notify, pushToast],
+    [announce, symbols],
   )
   const {
     alerts,
@@ -381,10 +414,9 @@ function App() {
       const message =
         alert.message ||
         `${alert.symbol} ${alert.interval} ${describeIndicatorAlert(alert)} (현재 ${formatAlertValue(value)})`
-      notify('지표 알림', message, `ind-${alert.id}`)
-      pushToast(message)
+      announce('지표 알림', message, `ind-${alert.id}`, alert.id, alert.symbol)
     },
-    [notify, pushToast],
+    [announce],
   )
   const indicatorAlerts = useIndicatorAlerts(handleIndicatorFire)
 
@@ -393,9 +425,9 @@ function App() {
     if (permission === 'default') void requestPermission()
   }, [permission, requestPermission])
   const createPriceAlert = useCallback(
-    (symbol: string, condition: AlertCondition, price: number, message?: string, extra?: PriceAlertExtra) => {
+    (input: PriceAlertInput) => {
       askNotifyPermission()
-      addAlert(symbol, condition, price, message, extra)
+      addAlert(input)
     },
     [askNotifyPermission, addAlert],
   )
@@ -407,15 +439,16 @@ function App() {
     [askNotifyPermission, indicatorAlerts],
   )
 
-  // line-cross alerts
+  // line alerts (수평선·추세선·레이·채널·사각형·수직선)
   const handleCross = useCallback(
     (drawing: Drawing, price: number) => {
-      const line = drawing.points[0]?.price
-      const message = `${drawing.symbol} 수평선 ${line ?? ''} 통과 (현재 ${price})`
-      notify('선 통과 알림', message, `line-${drawing.id}`)
-      pushToast(message)
+      const what = describeLineAlert(drawing, drawing.alertOpts)
+      const message =
+        drawing.alertOpts?.message ||
+        `${displaySymbol(drawing.symbol, symbols)} ${what}${lineAlertMode(drawing.kind) === 'time' ? '' : ` (현재 ${price})`}`
+      announce('선 알림', message, `line-${drawing.id}`, drawing.id, drawing.symbol)
     },
-    [notify, pushToast],
+    [announce, symbols],
   )
   const {
     drawings,
@@ -433,23 +466,40 @@ function App() {
     canRedo,
   } = useDrawings(handleCross)
 
-  // 아직 울리지 않은 수평선 알림 — 화면 밖 종목 시세 구독과 알림 배지에 쓴다. 그림을 끌 때마다 다시 구독하지 않게 내용으로 비교한다.
+  // 아직 울리지 않은 선 알림 — 화면 밖 종목 시세 구독과 알림 배지에 쓴다. 그림을 끌 때마다 다시 구독하지 않게 종목으로 비교한다.
   const lineAlertList = drawings.filter(
-    (d) => d.kind === 'horizontal' && d.alert && !d.fired && Number.isFinite(d.points[0]?.price),
+    (d) => d.alert && !d.fired && lineAlertMode(d.kind) !== undefined && !isExpired(d.alertOpts ?? {}, Date.now()),
   )
-  const lineAlertKey = lineAlertList.map((d) => `${d.id}|${d.symbol}|${d.points[0].price}`).join(',')
+  const lineAlertKey = lineAlertList.map((d) => d.symbol).join(',')
+  /** 선 알림 설정 창을 연 그림(우클릭 「알림 설정…」). */
+  const [lineAlertEditId, setLineAlertEditId] = useState<string | null>(null)
 
-  // 서버(푸시 워커)가 먼저 울린 알림·수평선·지표 알림을 로컬에서도 울린 것으로 표시한다. 어느 목록도 모르는 id 는 그냥 넘긴다.
+  // 서버(푸시 워커)가 먼저 울린 알림·선·지표 알림을 로컬에서도 울린 것으로 표시하고, 서버가 보낸 푸시를 알림 기록에 더한다.
+  // 어느 목록도 모르는 id 는 그냥 넘긴다.
   const markIndicatorsFired = indicatorAlerts.markFired
   const handleServerFired = useCallback(
-    (ids: string[]) => {
+    (ids: string[], fires: ServerFire[]) => {
       markFired(ids)
       markLinesFired(ids)
       markIndicatorsFired(ids)
+      logServerFires(fires)
     },
     [markFired, markLinesFired, markIndicatorsFired],
   )
   const push = usePushAlerts(sync.code, handleServerFired)
+
+  // 소리를 켜 두었으면 첫 조작 때 오디오를 깨운다 — 브라우저는 사용자 조작 전의 소리를 막는다.
+  useEffect(() => {
+    const prime = () => {
+      if (alertSettings.get().sound) primeAlertSound()
+    }
+    window.addEventListener('pointerdown', prime, { once: true })
+    window.addEventListener('keydown', prime, { once: true })
+    return () => {
+      window.removeEventListener('pointerdown', prime)
+      window.removeEventListener('keydown', prime)
+    }
+  }, [])
 
   const handlePrice = useCallback(
     (symbol: string, price: number) => {
@@ -488,7 +538,10 @@ function App() {
     setLayoutState((prev) => ({
       ...prev,
       cells: prev.cells.map((c, i) =>
-        (prev.syncSymbol || i === prev.active) && c.symbol !== symbol ? { ...c, symbol } : c,
+        // 새 종목이 지금 주기를 못 그리면(야후 3d) 일봉으로.
+        (prev.syncSymbol || i === prev.active) && c.symbol !== symbol
+          ? { ...c, symbol, interval: supportsInterval(symbol, c.interval) ? c.interval : '1d' }
+          : c,
       ),
     }))
   }, [])
@@ -509,7 +562,14 @@ function App() {
         return {
           ...prev,
           syncSymbol: on,
-          cells: on && src ? prev.cells.map((c) => (c.symbol === src.symbol ? c : { ...c, symbol: src.symbol })) : prev.cells,
+          cells:
+            on && src
+              ? prev.cells.map((c) =>
+                  c.symbol === src.symbol
+                    ? c
+                    : { ...c, symbol: src.symbol, interval: supportsInterval(src.symbol, c.interval) ? c.interval : '1d' },
+                )
+              : prev.cells,
         }
       }
       return {
@@ -555,11 +615,23 @@ function App() {
     setLayoutState((prev) => (prev.active === index ? prev : { ...prev, active: index }))
   }, [])
 
-  const setLayout = useCallback((mode: LayoutMode) => {
+  /** 격자를 바꾼다(프리셋·직접 만들기·내 레이아웃). 크게 보기는 풀고, 리플레이하던 칸이 사라지면 리플레이도 끝난다. */
+  const applyLayout = useCallback((next: LayoutGrid, update: (prev: LayoutState) => LayoutState) => {
     setMaximized(false)
-    // 리플레이하던 칸이 사라지면 리플레이도 끝난다.
-    setReplayCell((c) => (c !== null && c >= mode ? null : c))
-    setLayoutState((prev) => ({ ...prev, layout: mode, active: Math.min(prev.active, mode - 1) }))
+    const n = cellCount(next)
+    setReplayCell((c) => (c !== null && c >= n ? null : c))
+    setLayoutState(update)
+  }, [])
+  const setShape = useCallback(
+    (shape: GridShape) => {
+      const next = equalGrid(shape)
+      applyLayout(next, (prev) => withGrid(prev, next))
+    },
+    [applyLayout],
+  )
+  /** 경계 끌기 — 칸 수는 그대로다. */
+  const setGrid = useCallback((next: LayoutGrid) => {
+    setLayoutState((prev) => ({ ...prev, grid: next }))
   }, [])
 
   // 리플레이 중인 칸이 하나라도 있으면 켜진 것 — 버튼을 다시 누르면 끈다(폰도 분할 칸이 함께 보인다).
@@ -630,50 +702,49 @@ function App() {
     [changeIndicators],
   )
 
-  const resetSplit = useCallback(() => {
-    setLayoutState((prev) => ({ ...prev, splitCol: 0.5, splitRow: 0.5 }))
+  const equalizeLayout = useCallback(() => {
+    setLayoutState((prev) => ({ ...prev, grid: equalGrid(prev.grid) }))
   }, [])
 
+  // MTF 프리셋은 앞 칸들에 주기를 건다 — 칸이 모자라면 그만큼 격자를 늘린다(늘리기만 해서 리플레이 칸은 남는다).
   const applyMtf = useCallback((intervals: Interval[]) => {
+    setMaximized(false)
     setLayoutState((prev) => {
       const symbol = prev.cells[prev.active]?.symbol ?? DEFAULT_LAYOUT.cells[0].symbol
       return {
         ...prev,
-        layout: 4,
+        grid: cellCount(prev.grid) >= intervals.length ? prev.grid : equalGrid(shapeForCount(intervals.length)),
         active: 0,
         cells: prev.cells.map((c, i) => (intervals[i] ? { ...c, symbol, interval: intervals[i] } : c)),
       }
     })
   }, [])
 
-  // ── split drag ────────────────────────────────────────────────────
-  const gridRef = useRef<HTMLElement>(null)
-  const startSplitDrag = useCallback(
-    (axis: 'col' | 'row') => (e: React.PointerEvent) => {
-      e.preventDefault()
-      const grid = gridRef.current
-      if (!grid) return
-      const target = e.currentTarget as HTMLElement
-      target.setPointerCapture(e.pointerId)
-      grid.classList.add('resizing')
-      const move = (ev: PointerEvent) => {
-        const r = grid.getBoundingClientRect()
-        const ratio = axis === 'col' ? (ev.clientX - r.left) / r.width : (ev.clientY - r.top) / r.height
-        setLayoutState((prev) => ({
-          ...prev,
-          [axis === 'col' ? 'splitCol' : 'splitRow']: clampSplit(ratio),
-        }))
-      }
-      const up = () => {
-        grid.classList.remove('resizing')
-        target.removeEventListener('pointermove', move)
-        target.removeEventListener('pointerup', up)
-      }
-      target.addEventListener('pointermove', move)
-      target.addEventListener('pointerup', up)
+  // 「내 레이아웃」 — 격자 + 보이는 칸 설정을 이름 붙여 저장(동기화 키 trading.savedLayouts.v1).
+  const savedLayouts = useSavedLayouts()
+  const layoutControls: LayoutControls = {
+    grid,
+    onShapeChange: setShape,
+    onEqualize: equalizeLayout,
+    sync: layoutSync(layoutState),
+    onSyncChange: setLayoutSync,
+    saved: savedLayouts.list,
+    onSave: (name) => {
+      savedLayouts.add(captureLayout(layoutState, name))
+      pushToast(`레이아웃 「${name}」 저장됨`)
     },
-    [],
-  )
+    onApplySaved: (id) => {
+      const saved = savedLayouts.list.find((l) => l.id === id)
+      if (saved) applyLayout(saved.grid, (prev) => applySavedLayout(prev, saved))
+    },
+    onRenameSaved: savedLayouts.rename,
+    onDeleteSaved: (id) => {
+      const saved = savedLayouts.list.find((l) => l.id === id)
+      if (!saved) return
+      savedLayouts.remove(id)
+      pushToast(`레이아웃 「${saved.name}」 삭제됨`, { label: '되돌리기', run: () => savedLayouts.add(saved) })
+    },
+  }
 
   // ── snapshot ──────────────────────────────────────────────────────
   const snapshotName = `${activeSymbol}_${cells[active]?.interval ?? ''}.png`
@@ -795,6 +866,8 @@ function App() {
   useBackClose(isMobile && mobileTab !== 'chart', () => setMobileTab('chart'))
   // 폰: 한 칸을 크게 보던 중이면 뒤로가기로 분할 화면으로 돌아온다.
   useBackClose(isMobile && mobileTab === 'chart' && maximizedNow, () => setMaximized(false))
+  // 폰: 칸 크기 조절 중이면 뒤로가기로 끝낸다.
+  useBackClose(isMobile && mobileTab === 'chart' && cellResize, () => setCellResize(false))
 
   // ── date range ────────────────────────────────────────────────────
   const applyDateRange = useCallback(
@@ -830,7 +903,7 @@ function App() {
   }
 
   const toggleMaximize = () => {
-    if (layout === 1) return
+    if (count === 1) return
     setMaximized((v) => !v)
   }
 
@@ -996,13 +1069,14 @@ function App() {
         // 잠근 그림(하나·전체 잠금)은 "실수로 지워지지 않게" 약속한 것이다 — 우클릭으로도 지우지 않는다.
         const lockedNow = d.locked || prefs.drawingsLocked
         return [
-          ...(d.kind === 'horizontal'
+          ...(lineAlertMode(d.kind)
             ? [
                 item(
                   d.alert ? '알림 끄기' : '알림 켜기',
                   () => updateDrawing(d.id, d.alert ? { alert: false } : { alert: true, fired: false }),
                   { icon: icon(d.alert ? 'bellOff' : 'bell') },
                 ),
+                item('알림 설정…', () => setLineAlertEditId(d.id), { icon: icon('alarm') }),
               ]
             : []),
           item(
@@ -1062,7 +1136,10 @@ function App() {
                   icon: icon('alarm'),
                   shortcut: key('createAlert'),
                 }),
-                item(`${priceText}에 지정가 주문…`, () => openTradeAt(index, cell.symbol, price), { icon: icon('trade') }),
+                // 모의거래는 바이낸스 선물만.
+                ...(supportsPaperTrading(cell.symbol)
+                  ? [item(`${priceText}에 지정가 주문…`, () => openTradeAt(index, cell.symbol, price), { icon: icon('trade') })]
+                  : []),
                 item(
                   `${priceText}에 수평선 그리기`,
                   () =>
@@ -1092,10 +1169,10 @@ function App() {
             : []),
           divider,
           item('날짜로 이동…', () => setGoToOpen(true), { icon: icon('calendar'), shortcut: key('goToDate') }),
-          ...(layout > 1
+          ...(count > 1
             ? [
                 item(maximized ? '차트 복원' : '차트 최대화', toggleMaximize, {
-                  icon: icon(maximized ? LAYOUT_ICON[layout] : 'layout1'),
+                  icon: <LayoutIcon shape={maximized ? grid : SINGLE_SHAPE} size={18} />,
                   shortcut: key('toggleMaximize'),
                 }),
               ]
@@ -1122,11 +1199,12 @@ function App() {
     }
   }
 
-  // 울린 수평선 알림은 목록에 '다시 켜기'로 남지만 배지에는 세지 않는다(가격·지표 알림과 같게).
+  // 울린 알림은 목록에 '다시 켜기'로, 만료된 알림은 「만료됨」으로 남지만 배지에는 세지 않는다.
+  const badgeNow = Date.now()
   const alertBadge =
-    alerts.filter((a) => a.active).length +
+    alerts.filter((a) => a.active && !isExpired(a, badgeNow)).length +
     lineAlertList.length +
-    indicatorAlerts.alerts.filter((a) => a.active).length
+    indicatorAlerts.alerts.filter((a) => a.active && !isExpired(a, badgeNow)).length
 
   // Indicators mapped for the object tree.
   const indicatorRows = useMemo(
@@ -1184,7 +1262,7 @@ function App() {
         replay={replayCell === index}
         onReplayExit={() => setReplayCell((c) => (c === index ? null : c))}
         active={isActive}
-        highlightActive={layout > 1 && !maximizedNow}
+        highlightActive={count > 1 && !maximizedNow}
         onActivate={() => setActive(index)}
         onPrice={handlePrice}
         onContextMenu={(req) => setChartMenu({ ...req, cellIndex: index })}
@@ -1234,15 +1312,14 @@ function App() {
                 symbol={activeSymbol}
                 livePrice={livePrice}
                 alerts={alerts}
-                lineAlerts={drawings.filter((d) => d.alert)}
+                lineAlerts={drawings.filter((d) => d.alert && lineAlertMode(d.kind) !== undefined)}
                 symbols={symbols}
                 onAdd={createPriceAlert}
                 onUpdateAlert={updateAlert}
                 onRemove={removeAlert}
-                onDisableLineAlert={(lineId) => updateDrawing(lineId, { alert: false })}
+                onUpdateLine={updateDrawing}
                 onPickSymbol={showSymbol}
                 onReactivateAlert={(alertId) => setAlertActive(alertId, true)}
-                onReactivateLine={(lineId) => updateDrawing(lineId, { alert: true, fired: false })}
                 indicatorAlerts={indicatorAlerts.alerts}
                 onRemoveIndicatorAlert={indicatorAlerts.removeAlert}
                 interval={activeCell.interval}
@@ -1283,7 +1360,7 @@ function App() {
         return (
           <MtfPanel
             symbol={activeSymbol}
-            current={cells.slice(0, 4).map((c) => c.interval)}
+            current={cells.slice(0, count).map((c) => c.interval)}
             onApply={applyMtf}
           />
         )
@@ -1350,6 +1427,7 @@ function App() {
   // shared toolbar props
   const toolbarProps = {
     displaySymbol: displaySymbol(activeSymbol, symbols),
+    symbol: activeSymbol,
     onOpenSymbolSearch: () => openSymbolSearch(),
     onOpenCompare: openCompare,
     interval: activeCell.interval,
@@ -1368,11 +1446,7 @@ function App() {
     canRedo,
     onUndo: undoDrawing,
     onRedo: redoDrawing,
-    layout,
-    onLayoutChange: setLayout,
-    onEqualize: resetSplit,
-    layoutSync: layoutSync(layoutState),
-    onLayoutSyncChange: setLayoutSync,
+    layout: layoutControls,
     onSave: handleSave,
     saved,
     syncState: sync.state,
@@ -1405,8 +1479,6 @@ function App() {
     onRemoveIndicators: () => changeIndicators([]),
     toolShortcuts,
   }
-
-  const effectiveLayout: LayoutMode = maximizedNow ? 1 : layout
 
   // ── dialogs & overlays (shared between desktop/mobile) ─────────────
   const dialogs = (
@@ -1458,6 +1530,12 @@ function App() {
         )}
       </LivePrice>
 
+      <LineAlertDialog
+        drawing={drawings.find((d) => d.id === lineAlertEditId) ?? null}
+        onClose={() => setLineAlertEditId(null)}
+        onSave={updateDrawing}
+      />
+
       <GoToDateDialog
         open={goToOpen}
         onClose={() => setGoToOpen(false)}
@@ -1490,14 +1568,19 @@ function App() {
         onSettings={() => setSettingsOpen(true)}
         onSnapshot={snapshotDownload}
         onFullscreen={() => void fullscreen.toggle()}
-        onLayout={setLayout}
+        onLayout={setShape}
         onTheme={(theme) => setSettings((prev) => ({ ...prev, theme }))}
         symbols={symbols}
         onPickSymbol={showSymbol}
         onAddIndicator={addIndicator}
       />
 
-      <QuickIntervalBox seed={ivSeed} onApply={(iv) => setCellField(active, { interval: iv })} onClose={() => setIvSeed(null)} />
+      <QuickIntervalBox
+        seed={ivSeed}
+        symbol={activeSymbol}
+        onApply={(iv) => setCellField(active, { interval: iv })}
+        onClose={() => setIvSeed(null)}
+      />
 
       <MainMenuDrawer
         open={menuOpen}
@@ -1594,12 +1677,17 @@ function App() {
           onSheetChange={setMobileSheet}
           alertCount={alertBadge}
           chart={
-            // 데스크톱과 같은 레이아웃. 폰은 칸 경계를 끌지 않고 똑같이 나눈다(세로 화면은 2분할을 위아래로).
-            <div className={`m-chart-grid grid-${maximizedNow ? 1 : layout}`}>
-              {cells
-                .slice(0, layout)
-                .map((cell, i) => renderCell(cell, i, maximizedNow && i !== active ? HIDDEN_CELL : undefined))}
-            </div>
+            // 데스크톱과 같은 격자. 세로 화면에서 칸이 너무 좁으면 줄 방향을 뒤집어 보이고, 경계는 「칸 크기 조절」 때만 끈다.
+            <ChartGrid
+              variant="phone"
+              grid={grid}
+              maximized={maximizedNow ? active : null}
+              onGridChange={setGrid}
+              renderCell={(i, style) => renderCell(cells[i], i, style)}
+              resizing={cellResize && count > 1}
+              onResizeDone={() => setCellResize(false)}
+              onEqualize={equalizeLayout}
+            />
           }
           pages={{
             watchlist: renderWidget('watchlist', 'page'),
@@ -1649,7 +1737,7 @@ function App() {
             ),
           }}
           symbolLabel={displaySymbol(activeSymbol, symbols)}
-          base={symbols.find((i) => i.symbol === activeSymbol)?.baseAsset ?? activeSymbol.replace(/USDT.*/, '')}
+          iconSymbol={activeSymbol}
           interval={activeCell.interval}
           onIntervalChange={(iv) => setCellField(active, { interval: iv })}
           onOpenSymbolSearch={() => openSymbolSearch()}
@@ -1675,10 +1763,8 @@ function App() {
             onUndo: undoDrawing,
             onRedo: redoDrawing,
           }}
-          layout={layout}
-          onLayoutChange={setLayout}
-          layoutSync={layoutSync(layoutState)}
-          onLayoutSyncChange={setLayoutSync}
+          layout={layoutControls}
+          onResizeCells={() => setCellResize(true)}
           maximized={maximizedNow}
           onToggleMaximize={toggleMaximize}
           priceAxis={prefs.mobilePriceAxis}
@@ -1714,53 +1800,13 @@ function App() {
       </div>
 
       <div className="tv-center-cell">
-        <main
-          ref={gridRef}
-          className={`tv-chart-grid grid-${effectiveLayout}`}
-          style={
-            effectiveLayout === 1
-              ? undefined
-              : {
-                  gridTemplateColumns: `${splitCol}fr 4px ${1 - splitCol}fr`,
-                  ...(layout === 4 ? { gridTemplateRows: `${splitRow}fr 4px ${1 - splitRow}fr` } : {}),
-                }
-          }
-        >
-          {cells.slice(0, layout).map((cell, i) =>
-            renderCell(
-              cell,
-              i,
-              maximizedNow
-                ? i === active
-                  ? undefined
-                  : HIDDEN_CELL
-                : effectiveLayout === 1
-                  ? undefined
-                  : effectiveLayout === 2
-                    ? { gridColumn: i === 0 ? 1 : 3, gridRow: 1 }
-                    : { gridColumn: i % 2 === 0 ? 1 : 3, gridRow: i < 2 ? 1 : 3 },
-            ),
-          )}
-
-          {effectiveLayout > 1 && (
-            // eslint-disable-next-line jsx-a11y/no-static-element-interactions
-            <div
-              className="tv-split-bar col"
-              style={{ gridColumn: 2, gridRow: effectiveLayout === 4 ? '1 / -1' : 1 }}
-              onPointerDown={startSplitDrag('col')}
-              onDoubleClick={resetSplit}
-            />
-          )}
-          {effectiveLayout === 4 && (
-            // eslint-disable-next-line jsx-a11y/no-static-element-interactions
-            <div
-              className="tv-split-bar row"
-              style={{ gridColumn: '1 / -1', gridRow: 2 }}
-              onPointerDown={startSplitDrag('row')}
-              onDoubleClick={resetSplit}
-            />
-          )}
-        </main>
+        <ChartGrid
+          variant="desktop"
+          grid={grid}
+          maximized={maximizedNow ? active : null}
+          onGridChange={setGrid}
+          renderCell={(i, style) => renderCell(cells[i], i, style)}
+        />
       </div>
 
       <div className="tv-bottom-cell">

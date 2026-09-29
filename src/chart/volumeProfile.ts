@@ -14,7 +14,7 @@ import type {
   Time,
 } from 'lightweight-charts'
 import type { MediaCoordinatesRenderingScope } from 'fancy-canvas'
-import type { Candle } from '../lib/binance'
+import type { Candle } from '../lib/market/types'
 import type { VisibleProfileSpec, VolumeProfileStyle } from './compute'
 
 export interface VolumeProfileRow {

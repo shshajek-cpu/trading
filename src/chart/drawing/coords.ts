@@ -1,5 +1,5 @@
 import type { IChartApi, ISeriesApi, SeriesType, Logical, Time } from 'lightweight-charts'
-import type { Candle, Interval } from '../../lib/binance'
+import type { Candle, Interval } from '../../lib/market/types'
 import { INTERVAL_SECONDS } from '../../lib/intervals'
 
 /**

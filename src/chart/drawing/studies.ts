@@ -2,7 +2,7 @@
  * 봉 값이나 레벨 표로 모양이 정해지는 그림의 순수 계산 — 캔버스·DOM 을 쓰지 않는다.
  * 추세 기반 피보나치 확장, 피보나치 타임 존, 회귀 추세, 고정 범위 볼륨 프로파일.
  */
-import type { Candle } from '../../lib/binance'
+import type { Candle } from '../../lib/market/types'
 import type { Drawing } from '../../lib/drawings'
 import { computeVolumeProfile, type VolumeProfile } from '../volumeProfile'
 
@@ -107,7 +107,7 @@ const CACHE_LIMIT = 64
 const regressionCache = new WeakMap<readonly Candle[], Map<string, Regression | null>>()
 const profileCache = new WeakMap<readonly Candle[], Map<string, VolumeProfile | null>>()
 
-function cached<T>(
+export function cached<T>(
   store: WeakMap<readonly Candle[], Map<string, T>>,
   candles: readonly Candle[],
   key: string,

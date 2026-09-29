@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react'
+import { equalGrid, gridGeometry, type GridShape, type LayoutGrid } from '../lib/layoutConfig'
 
 /**
  * Own hand-drawn line-icon set — never TradingView's assets. Every glyph is drawn on a
@@ -14,9 +15,6 @@ export type IconName =
   | 'replay'
   | 'undo'
   | 'redo'
-  | 'layout1'
-  | 'layout2'
-  | 'layout4'
   | 'save'
   | 'search'
   | 'settings'
@@ -141,20 +139,6 @@ const PATHS: Record<IconName, ReactNode> = {
     <>
       <path d="M20 10 L24 14 L20 18" {...S} />
       <path d="M24 14 H12 a6 6 0 0 0 -6 6" {...S} />
-    </>
-  ),
-  layout1: <rect x={5} y={6} width={18} height={16} rx={1.5} {...S} />,
-  layout2: (
-    <>
-      <rect x={5} y={6} width={18} height={16} rx={1.5} {...S} />
-      <line x1={14} y1={6} x2={14} y2={22} {...S} />
-    </>
-  ),
-  layout4: (
-    <>
-      <rect x={5} y={6} width={18} height={16} rx={1.5} {...S} />
-      <line x1={14} y1={6} x2={14} y2={22} {...S} />
-      <line x1={5} y1={14} x2={23} y2={14} {...S} />
     </>
   ),
   save: (
@@ -481,6 +465,33 @@ export function Icon({ name, size = 20, className }: IconProps) {
       focusable="false"
     >
       {PATHS[name]}
+    </svg>
+  )
+}
+
+/** 레이아웃 모양 아이콘 — 격자에서 바로 그린다(프리셋·직접 만든 모양·저장한 레이아웃 모두). 같은 28×28, 1.5px 획. */
+export function LayoutIcon({ shape, size = 20, className }: { shape: GridShape; size?: number; className?: string }) {
+  const grid = 'lineSizes' in shape ? (shape as LayoutGrid) : equalGrid(shape)
+  const { bounds } = gridGeometry(grid)
+  const X = (v: number) => 5 + v * 18
+  const Y = (v: number) => 6 + v * 16
+  return (
+    <svg
+      className={`icon${className ? ` ${className}` : ''}`}
+      width={size}
+      height={size}
+      viewBox="0 0 28 28"
+      aria-hidden="true"
+      focusable="false"
+    >
+      <rect x={5} y={6} width={18} height={16} rx={1.5} {...S} />
+      {bounds.map((b) =>
+        b.vertical ? (
+          <line key={`${b.kind}-${b.line}-${b.index}`} x1={X(b.pos)} y1={Y(b.from)} x2={X(b.pos)} y2={Y(b.to)} {...S} />
+        ) : (
+          <line key={`${b.kind}-${b.line}-${b.index}`} x1={X(b.from)} y1={Y(b.pos)} x2={X(b.to)} y2={Y(b.pos)} {...S} />
+        ),
+      )}
     </svg>
   )
 }

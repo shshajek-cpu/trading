@@ -3,6 +3,8 @@ import type { Drawing, DrawingPoint, DrawingStyle } from '../../lib/drawings'
 import { drawVolumeProfile, pocPrice } from '../volumeProfile'
 import type { Coords } from './coords'
 import { pitchforkDir, type Pt } from './geometry'
+import { anchorPointsA, isToolA, renderToolA } from './toolsA'
+import { anchorPointsB, renderGroupB } from './toolsB'
 import {
   FIB_EXT_LEVELS,
   REGRESSION_DEVIATION,
@@ -25,7 +27,7 @@ export function fibPrice(d: Drawing, level: number): number {
 
 let measureCtx: CanvasRenderingContext2D | null = null
 
-function measureFont(size: number): CanvasRenderingContext2D | null {
+export function measureFont(size: number): CanvasRenderingContext2D | null {
   measureCtx ??= document.createElement('canvas').getContext('2d')
   if (measureCtx) measureCtx.font = `${size}px -apple-system, "Malgun Gothic", sans-serif`
   return measureCtx
@@ -80,6 +82,9 @@ export interface RenderScope {
  * 회귀 추세는 회귀선 위, 고정 범위 볼륨 프로파일은 상자 모서리(첫 점 위, 둘째 점 아래). 계산할 봉이 없으면 저장값.
  */
 export function anchorPoints(d: Drawing, coords: Coords): DrawingPoint[] {
+  if (isToolA(d.kind)) return anchorPointsA(d, coords)
+  const groupB = anchorPointsB(d, coords)
+  if (groupB) return groupB
   if (d.kind === 'regressionTrend') {
     const reg = regressionFor(d, coords.candles)
     if (!reg) return d.points
@@ -114,17 +119,17 @@ function dashFor(style: DrawingStyle): number[] {
   return []
 }
 
-function stroke(ctx: CanvasRenderingContext2D, style: DrawingStyle, color?: string): void {
+export function stroke(ctx: CanvasRenderingContext2D, style: DrawingStyle, color?: string): void {
   ctx.strokeStyle = color ?? style.color
   ctx.lineWidth = style.lineWidth
   ctx.setLineDash(dashFor(style))
 }
 
-function fillOf(style: DrawingStyle): string {
+export function fillOf(style: DrawingStyle): string {
   return style.fillColor ?? withAlpha(style.color, 0.2)
 }
 
-function line(ctx: CanvasRenderingContext2D, a: Pt, b: Pt): void {
+export function line(ctx: CanvasRenderingContext2D, a: Pt, b: Pt): void {
   ctx.beginPath()
   ctx.moveTo(a.x, a.y)
   ctx.lineTo(b.x, b.y)
@@ -155,7 +160,7 @@ function extendRay(a: Pt, b: Pt, w: number, h: number): Pt {
   return { x: b.x + (dx / len) * big, y: b.y + (dy / len) * big }
 }
 
-function label(
+export function label(
   ctx: CanvasRenderingContext2D,
   text: string,
   x: number,
@@ -192,12 +197,12 @@ function label(
   ctx.restore()
 }
 
-function pct(from: number, to: number): string {
+export function pct(from: number, to: number): string {
   if (from === 0) return '0.00%'
   return `${(((to - from) / from) * 100).toFixed(2)}%`
 }
 
-function formatSpan(sec: number): string {
+export function formatSpan(sec: number): string {
   const s = Math.abs(Math.round(sec))
   const d = Math.floor(s / 86400)
   const h = Math.floor((s % 86400) / 3600)
@@ -427,6 +432,11 @@ export function renderDrawing(rc: RenderScope, d: Drawing, selected: boolean): v
     }
     case 'fixedRangeVolumeProfile': {
       drawFixedRangeProfile(rc, d, pts)
+      break
+    }
+    default: {
+      if (isToolA(d.kind)) renderToolA(ctx, width, height, coords, d, pts)
+      else renderGroupB(rc, d, pts)
       break
     }
   }

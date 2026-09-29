@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { IChartApi, ISeriesApi, Logical, SeriesType } from 'lightweight-charts'
-import type { Candle, Interval } from '../../lib/binance'
+import type { Candle, Interval } from '../../lib/market/types'
 import type { ChartPalette } from '../../lib/theme'
 import { DRAWING_PALETTE } from '../../lib/theme'
 import {
+  TEXT_EDITORS,
   defaultStyle,
   type Drawing,
   type DrawingKind,
@@ -17,7 +18,8 @@ import { Coords } from './coords'
 import { pickDrawing } from './hitTest'
 import type { Pt } from './geometry'
 import { simplify } from './geometry'
-import { buildPoints, cloneOffset, requiredPoints } from './builders'
+import { buildPoints, buildStyle, cloneOffset, requiredPoints } from './builders'
+import { isMultiPoint, SAME_SPOT_PX } from './toolsA'
 import { copyDrawing, pasteDrawing } from './clipboard'
 import type { ChartMenuRequest } from '../../lib/chartMenu'
 import { INTERVAL_SECONDS } from '../../lib/intervals'
@@ -60,9 +62,6 @@ function isCursorTool(tool: DrawingTool): boolean {
 function isDrawingKind(tool: DrawingTool): tool is DrawingKind {
   return !isCursorTool(tool) && tool !== 'measure' && tool !== 'zoom'
 }
-
-/** 글을 적어 만드는 그림 — 인라인 편집기로 만들고 고친다. */
-type TextKind = Extract<DrawingKind, 'text' | 'note'>
 
 function nearestBar(candles: Candle[], time: number): Candle | null {
   const n = candles.length
@@ -185,12 +184,14 @@ export function DrawingOverlay(props: DrawingOverlayProps) {
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [preview, setPreview] = useState<Drawing | null>(null)
   const [zoomBox, setZoomBox] = useState<{ x: number; y: number; w: number; h: number } | null>(null)
-  // 텍스트는 한 줄 입력칸, 노트는 여러 줄 입력칸으로 같은 흐름(누른 자리에서 열고, 완료하면 만들거나 고친다)을 탄다.
+  // 글을 적는 그림(텍스트·노트·말풍선·코멘트·표지판)은 같은 흐름을 탄다: 편집기를 열고, 완료하면 만들거나 고친다.
+  // 한 줄 입력칸 또는 여러 줄 입력칸(TEXT_EDITORS.multiline). 만들 때는 찍은 점들(points)을 들고 있다.
   const [textEdit, setTextEdit] = useState<{
-    kind: TextKind
+    kind: DrawingKind
+    multiline: boolean
     mode: 'create' | 'edit'
     id?: string
-    dp: DrawingPoint
+    points: DrawingPoint[]
     x: number
     y: number
     value: string
@@ -342,22 +343,61 @@ export function DrawingOverlay(props: DrawingOverlayProps) {
     setPreview(null)
   }, [])
 
-  const finalizeCreate = useCallback(
-    (kind: DrawingKind, clicked: DrawingPoint[]) => {
+  /**
+   * 경로·폴리라인을 지금까지 찍은 점으로 마친다. `closed` 면 폴리라인을 첫 점으로 닫아 안을 채운다.
+   * 다른 점 둘이 안 되면 만들지 않고 그만둔다. 진행 중인 경로·폴리라인이 아니면 false.
+   */
+  const finishMultiPoint = useCallback(
+    (closed: boolean): boolean => {
+      const c = creatingRef.current
+      if (!c || !isMultiPoint(c.kind)) return false
       const l = latest.current
-      const pts = buildPoints(kind, clicked, coordsOf())
-      if (pts) handlers.current.onCreate({ symbol: l.symbol, kind, points: pts, style: defaultStyle(kind) })
+      const pts = buildPoints(c.kind, c.committed, coordsOf())
+      if (pts) {
+        const style = closed ? { ...defaultStyle(c.kind), closed: true } : defaultStyle(c.kind)
+        handlers.current.onCreate({ symbol: l.symbol, kind: c.kind, points: pts, style })
+      }
       clearCreation()
       if (!l.stay) handlers.current.onToolDone()
+      return true
     },
     [clearCreation, coordsOf],
   )
 
   const openTextEditor = useCallback(
-    (kind: TextKind, mode: 'create' | 'edit', dp: DrawingPoint, x: number, y: number, value: string, id?: string) => {
-      setTextEdit({ kind, mode, dp, x, y, value, id })
+    (kind: DrawingKind, mode: 'create' | 'edit', points: DrawingPoint[], x: number, y: number, value: string, id?: string) => {
+      setTextEdit({ kind, multiline: TEXT_EDITORS[kind]?.multiline ?? false, mode, points, x, y, value, id })
     },
     [],
+  )
+
+  /** 있는 그림의 글 고치기: 글 상자 자리(TEXT_EDITORS.anchor 점)에 편집기를 연다. */
+  const openEditorFor = useCallback(
+    (d: Drawing) => {
+      const coords = coordsOf()
+      const at = d.points[TEXT_EDITORS[d.kind]?.anchor ?? 0] ?? d.points[0]
+      openTextEditor(d.kind, 'edit', d.points, coords.timeToX(at.time) ?? 40, coords.priceToY(at.price) ?? 40, d.style.text ?? '', d.id)
+    },
+    [coordsOf, openTextEditor],
+  )
+
+  const finalizeCreate = useCallback(
+    (kind: DrawingKind, clicked: DrawingPoint[]) => {
+      const l = latest.current
+      const coords = coordsOf()
+      const pts = buildPoints(kind, clicked, coords)
+      clearCreation()
+      const editor = TEXT_EDITORS[kind]
+      if (pts && editor) {
+        // 말풍선: 점을 다 찍으면 글 상자 자리에 편집기를 연다. 글을 적어 마쳐야 만들어지고 도구도 그때 끝난다.
+        const at = pts[editor.anchor] ?? pts[0]
+        openTextEditor(kind, 'create', pts, coords.timeToX(at.time) ?? 40, coords.priceToY(at.price) ?? 40, '')
+        return
+      }
+      if (pts) handlers.current.onCreate({ symbol: l.symbol, kind, points: pts, style: buildStyle(kind, clicked, coords) })
+      if (!l.stay) handlers.current.onToolDone()
+    },
+    [clearCreation, coordsOf, openTextEditor],
   )
 
   // ── 포인터/키보드 입력 ──
@@ -440,8 +480,8 @@ export function DrawingOverlay(props: DrawingOverlayProps) {
         const sp = makePoint(coords, l.candles, p, resolveMagnet(ctrl))
         // 좌표를 못 바꾸면(차트가 아직 봉을 받기 전 등) 누른 자리를 무시한다 — 가격 0 짜리 그림을 만들지 않는다.
         if (!sp) return
-        if (t === 'text' || t === 'note') {
-          // 텍스트·노트는 클릭 시 인라인 편집기를 연다(아래 up 에서 처리하지 않음).
+        if (TEXT_EDITORS[t] && requiredPoints(t) === 1) {
+          // 점 하나로 글을 적는 그림(텍스트·노트·코멘트·표지판)은 놓은 자리에 인라인 편집기를 연다(아래 up 에서).
           pressRef.current = { mode: 'create', pointerId: e.pointerId, startPt: p, startPoint: sp, moved: false }
         } else if (t === 'brush') {
           const rp = pointAt(coords, p) ?? sp
@@ -644,6 +684,23 @@ export function DrawingOverlay(props: DrawingOverlayProps) {
         case 'create': {
           const c = creatingRef.current
           if (!c) break
+          // 경로·폴리라인: 마지막 점을 다시 누르면(두 번 클릭·두 번 탭) 마치고, 폴리라인은 첫 점을 누르면 닫는다.
+          if (isMultiPoint(c.kind) && !press.moved && c.committed.length > 0) {
+            const reach = e.pointerType === 'touch' ? 16 : SAME_SPOT_PX
+            const near = (q: DrawingPoint) => {
+              const x = coords.timeToX(q.time)
+              const y = coords.priceToY(q.price)
+              return x !== null && y !== null && Math.hypot(press.startPt.x - x, press.startPt.y - y) <= reach
+            }
+            if (near(c.committed[c.committed.length - 1])) {
+              finishMultiPoint(false)
+              break
+            }
+            if (c.kind === 'polyline' && c.committed.length >= 3 && near(c.committed[0])) {
+              finishMultiPoint(true)
+              break
+            }
+          }
           // 끌었으면 놓은 자리가 점이 된다(미리보기가 따라간 자리). 첫 점에서 끌었다면 누른 자리까지 두 점.
           // 놓은 자리를 못 바꾸면 클릭처럼 누른 자리만 쓴다.
           const end = press.moved ? makePoint(coords, l.candles, p, resolveMagnet(ctrl)) : null
@@ -701,10 +758,11 @@ export function DrawingOverlay(props: DrawingOverlayProps) {
         }
       }
 
-      // 텍스트·노트: 놓은 자리에 인라인 편집기를 연다.
-      if (press.mode === 'create' && (l.tool === 'text' || l.tool === 'note')) {
+      // 점 하나로 글을 적는 그림: 놓은 자리에 인라인 편집기를 연다.
+      const tool = l.tool
+      if (press.mode === 'create' && isDrawingKind(tool) && TEXT_EDITORS[tool] && requiredPoints(tool) === 1) {
         const dp = makePoint(coords, l.candles, p, resolveMagnet(ctrl))
-        if (dp) openTextEditor(l.tool, 'create', dp, p.x, p.y, '')
+        if (dp) openTextEditor(tool, 'create', [dp], p.x, p.y, '')
         creatingRef.current = null
       }
     }
@@ -716,16 +774,11 @@ export function DrawingOverlay(props: DrawingOverlayProps) {
       const p = { x: e.clientX - rect.left, y: e.clientY - rect.top }
       const coords = coordsOf()
       const picked = l.hidden ? null : pickDrawing(l.drawings, coords, p)
-      const kind = picked?.drawing.kind
-      if (picked && (kind === 'text' || kind === 'note') && !l.locked && !picked.drawing.locked) {
-        const d = picked.drawing
-        const x = coords.timeToX(d.points[0].time)
-        const y = coords.priceToY(d.points[0].price)
-        if (x !== null && y !== null) {
-          openTextEditor(kind, 'edit', d.points[0], x, y, d.style.text ?? '', d.id)
-          e.preventDefault()
-          e.stopPropagation()
-        }
+      const d = picked?.drawing
+      if (d && TEXT_EDITORS[d.kind] && !l.locked && !d.locked) {
+        openEditorFor(d)
+        e.preventDefault()
+        e.stopPropagation()
       }
     }
 
@@ -757,7 +810,7 @@ export function DrawingOverlay(props: DrawingOverlayProps) {
       el.removeEventListener('dblclick', onDblClick, true)
       setScroll(true)
     }
-  }, [chart, enabled, coordsOf, resolveMagnet, setScroll, finalizeCreate, clearCreation, openTextEditor])
+  }, [chart, enabled, coordsOf, resolveMagnet, setScroll, finalizeCreate, finishMultiPoint, clearCreation, openTextEditor, openEditorFor])
 
   // ── 우클릭: 누른 자리를 가려 메뉴를 요청한다. 비활성 칸도 받아야 해서 enabled 와 무관하게 건다. ──
   const contextRef = useRef(onContextMenu)
@@ -823,10 +876,12 @@ export function DrawingOverlay(props: DrawingOverlayProps) {
     }
   }, [chart, coordsOf, clearCreation])
 
-  // ── 키보드 ①: Esc 취소. 열린 메뉴가 먼저 Esc 를 먹도록(문서 캡처에서 전파 중단) 버블 단계에서 받는다. ──
+  // ── 키보드 ①: Esc 취소(경로·폴리라인은 Enter·Esc 로 마침). 열린 메뉴가 먼저 Esc 를 먹도록(문서 캡처에서 전파 중단) 버블 단계에서 받는다. ──
   useEffect(() => {
     if (!enabled) return
     const onEscape = (e: KeyboardEvent) => {
+      const typing = e.target instanceof HTMLElement && e.target.closest('input, textarea, select') !== null
+      if ((e.key === 'Escape' || (e.key === 'Enter' && !typing)) && finishMultiPoint(false)) return
       if (e.key !== 'Escape') return
       if (textEditRef.current) {
         setTextEdit(null)
@@ -842,7 +897,7 @@ export function DrawingOverlay(props: DrawingOverlayProps) {
     }
     window.addEventListener('keydown', onEscape)
     return () => window.removeEventListener('keydown', onEscape)
-  }, [enabled, preview, clearCreation])
+  }, [enabled, preview, clearCreation, finishMultiPoint])
 
   // ── 키보드 ②: Delete 삭제, Ctrl+C/V 복사·붙여넣기, 방향키로 선택한 그림 옮기기 ──
   // 캡처 단계에서 먼저 받아 처리한 키는 preventDefault 한다 — 전역 단축키(방향키 = 차트 스크롤)가 그걸 보고 비켜 간다.
@@ -926,7 +981,7 @@ export function DrawingOverlay(props: DrawingOverlayProps) {
         onCreate({
           symbol: l.symbol,
           kind: te.kind,
-          points: [te.dp],
+          points: te.points,
           style: { ...defaultStyle(te.kind), text: value },
         })
       }
@@ -954,7 +1009,7 @@ export function DrawingOverlay(props: DrawingOverlayProps) {
           style={{ left: zoomBox.x, top: zoomBox.y, width: zoomBox.w, height: zoomBox.h }}
         />
       )}
-      {textEdit?.kind === 'text' && (
+      {textEdit && !textEdit.multiline && (
         <input
           className="tv-draw-textedit"
           style={{ left: textEdit.x, top: textEdit.y }}
@@ -975,8 +1030,8 @@ export function DrawingOverlay(props: DrawingOverlayProps) {
           placeholder="텍스트 입력"
         />
       )}
-      {textEdit?.kind === 'note' && (
-        // 노트는 여러 줄: Enter 는 줄바꿈, Ctrl/⌘+Enter 나 바깥을 누르면 완료, Esc 는 취소.
+      {textEdit?.multiline && (
+        // 여러 줄(노트·말풍선·코멘트): Enter 는 줄바꿈, Ctrl/⌘+Enter 나 바깥을 누르면 완료, Esc 는 취소.
         <textarea
           className="tv-draw-textedit note"
           style={{ left: textEdit.x, top: textEdit.y }}
@@ -995,7 +1050,7 @@ export function DrawingOverlay(props: DrawingOverlayProps) {
             e.stopPropagation()
           }}
           onBlur={commitText}
-          placeholder="노트 입력 (Ctrl+Enter 완료)"
+          placeholder={textEdit.kind === 'note' ? '노트 입력 (Ctrl+Enter 완료)' : '글 입력 (Ctrl+Enter 완료)'}
         />
       )}
       {selected && enabled && (
@@ -1019,13 +1074,7 @@ export function DrawingOverlay(props: DrawingOverlayProps) {
               }),
             )
           }}
-          onEditText={(d) => {
-            const coords = coordsOf()
-            const x = coords.timeToX(d.points[0].time)
-            const y = coords.priceToY(d.points[0].price)
-            const kind: TextKind = d.kind === 'note' ? 'note' : 'text'
-            openTextEditor(kind, 'edit', d.points[0], x ?? 40, y ?? 40, d.style.text ?? '', d.id)
-          }}
+          onEditText={openEditorFor}
           palette={DRAWING_PALETTE}
         />
       )}

@@ -6,6 +6,8 @@ import {
   type Drawing,
   type NewDrawing,
 } from '../lib/drawings'
+import { bandAt, isExpired, lineAlertMode, lineRule, stepRule, type RuleState } from '../lib/alertRules'
+import { alertSettings } from '../lib/alertSettings'
 
 export interface UseDrawingsResult {
   drawings: Drawing[]
@@ -22,9 +24,9 @@ export interface UseDrawingsResult {
   restoreDrawings: (list: readonly Drawing[]) => void
   /** 그리는 순서 바꾸기 — 뒤에 그린 것이 위에 보인다. */
   reorderDrawing: (id: string, where: 'front' | 'back') => void
-  /** 실시간 가격을 흘려보내면 수평선을 통과한 순간 알림을 발동시킨다. */
+  /** 실시간 가격을 흘려보내면 알림이 켜진 선·도형을 판정해 울린다(수평선·추세선·레이·채널·사각형·수직선 — lib/alertRules). */
   checkPrice: (symbol: string, price: number) => void
-  /** 다른 곳(푸시 워커)에서 이미 울린 수평선 알림을 울린 것으로 표시한다. 되돌리기 이력에 남기지 않는다. */
+  /** 다른 곳(푸시 워커)에서 이미 울린 한 번만 선 알림을 울린 것으로 표시한다. 되돌리기 이력에 남기지 않는다. */
   markFired: (ids: readonly string[]) => void
   /** 되돌리기/다시 실행. 바뀐 그림의 종목들을 돌려준다(화면에 없는 종목이면 셸이 알린다). */
   undo: () => string[]
@@ -81,9 +83,9 @@ export function useDrawings(
   const crossRef = useRef(onCross)
   crossRef.current = onCross
 
-  // 수평선마다 마지막으로 본 가격이 선 위였는지. 틱마다 바뀌는 실행 상태라 저장·동기화하지 않는다 —
-  // 그림 데이터에 넣으면 가격이 선을 오갈 때마다 저장되고 동기화 서버에 올라간다.
-  const sideRef = useRef(new Map<string, boolean>())
+  // 선마다의 판정 상태(걸렸는지·기다리는 쪽·「매번」의 마지막 발동). 틱마다 바뀌는 실행 상태라 저장·동기화하지 않는다 —
+  // 그림 데이터에 넣으면 가격이 선을 오갈 때마다 저장되고 동기화 서버에 올라간다. 수직선은 그 시각 전에 본 적이 있으면 'beforeTime'.
+  const sideRef = useRef(new Map<string, RuleState | 'beforeTime'>())
 
   useEffect(() => {
     saveDrawings(drawings)
@@ -141,7 +143,8 @@ export function useDrawings(
         style: d.style,
         locked: false,
         hidden: false,
-        alert: d.alert ?? false,
+        // 알림을 걸 수 있는 선·도형은 설정(「새 수평선에 알림 자동 켜기」)을 따른다. 복제처럼 정해 넘기면 그 값.
+        alert: d.alert ?? (alertSettings.get().autoLineAlert && lineAlertMode(d.kind) !== undefined),
         fired: false,
         createdAt: Date.now(),
       }
@@ -154,13 +157,18 @@ export function useDrawings(
   const updateDrawing = useCallback(
     (id: string, patch: Partial<Omit<Drawing, 'id'>>, opts?: { history?: boolean }) => {
       // 선을 옮기거나 알림을 다시 켜면 현재가와의 위·아래 기준을 새로 잡는다. 옛 기준이 남으면 옮긴 것만으로 '교차'로 울린다.
-      if (patch.points || patch.alert) sideRef.current.delete(id)
+      const rearm = Boolean(patch.points || patch.alert || patch.alertOpts)
+      if (rearm) sideRef.current.delete(id)
+      const now = Date.now()
       const apply = (prev: Drawing[]): Drawing[] => {
         let changed = false
         const next = prev.map((d) => {
           if (d.id !== id) return d
           changed = true
-          return { ...d, ...patch }
+          const merged = { ...d, ...patch }
+          // 알림이 켜진 선을 옮기거나 알림을 켜면 그 시각을 적는다 — 서버 감시기는 이 뒤의 움직임만 본다(옮기기 전 가격으로 울리지 않게).
+          if (!rearm || !merged.alert || lineAlertMode(merged.kind) === undefined) return merged
+          return { ...merged, alertOpts: { ...merged.alertOpts, since: now } }
         })
         return changed ? next : prev
       }
@@ -258,27 +266,39 @@ export function useDrawings(
   const checkPrice = useCallback(
     (symbol: string, price: number) => {
       if (!Number.isFinite(price)) return
-      const sides = sideRef.current
+      const states = sideRef.current
+      const now = Date.now()
       const fired = new Set<string>()
 
       for (const d of current.current) {
-        if (d.symbol !== symbol) continue
-        // 기울어진 선은 가격 하나로 교차를 판정할 수 없다 — 수평선만 감시한다.
-        if (d.kind !== 'horizontal') continue
-        const linePrice = d.points[0]?.price
-        if (linePrice === undefined || !Number.isFinite(linePrice)) continue
-        const nowAbove = price >= linePrice
-        const before = sides.get(d.id)
-        sides.set(d.id, nowAbove)
-        // 첫 관측은 기준점만 잡는다 — 선을 그은 순간 바로 울리는 것을 막는다.
-        if (before === undefined || before === nowAbove) continue
-        // 교차했고, 알림이 켜져 있고, 아직 안 울렸으면 발동.
-        if (d.alert && !d.fired) fired.add(d.id)
+        if (d.symbol !== symbol || !d.alert || d.fired) continue
+        const mode = lineAlertMode(d.kind)
+        if (!mode || isExpired(d.alertOpts ?? {}, now)) continue
+        if (mode === 'time') {
+          // 수직선: 그 시각 전에 본 적이 있고 이제 그 시각이 됐으면 울린다. 앱을 연 게 그 시각 뒤면 울리지 않는다(서버 몫).
+          const at = d.points[0].time * 1000
+          if (now < at) states.set(d.id, 'beforeTime')
+          else if (states.get(d.id) === 'beforeTime') {
+            states.delete(d.id)
+            fired.add(d.id)
+          }
+          continue
+        }
+        // 추세선·레이는 지금 시각의 선 가격, 채널·사각형은 두 경계. 그 시각에 그림이 없으면(레이 시작 전 등) 보지 않는다.
+        const band = bandAt(d, now)
+        if (!band) continue
+        const prev = states.get(d.id)
+        // 첫 관측은 기준만 잡는다(거는 점에서는 울리지 않는다) — 선을 그은 순간 바로 울리는 것을 막는다.
+        const state = prev === undefined || prev === 'beforeTime' ? { target: null } : prev
+        const step = stepRule(lineRule(mode, d.alertOpts), state, price, band, now, d.alertOpts ?? {})
+        states.set(d.id, step.state)
+        if (step.fired) fired.add(d.id)
       }
 
       if (fired.size === 0) return
-      const next = current.current.map((d) => (fired.has(d.id) ? { ...d, fired: true } : d))
-      replace(next)
+      // 한 번만 알림은 울린 것으로 적는다. 「매번」 알림은 켜 둔 채 다시 걸리기를 기다린다.
+      const next = current.current.map((d) => (fired.has(d.id) && d.alertOpts?.repeat !== 'every' ? { ...d, fired: true } : d))
+      if (next.some((d, i) => d !== current.current[i])) replace(next)
       for (const d of next) if (fired.has(d.id)) crossRef.current(d, price)
     },
     [replace],

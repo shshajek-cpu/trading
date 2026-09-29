@@ -24,6 +24,8 @@ import {
   textBox,
 } from './render'
 import { FIB_EXT_LEVELS, fibExtensionPrice } from './studies'
+import { hitToolA, isToolA } from './toolsA'
+import { hitGroupB } from './toolsB'
 
 export type Hit =
   | { type: 'anchor'; index: number }
@@ -254,6 +256,9 @@ function hitBody(
       const h = Math.abs(target.y - stop.y)
       return pointInRect(p, { x, y: top }, { x: x + w, y: top + h })
     }
+    default: {
+      if (isToolA(d.kind)) return hitToolA(d, coords, pts, p, tol)
+      return hitGroupB(d, coords, pts, p, tol)
+    }
   }
-  return false
 }

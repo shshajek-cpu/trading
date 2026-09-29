@@ -19,9 +19,10 @@ import {
   type Time,
   type UTCTimestamp,
 } from 'lightweight-charts'
-import { fetchKlines, type Candle, type Interval } from '../lib/binance'
+import { fetchCandles, OLDER_CHUNK } from '../lib/market'
+import type { Candle, Interval } from '../lib/market/types'
 import { INTERVAL_SECONDS } from '../lib/intervals'
-import type { PriceAlert } from '../hooks/usePriceAlerts'
+import { isChannelKind, isMoveKind, priceBand, PRICE_ALERT_KIND_LABELS, type PriceAlert } from '../lib/alertRules'
 import { isPointerTool, type Drawing, type DrawingTool, type MagnetMode, type NewDrawing } from '../lib/drawings'
 import type { Pin } from '../lib/pins'
 import { SIDE_COLORS } from '../lib/pins'
@@ -132,8 +133,6 @@ export interface ChartProps {
 
 const asTime = (t: number) => t as UTCTimestamp
 
-/** 과거 한 번 불러오기의 봉 수(useBinanceKlines 의 OLDER_CHUNK 와 같다). */
-const OLDER_CHUNK_BARS = 500
 /** 기간·날짜 목표를 좇아 과거를 더 불러오는 최대 횟수 — 1분봉 약 2주. 그 너머는 요청만 쌓인다. */
 const MAX_BACKFILL_CHUNKS = 40
 /** 지표 선을 두 번 누를 때 선 굵기 밖으로 더 봐 주는 거리(px). */
@@ -360,9 +359,9 @@ export function Chart({
     const to = pending.to > from ? pending.to : (candlesRef.current[Math.min(candlesRef.current.length - 1, 100)]?.time ?? from + 1)
     chart.timeScale().setVisibleRange({ from: from as Time, to: to as Time })
     if (pending.limit === null) {
-      // 한 번에 OLDER_CHUNK_BARS 봉씩 받는다. 스크롤 쪽 요청과 겹쳐 무시되는 몫으로 두 번을 더 준다.
+      // 한 번에 약 OLDER_CHUNK 봉씩 받는다. 스크롤 쪽 요청과 겹쳐 무시되는 몫으로 두 번을 더 준다.
       const missingBars = (first.time - pending.from) / INTERVAL_SECONDS[interval]
-      pending.limit = Math.min(MAX_BACKFILL_CHUNKS, Math.ceil(missingBars / OLDER_CHUNK_BARS) + 2)
+      pending.limit = Math.min(MAX_BACKFILL_CHUNKS, Math.ceil(missingBars / OLDER_CHUNK) + 2)
     }
     // 목표에 닿았거나, 시도를 다 썼거나, 거래소에 더 이상 과거가 없으면(도달 불가) 목표를 버린다.
     // 버리지 않으면 이후 setData(차트 종류 변경·갭 재조회)마다 화면이 가장 오래된 봉으로 튄다.
@@ -777,7 +776,7 @@ export function Chart({
         controllers.set(sym, controller)
         try {
           // 메인 차트 초기 구간(1000봉)과 같은 길이를 받아야 퍼센트 기준점이 겹친다.
-          const data = await fetchKlines(sym, interval, 1000, controller.signal)
+          const data = await fetchCandles(sym, interval, 1000, controller.signal)
           if (cancelled) return
           let series = store.get(sym)
           if (!series) {
@@ -809,30 +808,36 @@ export function Chart({
     }
   }, [compare, interval, mainSeries])
 
-  // ── 8) 가격 알림 — 점선 + 벨 제목. alerts 는 심볼로 걸러져 온다. ───────
+  // ── 8) 가격 알림 — 점선 + 제목. alerts 는 심볼로 걸러져 온다. 채널 조건은 두 가격에 선 둘, 이동 % 조건은 선이 없다. ──
   useEffect(() => {
     const series = mainSeries
     if (!series) return
     const store = alertLinesRef.current
-    const wanted = new Map(alerts.map((a) => [a.id, a]))
+    const wanted = new Map<string, { price: number; color: string; title: string }>()
+    for (const a of alerts) {
+      const kind = a.kind ?? 'cross'
+      if (isMoveKind(kind)) continue
+      if (isChannelKind(kind)) {
+        const { lo, hi } = priceBand(a)
+        const title = `알림 ${PRICE_ALERT_KIND_LABELS[kind]}`
+        wanted.set(a.id, { price: hi, color: palette.up, title })
+        wanted.set(`${a.id}:lo`, { price: lo, color: palette.down, title })
+        continue
+      }
+      const up = a.condition === 'above'
+      wanted.set(a.id, { price: a.price, color: up ? palette.up : palette.down, title: `알림 ${up ? '▲' : '▼'}` })
+    }
     for (const [id, line] of store) {
       if (!wanted.has(id)) {
         series.removePriceLine(line)
         store.delete(id)
       }
     }
-    for (const alert of alerts) {
-      const options = {
-        price: alert.price,
-        color: alert.condition === 'above' ? palette.up : palette.down,
-        lineWidth: 1 as const,
-        lineStyle: LineStyle.Dashed,
-        axisLabelVisible: true,
-        title: `🔔 ${alert.condition === 'above' ? '▲' : '▼'}`,
-      }
-      const existing = store.get(alert.id)
+    for (const [id, { price, color, title }] of wanted) {
+      const options = { price, color, title, lineWidth: 1 as const, lineStyle: LineStyle.Dashed, axisLabelVisible: true }
+      const existing = store.get(id)
       if (existing) existing.applyOptions(options)
-      else store.set(alert.id, series.createPriceLine(options))
+      else store.set(id, series.createPriceLine(options))
     }
   }, [alerts, mainSeries, palette])
 

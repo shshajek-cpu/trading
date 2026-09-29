@@ -5,7 +5,7 @@
  * 범례 값을 뽑는다 — 지표 계산은 한 번만 한다(요건: 캔들 수가 바뀔 때만 재계산).
  */
 import type { LineStyle } from 'lightweight-charts'
-import type { Candle } from '../lib/binance'
+import type { Candle } from '../lib/market/types'
 import { withAlpha, type ChartPalette } from '../lib/theme'
 import {
   volumeTiers,

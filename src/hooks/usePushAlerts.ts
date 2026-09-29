@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import type { ServerFire } from '../lib/alertLog'
 
 export type PushState = 'unsupported' | 'off' | 'on' | 'working' | 'error'
 
@@ -66,10 +67,14 @@ function errorText(error: unknown, fallback: string): string {
   return error instanceof Error ? error.message : fallback
 }
 
-/** 서버 응답. 서버가 먼저 울렸고 아직 아무 기기도 받지 않은 알림·수평선 id, endpoint 를 주면 이 기기가 등록돼 있는지. */
+/**
+ * 서버 응답. 서버가 먼저 울렸고 아직 아무 기기도 받지 않은 한 번만 알림·선·지표 알림 id, 서버가 최근에 보낸 푸시(fires —
+ * 「매번」 알림 포함, 알림 기록에 쓴다), endpoint 를 주면 이 기기가 등록돼 있는지.
+ */
 interface PushStatus {
   registered?: boolean
   firedIds?: string[]
+  fires?: ServerFire[]
 }
 
 const pushUrl = (code: string) => `/api/push?code=${encodeURIComponent(code)}`
@@ -134,9 +139,10 @@ const PUSH_RECHECK_MS = 5000
  * 브라우저 푸시는 서비스워커가 받아야 하고, 서버는 보낼 주소를 알아야 한다. 이 훅은 이 기기 구독만 등록한다 —
  * 감시할 알림은 서버(감시기)가 모든 기기가 함께 쓰는 동기화 설정에서 직접 읽는다.
  * 서버가 먼저 울린 알림은 앱을 열 때·탭으로 돌아올 때·푸시를 받았을 때 받아 와 onServerFired 로 넘기고(로컬에서도 끈다),
- * 받았다고 서버에 알린다. 코드를 바꾸면 옛 코드의 이 기기 등록을 지우고 새 코드로 옮긴다. 코드가 없으면 구독도 해제한다.
+ * 받았다고 서버에 알린다. 서버가 최근에 보낸 푸시(fires)도 함께 넘겨 알림 기록에 적게 한다.
+ * 코드를 바꾸면 옛 코드의 이 기기 등록을 지우고 새 코드로 옮긴다. 코드가 없으면 구독도 해제한다.
  */
-export function usePushAlerts(code: string, onServerFired: (ids: string[]) => void) {
+export function usePushAlerts(code: string, onServerFired: (ids: string[], fires: ServerFire[]) => void) {
   const supported =
     typeof navigator !== 'undefined' &&
     typeof Notification !== 'undefined' &&
@@ -154,10 +160,14 @@ export function usePushAlerts(code: string, onServerFired: (ids: string[]) => vo
 
   // 서버가 먼저 울린 알림을 로컬에서도 꺼(앱을 다시 열 때 또 울리지 않게) 받았다고 서버에 알린다.
   // 서버는 받은 id 를 다시 주지 않는다 — 그 뒤 다시 켠 알림을 또 끄지 않고, 서버도 다시 감시한다.
+  // 보낸 푸시 목록(fires)은 확인하지 않는다 — 기록 쪽이 같은 것을 두 번 적지 않는다.
   const applyFired = useCallback(
-    (firedIds: string[] | undefined) => {
-      if (!firedIds || firedIds.length === 0) return
-      onServerFiredRef.current(firedIds)
+    (status: PushStatus) => {
+      const firedIds = status.firedIds ?? []
+      const fires = Array.isArray(status.fires) ? status.fires : []
+      if (firedIds.length === 0 && fires.length === 0) return
+      onServerFiredRef.current(firedIds, fires)
+      if (firedIds.length === 0) return
       void fetch(pushUrl(code), {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
@@ -210,7 +220,7 @@ export function usePushAlerts(code: string, onServerFired: (ids: string[]) => vo
         if (status.registered !== true) status = await saveSub(code, sub, signal)
         writeReg({ code, endpoint: sub.endpoint })
         if (idle()) {
-          applyFired(status.firedIds)
+          applyFired(status)
           setState('on')
           setMessage('')
         }
@@ -239,7 +249,7 @@ export function usePushAlerts(code: string, onServerFired: (ids: string[]) => vo
       if (cancelled || busyRef.current) return
       readStatus(code, null, controller.signal)
         .then((status) => {
-          if (!cancelled) applyFired(status.firedIds)
+          if (!cancelled) applyFired(status)
         })
         .catch(() => {
           /* 다음에 돌아올 때 다시 본다 */
@@ -300,7 +310,7 @@ export function usePushAlerts(code: string, onServerFired: (ids: string[]) => vo
         await dropStaleReg(code, sub.endpoint)
         const status = await saveSub(code, sub)
         writeReg({ code, endpoint: sub.endpoint })
-        applyFired(status.firedIds)
+        applyFired(status)
         setState('on')
         setMessage('앱을 닫아도 알림이 옵니다')
       } catch (error) {

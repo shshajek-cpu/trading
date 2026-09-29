@@ -5,6 +5,7 @@ import { Popover, MenuSection, MenuItem } from '../../components/ui/Popover'
 import { ToolIcon } from './toolIcons'
 import { profileOptions } from './studies'
 import { tip } from '../../lib/tooltip'
+import { lineAlertMode, LINE_ALERT_HINTS } from '../../lib/alertRules'
 
 export interface SelectedToolbarProps {
   drawing: Drawing
@@ -26,12 +27,39 @@ const FILL_KINDS: Record<DrawingKind, true | undefined> = {
   vertical: undefined, crossLine: undefined, brush: undefined, text: undefined,
   arrowLine: undefined, arrowMarkUp: undefined, arrowMarkDown: undefined,
   fibExtension: undefined, fibTimeZone: undefined, fixedRangeVolumeProfile: undefined,
+  disjointChannel: true, flatTopBottom: true, schiffPitchfork: true, modifiedSchiffPitchfork: true,
+  insidePitchfork: true, pitchfan: true, gannBox: true, gannSquareFixed: true,
+  rotatedRectangle: true, circle: true, polyline: true, arc: true,
+  fibChannel: undefined, fibTimeTrend: undefined, fibCircles: undefined, fibSpeedFan: undefined,
+  fibSpeedArcs: undefined, fibWedge: undefined, fibSpiral: undefined, gannFan: undefined,
+  path: undefined, curve: undefined, doubleCurve: undefined,
+  xabcd: true, cypher: true, headShoulders: true, trianglePattern: true, projection: true, anchoredVwap: true,
+  callout: true, comment: true, signpost: true,
+  abcd: undefined, threeDrives: undefined, elliottImpulse: undefined, elliottCorrection: undefined,
+  elliottTriangle: undefined, elliottDoubleCombo: undefined, elliottTripleCombo: undefined,
+  cyclicLines: undefined, timeCycles: undefined, sineLine: undefined, priceLabel: undefined, priceNote: undefined,
+  flagMark: undefined, forecast: undefined, barsPattern: undefined, anchoredVolumeProfile: undefined,
 }
 
 /** 채움을 끌 수 있는 그림 — 채움 메뉴에 "채우지 않음"이 붙는다. */
-const OPTIONAL_FILL: Record<string, true> = { regressionTrend: true, pitchfork: true }
+const OPTIONAL_FILL: Record<string, true> = {
+  regressionTrend: true, pitchfork: true,
+  disjointChannel: true, flatTopBottom: true, schiffPitchfork: true, modifiedSchiffPitchfork: true,
+  insidePitchfork: true, pitchfan: true, gannBox: true, gannSquareFixed: true,
+  rotatedRectangle: true, circle: true, polyline: true, arc: true,
+  xabcd: true, cypher: true, headShoulders: true, trianglePattern: true, projection: true, anchoredVwap: true,
+}
 
-const TEXT_KINDS: Record<string, true> = { text: true, note: true, arrowMarkUp: true, arrowMarkDown: true }
+const TEXT_KINDS: Record<string, true> = {
+  text: true, note: true, arrowMarkUp: true, arrowMarkDown: true, callout: true, comment: true, signpost: true,
+}
+
+/** 앵커 VWAP 표준편차 밴드 선택지. */
+const VWAP_BANDS: { n: 0 | 1 | 2; label: string }[] = [
+  { n: 0, label: '밴드 없음' },
+  { n: 1, label: '±1σ' },
+  { n: 2, label: '±1σ · ±2σ' },
+]
 
 const WIDTHS: (1 | 2 | 3 | 4)[] = [1, 2, 3, 4]
 const STYLES: { id: DrawingStyle['lineStyle']; label: string }[] = [
@@ -54,19 +82,23 @@ export function SelectedToolbar({
   palette,
 }: SelectedToolbarProps) {
   const [pos, setPos] = useState<{ left: number; top: number } | null>(null)
-  const [menu, setMenu] = useState<'color' | 'fill' | 'width' | 'style' | 'profile' | null>(null)
+  const [menu, setMenu] = useState<'color' | 'fill' | 'width' | 'style' | 'profile' | 'bands' | null>(null)
   const colorRef = useRef<HTMLButtonElement>(null)
   const fillRef = useRef<HTMLButtonElement>(null)
   const widthRef = useRef<HTMLButtonElement>(null)
   const styleRef = useRef<HTMLButtonElement>(null)
   const profileRef = useRef<HTMLButtonElement>(null)
+  const bandsRef = useRef<HTMLButtonElement>(null)
   const dragRef = useRef<{ dx: number; dy: number } | null>(null)
 
   const s = drawing.style
   const hasFill = FILL_KINDS[drawing.kind] === true
   const isText = TEXT_KINDS[drawing.kind] === true
   const lockedNow = globalLocked || drawing.locked
-  const profile = drawing.kind === 'fixedRangeVolumeProfile' ? profileOptions(drawing) : null
+  // 알림을 걸 수 있는 그림(수평선·추세선·레이·채널·사각형·수직선 등)이면 알림(종) 버튼을 보인다.
+  const alertMode = lineAlertMode(drawing.kind)
+  const profile =
+    drawing.kind === 'fixedRangeVolumeProfile' || drawing.kind === 'anchoredVolumeProfile' ? profileOptions(drawing) : null
 
   const setStyle = (patch: Partial<DrawingStyle>) => {
     onUpdate(drawing.id, { style: { ...s, ...patch } })
@@ -249,11 +281,38 @@ export function SelectedToolbar({
         </>
       )}
 
-      {drawing.kind === 'horizontal' && (
+      {drawing.kind === 'anchoredVwap' && (
+        <>
+          <button
+            ref={bandsRef}
+            type="button"
+            className="tv-draw-selbtn"
+            {...tip('표준편차 밴드', 'VWAP 위아래에 거래량 가중 표준편차 밴드를 긋습니다.')}
+            aria-label="표준편차 밴드"
+            onClick={() => setMenu(menu === 'bands' ? null : 'bands')}
+          >
+            <ToolIcon name="anchoredVwap" size={20} />
+          </button>
+          <Popover anchor={bandsRef.current} open={menu === 'bands'} onClose={() => setMenu(null)} placement="bottom-start">
+            <MenuSection title="표준편차 밴드">
+              {VWAP_BANDS.map((b) => (
+                <MenuItem
+                  key={b.n}
+                  label={b.label}
+                  active={(s.vwapBands ?? 0) === b.n}
+                  onSelect={() => { setStyle({ vwapBands: b.n }); setMenu(null) }}
+                />
+              ))}
+            </MenuSection>
+          </Popover>
+        </>
+      )}
+
+      {alertMode && (
         <button
           type="button"
           className={`tv-draw-selbtn${drawing.alert ? ' on' : ''}`}
-          {...tip(drawing.alert ? '알림 끄기' : '알림 켜기', '가격이 이 수평선을 지나가면 알려 줍니다.')}
+          {...tip(drawing.alert ? '알림 끄기' : '알림 켜기', LINE_ALERT_HINTS[alertMode])}
           aria-label="알림"
           aria-pressed={drawing.alert}
           onClick={() => onUpdate(drawing.id, drawing.alert ? { alert: false } : { alert: true, fired: false })}

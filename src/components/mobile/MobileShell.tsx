@@ -1,13 +1,16 @@
-import type { ReactNode } from 'react'
-import type { Interval } from '../../lib/binance'
+import { useState, type ReactNode } from 'react'
+import type { Interval } from '../../lib/market/types'
 import { INTERVALS, INTERVAL_GROUPS, INTERVAL_INFO } from '../../lib/intervals'
+import { supportsInterval } from '../../lib/market/ids'
+import { UNSUPPORTED_INTERVAL } from '../menus/IntervalMenu'
 import { CHART_TYPES, type ChartType } from '../../lib/chartTypes'
-import { CHART_TYPE_ICON, LAYOUT_ICON } from '../../lib/chartTypeIcons'
-import { LAYOUT_MODES, LAYOUT_SYNC_ITEMS, type LayoutMode, type LayoutSync, type LayoutSyncKey } from '../../lib/layoutConfig'
+import { CHART_TYPE_ICON } from '../../lib/chartTypeIcons'
+import { cellCount, LAYOUT_SYNC_ITEMS, SINGLE_SHAPE, type GridShape, type LayoutControls } from '../../lib/layoutConfig'
+import { LayoutEditor, LayoutPresetPicker, SavedLayoutList } from '../menus/LayoutMenu'
 import { DATE_RANGES, rangeBounds } from '../../lib/dateRanges'
 import { DRAWING_LABELS, TOOL_GROUPS, type DrawingTool, type MagnetMode } from '../../lib/drawings'
 import { ToolIcon, type IconName as ToolIconName } from '../../chart/drawing/toolIcons'
-import { Icon, type IconName } from '../Icon'
+import { Icon, LayoutIcon, type IconName } from '../Icon'
 import type { MenuEntry } from '../ContextMenu'
 import { BottomSheet, SheetList, SheetSection, SheetTiles } from './BottomSheet'
 import { MobileChartBar, MobileTabBar, type MobileTab } from './MobileBars'
@@ -63,7 +66,8 @@ export interface MobileShellProps {
   /** 시트에 넣을 위젯들. */
   panels: { templates: ReactNode; symbolInfo: ReactNode; objectTree: ReactNode; pins: ReactNode; sync: ReactNode; trade: ReactNode }
   symbolLabel: string
-  base: string
+  /** 아이콘을 고를 활성 칸의 심볼 id. */
+  iconSymbol: string
   interval: Interval
   onIntervalChange: (iv: Interval) => void
   onOpenSymbolSearch: () => void
@@ -84,10 +88,9 @@ export interface MobileShellProps {
   scaleEntries: MenuEntry[]
   drawing: MobileDrawingControls
   /** 분할 레이아웃 — 데스크톱과 같은 레이아웃(동기화)을 쓴다. */
-  layout: LayoutMode
-  onLayoutChange: (mode: LayoutMode) => void
-  layoutSync: LayoutSync
-  onLayoutSyncChange: (key: LayoutSyncKey, on: boolean) => void
+  layout: LayoutControls
+  /** 칸 경계 손잡이를 띄워 칸 크기를 조절한다(시트를 닫고 차트 위에서). */
+  onResizeCells: () => void
   /** 분할 중 활성 칸 하나만 크게 보기. */
   maximized: boolean
   onToggleMaximize: () => void
@@ -100,6 +103,101 @@ const CURSOR_TOOLS: Partial<Record<DrawingTool, string>> = { cross: '십자선',
 const MAGNET_LABELS: Record<MagnetMode, string> = { off: '끄기', weak: '약하게', strong: '강하게' }
 
 const tileIcon = (name: IconName) => <Icon name={name} size={24} />
+
+interface LayoutSheetBodyProps {
+  layout: LayoutControls
+  maximized: boolean
+  onToggleMaximize: () => void
+  onResizeCells: () => void
+  priceAxis: boolean
+  onPriceAxisChange: (on: boolean) => void
+  /** 시트 닫기. */
+  onDone: () => void
+}
+
+/** 레이아웃 시트 내용. 시트가 열릴 때마다 새로 마운트돼 「직접 만들기」에서 닫았어도 다음에는 처음 화면으로 연다. */
+function LayoutSheetBody({ layout, maximized, onToggleMaximize, onResizeCells, priceAxis, onPriceAxisChange, onDone }: LayoutSheetBodyProps) {
+  const [editing, setEditing] = useState(false)
+  const count = cellCount(layout.grid)
+  const pickShape = (shape: GridShape) => {
+    onDone()
+    layout.onShapeChange(shape)
+  }
+  const done = (fn: () => void) => () => {
+    onDone()
+    fn()
+  }
+
+  if (editing) {
+    return (
+      <SheetSection title="직접 만들기">
+        <LayoutEditor
+          variant="sheet"
+          initial={layout.grid}
+          onCancel={() => setEditing(false)}
+          onApply={pickShape}
+        />
+      </SheetSection>
+    )
+  }
+
+  return (
+    <>
+      <SheetSection title="격자">
+        <LayoutPresetPicker variant="sheet" current={layout.grid} onPick={pickShape} />
+      </SheetSection>
+      <SheetSection title="보기">
+        <SheetTiles
+          columns={3}
+          tiles={[
+            { key: 'custom', label: '직접 만들기', icon: tileIcon('pencil'), onSelect: () => setEditing(true) },
+            {
+              key: 'resize',
+              label: '칸 크기 조절',
+              icon: <LayoutIcon shape={layout.grid} size={24} />,
+              disabled: count === 1 || maximized,
+              onSelect: done(onResizeCells),
+            },
+            { key: 'equalize', label: '균등 분할', icon: tileIcon('equalize'), disabled: count === 1, onSelect: done(layout.onEqualize) },
+            ...(count > 1
+              ? [
+                  {
+                    key: 'maximize',
+                    label: maximized ? '분할로 돌아가기' : '이 칸 크게 보기',
+                    icon: <LayoutIcon shape={maximized ? layout.grid : SINGLE_SHAPE} size={24} />,
+                    active: maximized,
+                    onSelect: done(onToggleMaximize),
+                  },
+                ]
+              : []),
+          ]}
+        />
+        <label className="m-setting">
+          <span>가격 축 표시</span>
+          <input className="tv-switch" type="checkbox" checked={priceAxis} onChange={(e) => onPriceAxisChange(e.target.checked)} />
+        </label>
+      </SheetSection>
+      <SheetSection title="내 레이아웃">
+        <SavedLayoutList variant="sheet" controls={layout} onApplied={onDone} />
+      </SheetSection>
+      {count > 1 && (
+        <SheetSection title="모든 칸에 같이 적용">
+          {LAYOUT_SYNC_ITEMS.map((s) => (
+            <label key={s.key} className="m-setting">
+              <span>{s.label}</span>
+              <input
+                className="tv-switch"
+                type="checkbox"
+                checked={layout.sync[s.key]}
+                onChange={(e) => layout.onSyncChange(s.key, e.target.checked)}
+              />
+            </label>
+          ))}
+        </SheetSection>
+      )}
+    </>
+  )
+}
 
 function toolLabel(tool: DrawingTool): string {
   if (tool === 'eraser') return '지우개'
@@ -158,7 +256,7 @@ export function MobileShell(props: MobileShellProps) {
       {tab === 'chart' && (
         <MobileChartBar
           symbolLabel={props.symbolLabel}
-          base={props.base}
+          iconSymbol={props.iconSymbol}
           intervalLabel={INTERVAL_INFO[props.interval].short}
           drawing={drawingActive}
           onSymbol={props.onOpenSymbolSearch}
@@ -176,16 +274,23 @@ export function MobileShell(props: MobileShellProps) {
         {INTERVAL_GROUPS.map((g) => (
           <SheetSection key={g.id} title={g.label}>
             <div className="m-chips">
-              {INTERVALS.filter((iv) => iv.group === g.id).map((iv) => (
-                <button
-                  key={iv.id}
-                  type="button"
-                  className={`m-chip${iv.id === props.interval ? ' active' : ''}`}
-                  onClick={then(() => props.onIntervalChange(iv.id))}
-                >
-                  {iv.label}
-                </button>
-              ))}
+              {INTERVALS.filter((iv) => iv.group === g.id).map((iv) => {
+                const off = !supportsInterval(props.iconSymbol, iv.id)
+                return (
+                  <button
+                    key={iv.id}
+                    type="button"
+                    className={`m-chip${iv.id === props.interval ? ' active' : ''}`}
+                    disabled={off}
+                    title={off ? UNSUPPORTED_INTERVAL : undefined}
+                    aria-label={off ? `${iv.label} — ${UNSUPPORTED_INTERVAL}` : undefined}
+                    onClick={then(() => props.onIntervalChange(iv.id))}
+                  >
+                    {iv.label}
+                    {off && ' · 미지원'}
+                  </button>
+                )
+              })}
             </div>
           </SheetSection>
         ))}
@@ -208,7 +313,7 @@ export function MobileShell(props: MobileShellProps) {
         <SheetTiles
           tiles={[
             { key: 'symbolInfo', label: '심볼 정보', icon: tileIcon('info'), onSelect: () => open('symbolInfo') },
-            { key: 'layout', label: '레이아웃', icon: tileIcon(LAYOUT_ICON[props.layout]), onSelect: () => open('layout') },
+            { key: 'layout', label: '레이아웃', icon: <LayoutIcon shape={props.layout.grid} size={24} />, onSelect: () => open('layout') },
             { key: 'chartType', label: '차트 유형', icon: tileIcon(CHART_TYPE_ICON[props.chartType]), onSelect: () => open('chartType') },
             { key: 'alerts', label: '알림 관리', icon: tileIcon('bell'), onSelect: then(() => onTabChange('alerts')) },
             { key: 'range', label: '기간', icon: tileIcon('calendar'), onSelect: () => open('range') },
@@ -236,58 +341,15 @@ export function MobileShell(props: MobileShellProps) {
       </BottomSheet>
 
       <BottomSheet open={sheet === 'layout'} onClose={close} title="레이아웃">
-        <SheetTiles
-          columns={3}
-          tiles={LAYOUT_MODES.map((o) => ({
-            key: String(o.mode),
-            label: o.label,
-            icon: tileIcon(LAYOUT_ICON[o.mode]),
-            active: o.mode === props.layout,
-            onSelect: then(() => props.onLayoutChange(o.mode)),
-          }))}
+        <LayoutSheetBody
+          layout={props.layout}
+          maximized={props.maximized}
+          onToggleMaximize={props.onToggleMaximize}
+          onResizeCells={props.onResizeCells}
+          priceAxis={props.priceAxis}
+          onPriceAxisChange={props.onPriceAxisChange}
+          onDone={close}
         />
-        <SheetSection title="보기">
-          {props.layout > 1 && (
-            <SheetTiles
-              columns={3}
-              tiles={[
-                {
-                  key: 'maximize',
-                  label: props.maximized ? '분할로 돌아가기' : '이 칸 크게 보기',
-                  icon: tileIcon(props.maximized ? LAYOUT_ICON[props.layout] : 'layout1'),
-                  active: props.maximized,
-                  onSelect: then(props.onToggleMaximize),
-                },
-              ]}
-            />
-          )}
-          <label className="m-setting">
-            <span>가격 축 표시</span>
-            <input
-              className="tv-switch"
-              type="checkbox"
-              checked={props.priceAxis}
-              onChange={(e) => props.onPriceAxisChange(e.target.checked)}
-            />
-          </label>
-        </SheetSection>
-        {props.layout > 1 && (
-          <>
-            <SheetSection title="모든 칸에 같이 적용">
-              {LAYOUT_SYNC_ITEMS.map((s) => (
-                <label key={s.key} className="m-setting">
-                  <span>{s.label}</span>
-                  <input
-                    className="tv-switch"
-                    type="checkbox"
-                    checked={props.layoutSync[s.key]}
-                    onChange={(e) => props.onLayoutSyncChange(s.key, e.target.checked)}
-                  />
-                </label>
-              ))}
-            </SheetSection>
-          </>
-        )}
       </BottomSheet>
 
       <BottomSheet open={sheet === 'range'} onClose={close} title="기간">

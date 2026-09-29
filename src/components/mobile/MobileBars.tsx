@@ -49,7 +49,7 @@ export function MobileTabBar({
  */
 export function MobileChartBar({
   symbolLabel,
-  base,
+  iconSymbol,
   intervalLabel,
   drawing,
   onSymbol,
@@ -60,7 +60,8 @@ export function MobileChartBar({
   onMore,
 }: {
   symbolLabel: string
-  base: string
+  /** 아이콘을 고를 앱 심볼 id. */
+  iconSymbol: string
   intervalLabel: string
   drawing: boolean
   onSymbol: () => void
@@ -73,7 +74,7 @@ export function MobileChartBar({
   return (
     <div className="m-chartbar">
       <button type="button" className="m-chartbar-symbol" onClick={onSymbol} aria-label="심볼 검색">
-        <CoinIcon base={base} size={22} />
+        <CoinIcon symbol={iconSymbol} size={22} />
         <span>{symbolLabel}</span>
       </button>
       <button type="button" className="m-chartbar-interval" onClick={onInterval} aria-label="시간 간격">

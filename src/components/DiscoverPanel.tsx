@@ -1,6 +1,7 @@
 import { useCallback, useState } from 'react'
-import type { Candle } from '../lib/binance'
-import { fetchKlines, type Interval } from '../lib/binance'
+import type { Candle, Interval } from '../lib/market/types'
+import { fetchCandles, fetchOlder } from '../lib/market'
+import { shortSymbol } from '../lib/symbols'
 import {
   DEFAULT_CONFIG,
   describeBand,
@@ -37,14 +38,13 @@ export function DiscoverPanel({ symbol, interval, liveFeatures, timezone }: Disc
     setError(null)
     setResult(null)
     try {
-      // 통계를 내려면 캔들이 많아야 한다. 나눠서 과거로 거슬러 받는다.
-      let all: Candle[] = []
-      let endTime: number | undefined
-      for (let i = 0; i < CHUNKS; i++) {
-        const part = await fetchKlines(symbol, interval, 1000, undefined, endTime)
-        if (part.length === 0) break
-        all = [...part, ...all]
-        endTime = part[0].time * 1000 - 1
+      // 통계를 내려면 캔들이 많아야 한다. 최신 묶음을 받고 과거로 거슬러 더 받는다(시장마다 한 번에 오는 봉 수가 다르다).
+      let all: Candle[] = await fetchCandles(symbol, interval, 1000)
+      const want = CHUNKS * 1000
+      for (let i = 0; i < CHUNKS * 4 && all.length > 0 && all.length < want; i++) {
+        const page = await fetchOlder(symbol, interval, all[0].time)
+        if (page.candles.length > 0) all = [...page.candles, ...all]
+        if (page.done || page.candles.length === 0) break
       }
       if (all.length < 500) {
         setError('과거 데이터가 모자랍니다. 다른 주기로 시도해 보세요.')
@@ -129,7 +129,7 @@ export function DiscoverPanel({ symbol, interval, liveFeatures, timezone }: Disc
       </div>
 
       <button type="button" className="cta disc-run" disabled={busy} onClick={() => void run()}>
-        {busy ? '훑는 중…' : `${symbol.replace('USDT', '')} ${interval} 훑어보기`}
+        {busy ? '훑는 중…' : `${shortSymbol(symbol)} ${interval} 훑어보기`}
       </button>
 
       {error && <p className="disc-error">{error}</p>}

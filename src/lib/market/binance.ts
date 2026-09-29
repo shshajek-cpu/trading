@@ -1,22 +1,17 @@
+/**
+ * 바이낸스 어댑터 — USDT-M 선물(fapi, 접두사 없는 id)과 현물(api.binance.com, BSPOT: id).
+ * 두 곳 모두 브라우저에서 직접 부른다(키 없음). 요청 한도는 호스트마다 따로 세므로 쿨다운도 호스트마다 둔다.
+ * 이 파일의 함수는 거래소 심볼(BTCUSDT)을 받는다 — 앱 id 는 market/index 가 바꿔 넘긴다.
+ */
+import { RateLimitError, type Candle, type Interval, type Ticker24h } from './types'
+
 const FAPI_BASE = 'https://fapi.binance.com'
+const SPOT_BASE = 'https://api.binance.com'
 
-export type Interval =
-  | '1m' | '3m' | '5m' | '15m' | '30m'
-  | '1h' | '2h' | '4h' | '6h' | '8h' | '12h'
-  | '1d' | '3d' | '1w' | '1M'
-
-/** 정규화된 캔들. time 은 초 단위(UTC) — lightweight-charts 규격. */
-export interface Candle {
-  time: number
-  open: number
-  high: number
-  low: number
-  close: number
-  volume: number
-}
+export type BinanceVenue = 'futures' | 'spot'
 
 /**
- * /fapi/v1/klines 응답 한 행.
+ * /fapi/v1/klines · /api/v3/klines 응답 한 행.
  * [openTime, open, high, low, close, volume, closeTime, quoteVolume,
  *  trades, takerBuyBase, takerBuyQuote, ignore]
  */
@@ -27,13 +22,16 @@ export type RawKline = [
 
 export interface ExchangeSymbol {
   symbol: string
-  pair: string
-  contractType: string
+  /** 선물만 */
+  pair?: string
+  /** 선물만. PERPETUAL | CURRENT_QUARTER | … */
+  contractType?: string
   baseAsset: string
   quoteAsset: string
   status: string
-  pricePrecision: number
-  quantityPrecision: number
+  /** 선물만 */
+  pricePrecision?: number
+  quantityPrecision?: number
   /** 분기물 인도일(ms). 무기한은 보통 아주 먼 미래값이 온다. */
   deliveryDate?: number
   /** COIN | INDEX 등. 주식·원자재 분류에 쓴다. */
@@ -57,17 +55,6 @@ interface Raw24hTicker {
   quoteVolume: string
 }
 
-export interface Ticker24h {
-  symbol: string
-  lastPrice: number
-  priceChange: number
-  priceChangePercent: number
-  highPrice: number
-  lowPrice: number
-  volume: number
-  quoteVolume: number
-}
-
 /** REST 는 대문자 심볼을 요구한다. */
 export function toRestSymbol(symbol: string): string {
   return symbol.trim().toUpperCase()
@@ -78,30 +65,19 @@ export function toStreamSymbol(symbol: string): string {
   return symbol.trim().toLowerCase()
 }
 
-/**
- * 요청 한도 초과(429) 또는 IP 차단(418)에 걸린 상태. until 은 요청을 재개해도 되는 시각(epoch ms).
- * 쿨다운이 도는 동안 REST 헬퍼는 네트워크를 건드리지 않고 이 오류를 즉시 던진다 — 차단이 길어지지 않게.
- */
-export class RateLimitError extends Error {
-  readonly until: number
-  constructor(until: number) {
-    super(`Binance rate limited until ${new Date(until).toISOString()}`)
-    this.name = 'RateLimitError'
-    this.until = until
-  }
-}
-
-/** 모듈 전역 쿨다운. 마지막으로 받은 429/418 의 Retry-After 로 정해진다. */
-let cooldownUntil = 0
+/** 호스트별 쿨다운. 마지막으로 받은 429/418 의 Retry-After 로 정해진다. */
+const cooldownUntil: Record<BinanceVenue, number> = { futures: 0, spot: 0 }
 
 /** 쿨다운이 살아 있으면 재개 가능 시각(ms), 아니면 0. */
-export function rateLimitedUntil(): number {
-  return cooldownUntil > Date.now() ? cooldownUntil : 0
+export function binanceRateLimitedUntil(venue: BinanceVenue): number {
+  return cooldownUntil[venue] > Date.now() ? cooldownUntil[venue] : 0
 }
 
+/** 경로로 호스트를 가른다 — /fapi/ 는 선물, /api/ 는 현물. */
 async function getJson<T>(path: string, params: Record<string, string | number>, signal?: AbortSignal): Promise<T> {
-  if (cooldownUntil > Date.now()) throw new RateLimitError(cooldownUntil)
-  const url = new URL(path, FAPI_BASE)
+  const venue: BinanceVenue = path.startsWith('/fapi/') ? 'futures' : 'spot'
+  if (cooldownUntil[venue] > Date.now()) throw new RateLimitError('Binance', cooldownUntil[venue])
+  const url = new URL(path, venue === 'futures' ? FAPI_BASE : SPOT_BASE)
   for (const [key, value] of Object.entries(params)) {
     url.searchParams.set(key, String(value))
   }
@@ -111,8 +87,8 @@ async function getJson<T>(path: string, params: Record<string, string | number>,
     const header = Number(res.headers.get('Retry-After'))
     const fallback = res.status === 418 ? 300 : 60
     const secs = Number.isFinite(header) && header > 0 ? header : fallback
-    cooldownUntil = Date.now() + secs * 1000
-    throw new RateLimitError(cooldownUntil)
+    cooldownUntil[venue] = Date.now() + secs * 1000
+    throw new RateLimitError('Binance', cooldownUntil[venue])
   }
   if (!res.ok) {
     const body = await res.text().catch(() => '')
@@ -132,6 +108,9 @@ export function normalizeKline(raw: RawKline): Candle {
   }
 }
 
+/** 한 번에 받는 봉 수 상한 — 선물 1500, 현물 1000. */
+export const KLINES_MAX: Record<BinanceVenue, number> = { futures: 1500, spot: 1000 }
+
 export async function fetchKlines(
   symbol: string,
   interval: Interval,
@@ -141,15 +120,16 @@ export async function fetchKlines(
   endTime?: number,
   /** 이 시각(ms) 이후 캔들만 — 되짚기에서 앞으로 나아갈 때 쓴다. */
   startTime?: number,
+  venue: BinanceVenue = 'futures',
 ): Promise<Candle[]> {
   const params: Record<string, string | number> = {
     symbol: toRestSymbol(symbol),
     interval,
-    limit,
+    limit: Math.min(limit, KLINES_MAX[venue]),
   }
   if (endTime !== undefined) params.endTime = endTime
   if (startTime !== undefined) params.startTime = startTime
-  const raw = await getJson<RawKline[]>('/fapi/v1/klines', params, signal)
+  const raw = await getJson<RawKline[]>(venue === 'futures' ? '/fapi/v1/klines' : '/api/v3/klines', params, signal)
   return raw.map(normalizeKline)
 }
 
@@ -159,14 +139,24 @@ export async function fetchExchangeInfo(signal?: AbortSignal): Promise<ExchangeS
   return info.symbols.filter((s) => s.quoteAsset === 'USDT' && s.status === 'TRADING')
 }
 
-export async function fetch24hTicker(symbol: string, signal?: AbortSignal): Promise<Ticker24h> {
-  const raw = await getJson<Raw24hTicker>(
-    '/fapi/v1/ticker/24hr',
-    { symbol: toRestSymbol(symbol) },
+/** 현물 목록에 넣는 견적 자산. */
+const SPOT_QUOTES = new Set(['USDT', 'USDC', 'FDUSD', 'BTC'])
+
+/**
+ * 거래중인 현물 페어(USDT·USDC·FDUSD·BTC 마켓). 권한 목록(permissionSets)을 빼 달라고 해 응답을 줄인다.
+ */
+export async function fetchSpotExchangeInfo(signal?: AbortSignal): Promise<ExchangeSymbol[]> {
+  const info = await getJson<RawExchangeInfo>(
+    '/api/v3/exchangeInfo',
+    { symbolStatus: 'TRADING', showPermissionSets: 'false' },
     signal,
   )
+  return info.symbols.filter((s) => SPOT_QUOTES.has(s.quoteAsset))
+}
+
+function toTicker(raw: Raw24hTicker, id: string): Ticker24h {
   return {
-    symbol: raw.symbol,
+    symbol: id,
     lastPrice: Number(raw.lastPrice),
     priceChange: Number(raw.priceChange),
     priceChangePercent: Number(raw.priceChangePercent),
@@ -177,23 +167,39 @@ export async function fetch24hTicker(symbol: string, signal?: AbortSignal): Prom
   }
 }
 
+/** 한 종목 24시간 시세. id 는 결과에 넣을 앱 심볼 id. */
+export async function fetch24hTicker(
+  symbol: string,
+  venue: BinanceVenue,
+  id: string,
+  signal?: AbortSignal,
+): Promise<Ticker24h> {
+  const raw = await getJson<Raw24hTicker>(
+    venue === 'futures' ? '/fapi/v1/ticker/24hr' : '/api/v3/ticker/24hr',
+    { symbol: toRestSymbol(symbol) },
+    signal,
+  )
+  return toTicker(raw, id)
+}
+
 /**
- * 전 종목 24시간 시세. 관심 종목 시세판이 쓴다.
- *
- * 선물 웹소켓 전체 스트림(!miniTicker@arr)은 일부 망에서 응답이 오지 않아 REST 로 받는다.
+ * 여러 종목 24시간 시세. 선물은 전 종목 한 번(가중치 40), 현물은 symbols=[…] 로 필요한 것만 받는다.
+ * 결과의 symbol 은 거래소 심볼이다(호출하는 쪽이 id 로 바꾼다).
  */
-export async function fetchAll24hTickers(signal?: AbortSignal): Promise<Ticker24h[]> {
-  const raw = await getJson<Raw24hTicker[]>('/fapi/v1/ticker/24hr', {}, signal)
-  return raw.map((r) => ({
-    symbol: r.symbol,
-    lastPrice: Number(r.lastPrice),
-    priceChange: Number(r.priceChange),
-    priceChangePercent: Number(r.priceChangePercent),
-    highPrice: Number(r.highPrice),
-    lowPrice: Number(r.lowPrice),
-    volume: Number(r.volume),
-    quoteVolume: Number(r.quoteVolume),
-  }))
+export async function fetch24hTickers(
+  venue: BinanceVenue,
+  symbols: string[],
+  signal?: AbortSignal,
+): Promise<Ticker24h[]> {
+  const raw =
+    venue === 'futures'
+      ? await getJson<Raw24hTicker[]>('/fapi/v1/ticker/24hr', {}, signal)
+      : await getJson<Raw24hTicker[]>(
+          '/api/v3/ticker/24hr',
+          { symbols: JSON.stringify(symbols.map(toRestSymbol)) },
+          signal,
+        )
+  return raw.map((r) => toTicker(r, r.symbol))
 }
 
 /** wss 스트림의 kline 이벤트 페이로드. */
@@ -229,22 +235,18 @@ export function normalizeStreamKline(k: KlineStreamEvent['k']): Candle {
 /**
  * USDⓈ-M 선물 웹소켓은 2026-04-23부터 용도별 경로로 나뉘었다. kline·aggTrade·miniTicker 는
  * `/market` 경로에서만 온다 — 예전 `wss://fstream.binance.com/ws/...` 는 연결만 되고 데이터가 오지 않는다.
+ * 현물은 stream.binance.com 결합 스트림.
  */
 const MARKET_WS = 'wss://fstream.binance.com/market/stream?streams='
+const SPOT_WS = 'wss://stream.binance.com:9443/stream?streams='
 
-/** 차트용 결합 스트림: 봉(약 250ms)과 체결(거래마다)을 함께 받아 TradingView·바이낸스처럼 즉시 움직인다. */
-export function klineStreamUrl(symbol: string, interval: Interval): string {
-  const s = toStreamSymbol(symbol)
-  return `${MARKET_WS}${s}@kline_${interval}/${s}@aggTrade`
+export function combinedStreamUrl(venue: BinanceVenue, streams: string[]): string {
+  return (venue === 'futures' ? MARKET_WS : SPOT_WS) + streams.join('/')
 }
 
-/** 봉만 여러 개 받는 결합 스트림(지표 알림 감시용). 메시지의 stream 이름은 `btcusdt@kline_1m` 꼴. */
+/** 봉 스트림 이름. 메시지의 stream 이름은 `btcusdt@kline_1m` 꼴. */
 export function klineStreamName(symbol: string, interval: Interval): string {
   return `${toStreamSymbol(symbol)}@kline_${interval}`
-}
-
-export function combinedKlineStreamUrl(streams: string[]): string {
-  return `${MARKET_WS}${streams.join('/')}`
 }
 
 /** 결합 스트림 메시지 포장. */
@@ -276,15 +278,12 @@ export interface MiniTickerEvent {
   q: string
 }
 
-export function miniTickerStreamUrl(symbols: string[]): string {
-  return MARKET_WS + symbols.map((s) => `${toStreamSymbol(s)}@miniTicker`).join('/')
-}
-
-export function normalizeMiniTicker(t: MiniTickerEvent): Ticker24h {
+/** 미니 티커 → 시세. id 는 결과에 넣을 앱 심볼 id. */
+export function normalizeMiniTicker(t: MiniTickerEvent, id: string): Ticker24h {
   const last = Number(t.c)
   const open = Number(t.o)
   return {
-    symbol: t.s,
+    symbol: id,
     lastPrice: last,
     priceChange: last - open,
     priceChangePercent: open > 0 ? ((last - open) / open) * 100 : 0,

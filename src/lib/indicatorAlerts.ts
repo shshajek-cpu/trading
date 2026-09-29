@@ -1,4 +1,4 @@
-import type { Interval } from './binance'
+import type { Interval } from './market/types'
 import { isInterval } from './intervals'
 import { indicatorTitle, toIndicatorInstance, type IndicatorInstance } from './indicatorConfig'
 
@@ -49,6 +49,8 @@ export interface IndicatorAlert {
   /** 마지막으로 울린 시각(ms). */
   firedAt?: number
   message?: string
+  /** 이 시각(ms)부터는 울리지 않는다(선택). */
+  expiresAt?: number
 }
 
 export type NewIndicatorAlert = Omit<IndicatorAlert, 'id' | 'active' | 'createdAt' | 'lastBar' | 'firedAt'>
@@ -125,6 +127,7 @@ function toAlert(v: unknown): IndicatorAlert | null {
     ...(typeof a.lastBar === 'number' ? { lastBar: a.lastBar } : {}),
     ...(typeof a.firedAt === 'number' ? { firedAt: a.firedAt } : {}),
     ...(typeof a.message === 'string' ? { message: a.message } : {}),
+    ...(typeof a.expiresAt === 'number' && Number.isFinite(a.expiresAt) ? { expiresAt: a.expiresAt } : {}),
   }
   return migrateSigmaSpike(alert)
 }

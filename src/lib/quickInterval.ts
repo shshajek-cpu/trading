@@ -1,4 +1,4 @@
-import type { Interval } from './binance'
+import type { Interval } from './market/types'
 import { INTERVAL_SECONDS } from './intervals'
 
 const UNIT_SECONDS: Record<string, number> = { m: 60, h: 3600, H: 3600, d: 86400, D: 86400, w: 604800, W: 604800, M: 2592000 }

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react'
-import type { Interval } from '../lib/binance'
+import type { Interval } from '../lib/market/types'
 import { isInterval, DEFAULT_FAVORITE_INTERVALS } from '../lib/intervals'
 import type { MagnetMode } from '../lib/drawings'
 

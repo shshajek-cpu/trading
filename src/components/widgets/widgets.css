@@ -357,6 +357,10 @@
   background: var(--tv-up);
 }
 
+.sd-dot.closed {
+  background: var(--tv-text-faint);
+}
+
 .sd-stats {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -573,6 +577,43 @@
   color: var(--tv-text-dim);
 }
 
+/* 알림 설정(켜기·끄기 줄). 폰은 손가락 기준 44px. */
+.aw-setting {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 32px;
+  padding: 2px 8px;
+  font-size: var(--tv-fs-sm);
+  color: var(--tv-text);
+  cursor: pointer;
+}
+
+.aw-log-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.aw-log-msg {
+  font-size: var(--tv-fs-sm);
+  color: var(--tv-text);
+  overflow-wrap: anywhere;
+}
+
+.aw-source {
+  flex: none;
+  font-size: var(--tv-fs-xs);
+  color: var(--tv-text-faint);
+}
+
+@media (width <= 900px) {
+  .aw-setting {
+    min-height: 44px;
+  }
+}
+
 /* ── 푸시 안내 카드(납작) ── */
 .pb-box {
   display: flex;
@@ -671,6 +712,10 @@
   width: 150px;
   text-align: right;
   font-variant-numeric: tabular-nums;
+}
+
+.ca-date {
+  width: 220px;
 }
 
 @media (width <= 900px) {

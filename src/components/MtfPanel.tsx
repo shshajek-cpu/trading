@@ -1,5 +1,7 @@
-import type { Interval } from '../lib/binance'
+import type { Interval } from '../lib/market/types'
+import { supportsInterval } from '../lib/market/ids'
 import { MTF_PRESETS } from '../lib/layoutConfig'
+import { shortSymbol } from '../lib/symbols'
 
 interface MtfPanelProps {
   symbol: string
@@ -9,7 +11,7 @@ interface MtfPanelProps {
 
 /** 같은 종목을 여러 주기로 동시에 띄우는 프리셋. */
 export function MtfPanel({ symbol, current, onApply }: MtfPanelProps) {
-  const short = symbol.replace('USDT', '')
+  const short = shortSymbol(symbol)
 
   return (
     <section className="panel mtf-panel">
@@ -19,19 +21,21 @@ export function MtfPanel({ symbol, current, onApply }: MtfPanelProps) {
 
       <ul className="mtf-list">
         {MTF_PRESETS.map((preset) => {
-          const active =
-            current.length === preset.intervals.length &&
-            preset.intervals.every((iv, i) => current[i] === iv)
+          // 이 시장에서 못 그리는 주기(야후 3d)는 뺀다.
+          const intervals = preset.intervals.filter((iv) => supportsInterval(symbol, iv))
+          if (intervals.length === 0) return null
+          // 앞 칸들이 프리셋 주기와 같으면 켜진 것(칸이 더 많아도).
+          const active = intervals.every((iv, i) => current[i] === iv)
           return (
             <li key={preset.id}>
               <button
                 type="button"
                 className={active ? 'active' : undefined}
-                onClick={() => onApply(preset.intervals)}
+                onClick={() => onApply(intervals)}
               >
                 <span className="mtf-label">{preset.label}</span>
                 <span className="mtf-ivs">
-                  {preset.intervals.map((iv) => (
+                  {intervals.map((iv) => (
                     <em key={iv}>{iv}</em>
                   ))}
                 </span>

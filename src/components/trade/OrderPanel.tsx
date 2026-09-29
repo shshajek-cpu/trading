@@ -3,6 +3,7 @@ import { usePaper, usePaperLive } from '../../lib/paper/context'
 import type { OrderRequest, OrderType, PaperPosition, PosSide, TriggerBy } from '../../lib/paper/types'
 import { DEFAULT_SETTINGS } from '../../lib/paper/types'
 import { displaySymbol, type SymbolInfo } from '../../lib/symbols'
+import { supportsPaperTrading } from '../../lib/market/ids'
 import {
   ACTION_LABEL,
   floorTo,
@@ -70,7 +71,20 @@ function fmtCountdown(ms: number): string {
 
 const SLIDER_MARKS = [0, 25, 50, 75, 100]
 
-export function OrderPanel({ symbol, symbols, compact = false, draft, onDraftApplied }: OrderPanelProps) {
+export function OrderPanel(props: OrderPanelProps) {
+  // 모의거래는 바이낸스 선물만 — 다른 시장은 시세 구독·규칙·추정 훅을 아예 부르지 않는다(훅 순서는 안쪽 컴포넌트에서 지켜진다).
+  if (!supportsPaperTrading(props.symbol)) {
+    return (
+      <section className="op op-unsupported">
+        <strong>이 시장은 모의거래를 지원하지 않습니다</strong>
+        모의거래는 바이낸스 선물에서만 됩니다.
+      </section>
+    )
+  }
+  return <OrderPanelBody {...props} />
+}
+
+function OrderPanelBody({ symbol, symbols, compact = false, draft, onDraftApplied }: OrderPanelProps) {
   const paper = usePaper()
   const quote = usePaperLive((l) => l.quotes[symbol])
   const summary = usePaperLive((l) => l.summary)

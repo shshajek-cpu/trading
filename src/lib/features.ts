@@ -1,4 +1,4 @@
-import type { Candle } from './binance'
+import type { Candle } from './market/types'
 
 /**
  * 핀 시점의 시장 상태를 숫자로 요약한 것.

@@ -1,9 +1,13 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { CoinIcon } from '../CoinIcon'
-import { fetch24hTicker, fetchKlines, rateLimitedUntil, type Candle, type Ticker24h } from '../../lib/binance'
+import { fetchCandles } from '../../lib/market'
+import { MARKET_LABEL, marketOf } from '../../lib/market/ids'
+import type { Candle } from '../../lib/market/types'
+import { useTicker24h } from '../../hooks/useTicker24h'
 import {
   describeSymbol,
   displaySymbol,
+  exchangeLabel,
   isQuarterly,
   priceDecimals,
   type SymbolInfo,
@@ -15,7 +19,6 @@ interface SymbolDetailsProps {
   infos: SymbolInfo[]
 }
 
-const TICKER_REFRESH_MS = 5000
 const KLINE_TTL_MS = 10 * 60 * 1000
 
 interface KlineCacheEntry {
@@ -27,7 +30,7 @@ const klineCache: Record<string, KlineCacheEntry> = {}
 async function loadDailyCloses(symbol: string, signal: AbortSignal): Promise<Candle[]> {
   const cached = klineCache[symbol]
   if (cached && Date.now() - cached.at < KLINE_TTL_MS) return cached.candles
-  const candles = await fetchKlines(symbol, '1d', 400, signal)
+  const candles = await fetchCandles(symbol, '1d', 400, signal)
   klineCache[symbol] = { at: Date.now(), candles }
   return candles
 }
@@ -78,32 +81,8 @@ function computePerformance(candles: Candle[]): PerfCell[] {
 }
 
 export function SymbolDetails({ symbol, infos }: SymbolDetailsProps) {
-  const [ticker, setTicker] = useState<Ticker24h | null>(null)
+  const ticker = useTicker24h(symbol)
   const [perf, setPerf] = useState<PerfCell[] | null>(null)
-  const symbolRef = useRef(symbol)
-  symbolRef.current = symbol
-
-  useEffect(() => {
-    setTicker(null)
-    const controller = new AbortController()
-    // 숨은 탭·한도 초과 중엔 조회를 건너뛴다 — 차단이 길어지지 않게. 기존 값은 유지한다.
-    const load = () => {
-      if (document.hidden || rateLimitedUntil() > Date.now()) return
-      fetch24hTicker(symbol, controller.signal)
-        .then((t) => {
-          if (!controller.signal.aborted) setTicker(t)
-        })
-        .catch(() => {})
-    }
-    load()
-    const timer = setInterval(load, TICKER_REFRESH_MS)
-    document.addEventListener('visibilitychange', load)
-    return () => {
-      controller.abort()
-      clearInterval(timer)
-      document.removeEventListener('visibilitychange', load)
-    }
-  }, [symbol])
 
   useEffect(() => {
     setPerf(null)
@@ -117,7 +96,18 @@ export function SymbolDetails({ symbol, infos }: SymbolDetailsProps) {
   }, [symbol])
 
   const info = useMemo(() => infos.find((i) => i.symbol === symbol), [infos, symbol])
-  const contractLabel = info && isQuarterly(info) ? '분기물' : '무기한'
+  const market = marketOf(symbol)
+  // 헤더: 거래소 · 시장(선물은 무기한/분기물) · 야후는 통화와 지연.
+  const headParts = [exchangeLabel(symbol, infos)]
+  if (market === 'binance') headParts.push(`${MARKET_LABEL.binance} ${info && isQuarterly(info) ? '분기물' : '무기한'}`)
+  else headParts.push(MARKET_LABEL[market])
+  if (market === 'yahoo' && info?.quoteAsset) headParts.push(info.quoteAsset)
+  if (market === 'yahoo' && info?.delay) headParts.push(`${info.delay}분 지연`)
+  // 업비트·야후의 등락은 24시간이 아니라 전일 종가 대비다.
+  const dayLabel = market === 'binance' || market === 'bspot' ? '24시간' : '오늘'
+  // 코인은 늘 열려 있다. 야후는 차트 메타의 정규장 시각으로 본다(모르면 열림으로 둔다).
+  const nowSec = Date.now() / 1000
+  const open = market !== 'yahoo' || !info?.session || (nowSec >= info.session.start && nowSec < info.session.end)
 
   const dec = priceDecimals(symbol, infos)
   // 시세를 아직 못 받았으면(심볼 전환 직후·요청 제한·실패) 0.00 대신 '—' — 0 은 잘못된 시세로 읽힌다.
@@ -129,13 +119,13 @@ export function SymbolDetails({ symbol, infos }: SymbolDetailsProps) {
   return (
     <section className="sd">
       <div className="sd-id">
-        <CoinIcon base={info?.baseAsset ?? symbol.replace(/USDT.*/, '')} size={32} />
+        <CoinIcon symbol={symbol} size={32} />
         <div className="sd-id-main">
           <span className="sd-sym">{displaySymbol(symbol, infos)}</span>
           <span className="sd-desc">{describeSymbol(symbol, infos)}</span>
         </div>
       </div>
-      <p className="sd-exch">Binance · {contractLabel}</p>
+      <p className="sd-exch">{headParts.join(' · ')}</p>
 
       <div className="sd-price-row">
         <span className="sd-price">
@@ -149,12 +139,12 @@ export function SymbolDetails({ symbol, infos }: SymbolDetailsProps) {
       </div>
 
       <p className="sd-market">
-        <span className="sd-dot" /> 시장 열림
+        <span className={`sd-dot${open ? '' : ' closed'}`} /> {open ? '시장 열림' : '시장 닫힘'}
       </p>
 
       <div className="sd-stats">
         <div className="sd-stat">
-          <span className="sd-stat-label">24시간 거래량</span>
+          <span className="sd-stat-label">{dayLabel} 거래량</span>
           <span className="sd-stat-value">{ticker ? fmtCompact(ticker.volume) : '—'}</span>
         </div>
         <div className="sd-stat">
@@ -162,11 +152,11 @@ export function SymbolDetails({ symbol, infos }: SymbolDetailsProps) {
           <span className="sd-stat-value">{ticker ? fmtCompact(ticker.quoteVolume) : '—'}</span>
         </div>
         <div className="sd-stat">
-          <span className="sd-stat-label">24시간 고가</span>
+          <span className="sd-stat-label">{dayLabel} 고가</span>
           <span className="sd-stat-value">{ticker ? fmtPrice(ticker.highPrice, dec) : '—'}</span>
         </div>
         <div className="sd-stat">
-          <span className="sd-stat-label">24시간 저가</span>
+          <span className="sd-stat-label">{dayLabel} 저가</span>
           <span className="sd-stat-value">{ticker ? fmtPrice(ticker.lowPrice, dec) : '—'}</span>
         </div>
       </div>

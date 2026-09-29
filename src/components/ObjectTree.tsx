@@ -4,6 +4,7 @@ import { ToolIcon, type IconName } from '../chart/drawing/toolIcons'
 import { formatPrice } from '../chart/format'
 import { intlZone } from '../lib/timezone'
 import { tip } from '../lib/tooltip'
+import { lineAlertMode, LINE_ALERT_HINTS } from '../lib/alertRules'
 import { Icon } from './Icon'
 import './ObjectTree.css'
 
@@ -26,11 +27,13 @@ export interface ObjectTreeProps {
   locked?: boolean
 }
 
-/** 가격이 곧 그림의 정체인 수평 계열 — 차트의 가격 라벨과 같은 묶음. */
-const PRICE_KINDS: Partial<Record<DrawingKind, true>> = { horizontal: true, horizontalRay: true, crossLine: true }
+/** 가격이 곧 그림의 정체인 종류(수평 계열·가격 라벨·가격 노트) — 차트의 가격 라벨과 같은 묶음. */
+const PRICE_KINDS: Partial<Record<DrawingKind, true>> = {
+  horizontal: true, horizontalRay: true, crossLine: true, priceLabel: true, priceNote: true,
+}
 
 /** 적은 글이 곧 그림의 정체인 종류 — 첫 줄을 보인다. */
-const TEXT_KINDS: Partial<Record<DrawingKind, true>> = { text: true, note: true }
+const TEXT_KINDS: Partial<Record<DrawingKind, true>> = { text: true, note: true, callout: true, comment: true, signpost: true }
 
 export function ObjectTree({
   symbol,
@@ -113,11 +116,11 @@ export function ObjectTree({
                     </span>
                   )}
                 </button>
-                {d.kind === 'horizontal' && (
+                {lineAlertMode(d.kind) && (
                   <button
                     type="button"
                     className={`tv-objtree-act${d.alert ? ' on' : ''}`}
-                    {...tip(d.alert ? '알림 끄기' : '알림 켜기', '가격이 이 수평선을 지나가면 알려 줍니다.')}
+                    {...tip(d.alert ? '알림 끄기' : '알림 켜기', LINE_ALERT_HINTS[lineAlertMode(d.kind) ?? 'level'])}
                     aria-label="알림"
                     aria-pressed={d.alert}
                     onClick={() =>

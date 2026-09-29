@@ -3,6 +3,7 @@ import { FEATURE_LABELS, formatFeature, type FeatureSet } from '../lib/features'
 import { SIDE_COLORS, SIDE_LABELS, type Pin, type PinSide } from '../lib/pins'
 import { deriveRule, describeRule, MIN_PINS, scoreAgainst } from '../lib/pinRules'
 import { intlZone } from '../lib/timezone'
+import { shortSymbol } from '../lib/symbols'
 
 interface PinPanelProps {
   pins: Pin[]
@@ -113,7 +114,7 @@ export function PinPanel({
               <li key={pin.id}>
                 <span className="pin-dot" style={{ background: SIDE_COLORS[pin.side] }} />
                 <span className="pin-meta">
-                  {pin.symbol.replace('USDT', '')} {pin.interval}
+                  {shortSymbol(pin.symbol)} {pin.interval}
                   <em>
                     {new Date(pin.time * 1000).toLocaleString('ko-KR', {
                       timeZone: intlZone(timezone),
@@ -156,7 +157,7 @@ export function PinPanel({
 
           {(longScore !== null || shortScore !== null) && (
             <div className="pin-score">
-              <span className="pin-score-title">{symbol.replace('USDT', '')} 지금</span>
+              <span className="pin-score-title">{shortSymbol(symbol)} 지금</span>
               {longScore !== null && (
                 <span className="pin-score-val" style={{ color: SIDE_COLORS.long }}>
                   롱 {longScore}점

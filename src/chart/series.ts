@@ -16,7 +16,7 @@ import {
   type Time,
   type UTCTimestamp,
 } from 'lightweight-charts'
-import type { Candle } from '../lib/binance'
+import type { Candle } from '../lib/market/types'
 import type { ChartPalette } from '../lib/theme'
 import type { ChartType } from '../lib/chartTypes'
 import { HlcAreaSeries, VolumeCandleSeries } from './customSeries'

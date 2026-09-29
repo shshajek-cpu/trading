@@ -1,14 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import {
-  combinedKlineStreamUrl,
-  fetchKlines,
-  klineStreamName,
-  normalizeStreamKline,
-  type Candle,
-  type CombinedStreamMessage,
-  type Interval,
-  type KlineStreamEvent,
-} from '../lib/binance'
+import { fetchCandles } from '../lib/market'
+import { subscribeCandles } from '../lib/market/live'
+import type { Candle, Interval } from '../lib/market/types'
 import { computeIndicator, type ComputedIndicator } from '../chart/compute'
 import { CHART_PALETTES } from '../lib/theme'
 import {
@@ -50,10 +43,6 @@ const HISTORY = 1000
 const MAX_CANDLES = 1500
 /** 진행 중인 봉은 1초에 한 번까지만 판정한다. 봉 마감은 항상 판정한다. */
 const EVAL_INTERVAL_MS = 1000
-const INITIAL_BACKOFF_MS = 1000
-const MAX_BACKOFF_MS = 30000
-/** 봉 스트림이 이만큼 조용하면 죽은 연결로 보고 다시 연결한다. */
-const IDLE_TIMEOUT_MS = 30000
 
 interface Feed {
   symbol: string
@@ -75,7 +64,8 @@ function mergeCandle(list: Candle[], candle: Candle): void {
 }
 
 /**
- * 지표 값 알림. 활성 알림의 (종목, 주기)마다 과거 봉을 받고 봉 스트림 하나로 실시간 봉을 이어 받아,
+ * 지표 값 알림. 활성 알림의 (종목, 주기)마다 과거 봉을 받고 실시간 봉(lib/market/live — 바이낸스·업비트 웹소켓,
+ * 야후 폴링)을 이어 받아,
  * 알림에 저장된 지표 사본으로 값을 계산해 조건을 판정한다. 차트에 그 종목이 떠 있지 않아도 동작한다.
  * 앱이 열려 있을 때(백그라운드 탭 포함) 여기서 울린다. 앱이 닫혀 있으면 푸시 워커(worker/indicatorAlerts.ts)가
  * 동기화된 이 목록을 매분 같은 계산·판정으로 보고 웹 푸시를 보낸다 — 같은 태그(ind-<id>)라 OS 가 하나로 합친다.
@@ -132,21 +122,15 @@ export function useIndicatorAlerts(onFire: (alert: IndicatorAlert, value: number
   }, [])
 
   // 감시할 (종목, 주기) 묶음. 이게 바뀔 때만 데이터 연결을 다시 만든다.
-  const watchKey = [...new Set(alerts.filter((a) => a.active).map((a) => klineStreamName(a.symbol, a.interval)))]
-    .sort()
-    .join('/')
-  const feedSpecRef = useRef(new Map<string, { symbol: string; interval: Interval }>())
-  feedSpecRef.current = new Map(
-    alerts.map((a) => [klineStreamName(a.symbol, a.interval), { symbol: a.symbol, interval: a.interval }]),
-  )
+  // 키는 `종목|주기`(종목 id 에는 | 가 없다).
+  const watchKey = [...new Set(alerts.filter((a) => a.active).map((a) => `${a.symbol}|${a.interval}`))].sort().join(',')
 
   useEffect(() => {
     if (!watchKey) return
-    const feeds = new Map<string, Feed>()
-    for (const stream of watchKey.split('/')) {
-      const spec = feedSpecRef.current.get(stream)
-      if (spec) feeds.set(stream, { ...spec, candles: [], loaded: false, lastEval: 0 })
-    }
+    const feeds: Feed[] = watchKey.split(',').map((key) => {
+      const cut = key.lastIndexOf('|')
+      return { symbol: key.slice(0, cut), interval: key.slice(cut + 1) as Interval, candles: [], loaded: false, lastEval: 0 }
+    })
 
     let disposed = false
     const controller = new AbortController()
@@ -160,6 +144,8 @@ export function useIndicatorAlerts(onFire: (alert: IndicatorAlert, value: number
       const fired: { alert: IndicatorAlert; value: number }[] = []
       for (const alert of alertsRef.current) {
         if (!alert.active || alert.symbol !== feed.symbol || alert.interval !== feed.interval) continue
+        // 만료된 알림은 울리지 않는다(목록에는 「만료됨」으로 남는다).
+        if (alert.expiresAt !== undefined && Date.now() >= alert.expiresAt) continue
         if (alert.trigger === 'perBarClose' && !closed) continue
         if (alert.trigger !== 'once' && alert.lastBar === barTime) continue
         const cacheKey = `${alert.indicator.kind}:${JSON.stringify(alert.indicator.params)}`
@@ -191,9 +177,9 @@ export function useIndicatorAlerts(onFire: (alert: IndicatorAlert, value: number
 
     const load = async (feed: Feed) => {
       try {
-        const data = await fetchKlines(feed.symbol, feed.interval, HISTORY, controller.signal)
+        const data = await fetchCandles(feed.symbol, feed.interval, HISTORY, controller.signal)
         if (disposed) return
-        // 받는 사이 스트림으로 온 더 최신 봉은 살린다.
+        // 받는 사이 실시간으로 온 더 최신 봉은 살린다.
         const tail = feed.candles.filter((c) => c.time > (data[data.length - 1]?.time ?? Infinity))
         feed.candles = [...data, ...tail]
         feed.loaded = true
@@ -202,74 +188,29 @@ export function useIndicatorAlerts(onFire: (alert: IndicatorAlert, value: number
       }
     }
 
-    let socket: WebSocket | null = null
-    let retryTimer: ReturnType<typeof setTimeout> | null = null
-    let idleTimer: ReturnType<typeof setTimeout> | null = null
-    let backoff = INITIAL_BACKOFF_MS
-
-    const armIdle = (ws: WebSocket) => {
-      if (idleTimer !== null) clearTimeout(idleTimer)
-      idleTimer = setTimeout(() => {
-        if (!disposed && socket === ws) ws.close()
-      }, IDLE_TIMEOUT_MS)
-    }
-
-    const connect = () => {
-      if (disposed) return
-      const ws = new WebSocket(combinedKlineStreamUrl([...feeds.keys()]))
-      socket = ws
-      ws.onopen = () => {
-        if (disposed) return
-        backoff = INITIAL_BACKOFF_MS
-        armIdle(ws)
-        // 처음 연결과 재연결 모두 과거 봉을 다시 받아 끊긴 동안의 빈틈을 메운다.
-        for (const feed of feeds.values()) void load(feed)
-      }
-      ws.onmessage = (event: MessageEvent<string>) => {
-        if (disposed) return
-        armIdle(ws)
-        let message: CombinedStreamMessage<KlineStreamEvent>
-        try {
-          message = JSON.parse(event.data) as CombinedStreamMessage<KlineStreamEvent>
-        } catch {
-          return
-        }
-        const feed = feeds.get(message.stream)
-        const k = message.data?.k
-        if (!feed || !k) return
-        const candle = normalizeStreamKline(k)
-        if (feed.candles.length === 0) feed.candles = [candle]
-        else mergeCandle(feed.candles, candle)
-        if (!feed.loaded) return
-        const now = Date.now()
-        if (k.x || now - feed.lastEval >= EVAL_INTERVAL_MS) {
-          feed.lastEval = now
-          evaluate(feed, k.x)
-        }
-      }
-      ws.onerror = () => ws.close()
-      ws.onclose = () => {
-        if (disposed) return
-        const delay = backoff
-        backoff = Math.min(backoff * 2, MAX_BACKOFF_MS)
-        retryTimer = setTimeout(connect, delay)
-      }
-    }
-
-    connect()
+    // (종목, 주기)마다 실시간 봉을 구독한다. 처음 연결과 재연결 모두 과거 봉을 다시 받아 끊긴 동안의 빈틈을 메운다.
+    const stops = feeds.map((feed) => {
+      void load(feed)
+      return subscribeCandles(feed.symbol, feed.interval, {
+        onReconnect: () => void load(feed),
+        onCandle: (candle, closed) => {
+          if (disposed) return
+          if (feed.candles.length === 0) feed.candles = [candle]
+          else mergeCandle(feed.candles, candle)
+          if (!feed.loaded) return
+          const now = Date.now()
+          if (closed || now - feed.lastEval >= EVAL_INTERVAL_MS) {
+            feed.lastEval = now
+            evaluate(feed, closed)
+          }
+        },
+      })
+    })
 
     return () => {
       disposed = true
       controller.abort()
-      if (retryTimer !== null) clearTimeout(retryTimer)
-      if (idleTimer !== null) clearTimeout(idleTimer)
-      if (socket) {
-        socket.onopen = null
-        socket.onmessage = null
-        socket.onerror = null
-        socket.onclose = null
-        socket.close()
-      }
+      for (const stop of stops) stop()
     }
   }, [watchKey])
 

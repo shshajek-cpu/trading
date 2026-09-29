@@ -2,8 +2,13 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Dialog } from './ui/Dialog'
 import { Icon } from './Icon'
 import { CoinIcon } from './CoinIcon'
-import { describeSymbol, displaySymbol, isQuarterly, symbolCategory, type SymbolInfo } from '../lib/symbols'
-import { rankSymbol, retrySymbols, useSymbolsStatus } from '../hooks/useSymbols'
+import { describeSymbol, displaySymbol, exchangeLabel, type SymbolInfo } from '../lib/symbols'
+import { rankSymbol, rememberYahooQuote, requireSymbolList, retrySymbols, useSymbolsStatus } from '../hooks/useSymbols'
+import { MARKET_LABEL, marketOf } from '../lib/market/ids'
+import type { MarketId } from '../lib/market/types'
+import type { YahooQuote } from '../lib/market/yahoo'
+import { searchYahoo } from '../lib/market'
+import { infoQuote, searchSymbols, symbolTypeTag, yahooQueryable, type SearchTab } from '../lib/symbolSearch'
 import './symbolSearch.css'
 
 interface SymbolSearchDialogProps {
@@ -20,20 +25,35 @@ interface SymbolSearchDialogProps {
   initialQuery?: string
 }
 
-type Tab = 'all' | 'perp' | 'quarterly' | 'stock'
-
-const TABS: { id: Tab; label: string }[] = [
+const TABS: { id: SearchTab; label: string }[] = [
   { id: 'all', label: '전체' },
-  { id: 'perp', label: '무기한' },
-  { id: 'quarterly', label: '분기물' },
-  { id: 'stock', label: '주식·원자재' },
+  { id: 'binance', label: MARKET_LABEL.binance },
+  { id: 'bspot', label: MARKET_LABEL.bspot },
+  { id: 'upbit', label: MARKET_LABEL.upbit },
+  { id: 'yahoo', label: MARKET_LABEL.yahoo },
 ]
 
-const MAX_ROWS = 200
+/** 거래소 배지 글자. */
+const BADGE: Record<MarketId, string> = { binance: 'B', bspot: 'B', upbit: 'U', yahoo: 'Y' }
 
-interface Ranked {
-  info: SymbolInfo
-  score: number
+type ListMarket = Exclude<MarketId, 'yahoo'>
+
+/** 목록을 못 받은 시장의 '불러오는 중'/'다시 시도' 한 줄. 이 줄이 보일 때만 목록을 받기 시작한다. */
+function ListStatus({ market, showLabel }: { market: ListMarket; showLabel: boolean }) {
+  const status = useSymbolsStatus(market)
+  if (!status.missing) return null
+  const label = showLabel ? `${MARKET_LABEL[market]} ` : ''
+  return status.failed ? (
+    <p className="ss-empty">
+      {label}심볼 목록을 불러오지 못했습니다 —{' '}
+      {/* 목록의 Enter(첫 심볼 고르기)가 이 버튼을 가로채지 않게 한다. */}
+      <button type="button" className="tv-btn" onClick={() => retrySymbols(market)} onKeyDown={(e) => e.stopPropagation()}>
+        다시 시도
+      </button>
+    </p>
+  ) : (
+    <p className="ss-empty">{label}심볼 목록을 불러오는 중…</p>
+  )
 }
 
 /** displaySymbol 안에서 검색어가 걸린 구간을 accent 로 강조. */
@@ -61,9 +81,11 @@ export function SymbolSearchDialog({
   initialQuery,
 }: SymbolSearchDialogProps) {
   const [query, setQuery] = useState('')
-  const listStatus = useSymbolsStatus()
-  const [tab, setTab] = useState<Tab>('all')
+  const [tab, setTab] = useState<SearchTab>('all')
   const [active, setActive] = useState(0)
+  /** 야후 검색 결과(검색어와 함께 — 늦게 온 옛 결과를 버린다). */
+  const [yahooHits, setYahooHits] = useState<{ q: string; quotes: YahooQuote[] }>({ q: '', quotes: [] })
+  const [yahooBusy, setYahooBusy] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
   const listRef = useRef<HTMLDivElement>(null)
 
@@ -79,31 +101,48 @@ export function SymbolSearchDialog({
 
   const selectedSet = useMemo(() => new Set(selected ?? []), [selected])
 
-  const results = useMemo(() => {
-    const q = query.trim().toUpperCase()
-    const inTab = symbols.filter((s) => tab === 'all' || symbolCategory(s) === tab)
-    let ranked: Ranked[]
-    if (!q) {
-      ranked = inTab.map((info) => ({ info, score: isQuarterly(info) ? 1 : 0 }))
-    } else {
-      ranked = []
-      for (const info of inTab) {
-        const score = rankSymbol(info, q)
-        if (score >= 0) ranked.push({ info, score })
-      }
+  // 전체·현물·업비트 탭이 보이면 그 목록을 받기 시작한다.
+  useEffect(() => {
+    if (!open) return
+    if (tab === 'all' || tab === 'bspot') requireSymbolList('bspot')
+    if (tab === 'all' || tab === 'upbit') requireSymbolList('upbit')
+  }, [open, tab])
+
+  const trimmed = query.trim()
+  const wantYahoo = open && (tab === 'all' || tab === 'yahoo') && yahooQueryable(trimmed)
+
+  // 야후 검색(영문·숫자 검색어만 — 한글은 이름표로 찾는다). 입력이 멈추고 300ms 뒤, 새 입력이면 이전 요청을 끊는다.
+  useEffect(() => {
+    if (!wantYahoo) {
+      setYahooBusy(false)
+      return
     }
-    ranked.sort((a, b) => {
-      if (a.score !== b.score) return a.score - b.score
-      // 무기한을 분기물보다 앞에.
-      const aq = isQuarterly(a.info) ? 1 : 0
-      const bq = isQuarterly(b.info) ? 1 : 0
-      if (aq !== bq) return aq - bq
-      // 접두사 계열에선 짧은 심볼(ETHUSDT)이 긴 것(ETHFIUSDT)보다 앞에.
-      if (a.info.symbol.length !== b.info.symbol.length) return a.info.symbol.length - b.info.symbol.length
-      return a.info.symbol.localeCompare(b.info.symbol)
-    })
-    return ranked.slice(0, MAX_ROWS).map((r) => r.info)
-  }, [symbols, query, tab])
+    const ctrl = new AbortController()
+    setYahooBusy(true)
+    const t = setTimeout(() => {
+      searchYahoo(trimmed, ctrl.signal)
+        .then((quotes) => {
+          if (!ctrl.signal.aborted) setYahooHits({ q: trimmed, quotes })
+        })
+        .catch(() => {
+          if (!ctrl.signal.aborted) setYahooHits({ q: trimmed, quotes: [] })
+        })
+        .finally(() => {
+          if (!ctrl.signal.aborted) setYahooBusy(false)
+        })
+    }, 300)
+    return () => {
+      clearTimeout(t)
+      ctrl.abort()
+    }
+  }, [wantYahoo, trimmed])
+
+  const hits = wantYahoo && yahooHits.q === trimmed ? yahooHits.quotes : undefined
+
+  const results = useMemo(
+    () => searchSymbols(symbols, hits ?? [], query, tab, rankSymbol),
+    [symbols, hits, query, tab],
+  )
 
   useEffect(() => setActive(0), [query, tab])
 
@@ -114,8 +153,13 @@ export function SymbolSearchDialog({
 
   const q = query.trim().toUpperCase()
 
-  const choose = (symbol: string) => {
-    onSelect(symbol)
+  const choose = (info: SymbolInfo) => {
+    if (marketOf(info.symbol) === 'yahoo') {
+      // 검색 결과의 이름·거래소를 차트 메타가 오기 전에 먼저 적어 둔다.
+      const hit = hits?.find((h) => `YF:${h.symbol}` === info.symbol)
+      rememberYahooQuote(hit ?? infoQuote(info))
+    }
+    onSelect(info.symbol)
     if (!keepOpen) onClose()
   }
 
@@ -129,7 +173,7 @@ export function SymbolSearchDialog({
     } else if (e.key === 'Enter') {
       e.preventDefault()
       const info = results[active]
-      if (info) choose(info.symbol)
+      if (info) choose(info)
     }
   }
 
@@ -176,13 +220,11 @@ export function SymbolSearchDialog({
       height={640}
       header={header}
       className="ss-dialog"
-      footer={<span className="ss-hint">심볼 또는 코인 이름으로 검색</span>}
+      footer={<span className="ss-hint">심볼, 코인·종목 이름(한글 포함)으로 검색 — 주식·지수는 영문 심볼로 야후에서도 찾습니다</span>}
     >
       <div className="ss-list" ref={listRef} onKeyDown={onKeyDown}>
         {results.map((info, idx) => {
-          const cat = symbolCategory(info)
-          const underlying = info.underlyingType === 'EQUITY' ? 'stock' : info.underlyingType === 'COMMODITY' ? 'commodity' : info.underlyingType === 'INDEX' ? 'index' : 'crypto'
-          const tag = `${cat === 'quarterly' ? 'futures' : 'swap'} ${underlying}`
+          const market = marketOf(info.symbol)
           return (
             <button
               key={info.symbol}
@@ -190,14 +232,15 @@ export function SymbolSearchDialog({
               data-idx={idx}
               className={`ss-row${idx === active ? ' active' : ''}`}
               onMouseEnter={() => setActive(idx)}
-              onClick={() => choose(info.symbol)}
+              onClick={() => choose(info)}
             >
-              <CoinIcon base={info.baseAsset} size={24} />
+              <CoinIcon symbol={info.symbol} size={24} />
               <span className="ss-sym">{highlight(displaySymbol(info.symbol, [info]), q)}</span>
               <span className="ss-desc">{describeSymbol(info.symbol, [info])}</span>
-              <span className="ss-tag">{tag}</span>
+              <span className="ss-tag">{symbolTypeTag(info)}</span>
               <span className="ss-exch">
-                <span className="ss-exch-badge">B</span>Binance
+                <span className={`ss-exch-badge ss-exch-${market}`}>{BADGE[market]}</span>
+                <span className="ss-exch-name">{exchangeLabel(info.symbol, [info])}</span>
               </span>
               <span className="ss-check">
                 {selectedSet.has(info.symbol) && <Icon name="check" size={16} />}
@@ -206,21 +249,11 @@ export function SymbolSearchDialog({
           )
         })}
         {/* 목록을 못 받았으면 '없음' 대신 이유와 다시 시도를 보여 준다. */}
-        {listStatus.missing ? (
-          listStatus.failed ? (
-            <p className="ss-empty">
-              심볼 목록을 불러오지 못했습니다 —{' '}
-              {/* 목록의 Enter(첫 심볼 고르기)가 이 버튼을 가로채지 않게 한다. */}
-              <button type="button" className="tv-btn" onClick={retrySymbols} onKeyDown={(e) => e.stopPropagation()}>
-                다시 시도
-              </button>
-            </p>
-          ) : (
-            <p className="ss-empty">심볼 목록을 불러오는 중…</p>
-          )
-        ) : (
-          results.length === 0 && <p className="ss-empty">일치하는 심볼이 없습니다.</p>
-        )}
+        {open && (tab === 'all' || tab === 'binance') && <ListStatus market="binance" showLabel={tab === 'all'} />}
+        {open && (tab === 'all' || tab === 'bspot') && <ListStatus market="bspot" showLabel={tab === 'all'} />}
+        {open && (tab === 'all' || tab === 'upbit') && <ListStatus market="upbit" showLabel={tab === 'all'} />}
+        {wantYahoo && yahooBusy && <p className="ss-empty">야후에서 찾는 중…</p>}
+        {results.length === 0 && !(wantYahoo && yahooBusy) && <p className="ss-empty">일치하는 심볼이 없습니다.</p>}
       </div>
     </Dialog>
   )

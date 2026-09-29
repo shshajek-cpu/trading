@@ -3,7 +3,7 @@
  * localization.timeFormatter 와 timeScale.tickMarkFormatter 에 넣을 함수를 만든다.
  */
 import { TickMarkType, type Time } from 'lightweight-charts'
-import type { Interval } from '../lib/binance'
+import type { Interval } from '../lib/market/types'
 import { INTERVAL_SECONDS } from '../lib/intervals'
 import { intlZone } from '../lib/timezone'
 

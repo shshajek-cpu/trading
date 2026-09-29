@@ -1,4 +1,4 @@
-import type { Interval } from './binance'
+import type { Interval } from './market/types'
 import { nowIn, zonedToEpoch } from './timezone'
 
 const DAY = 86400

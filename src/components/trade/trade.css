@@ -11,6 +11,20 @@
   color: var(--tv-text);
 }
 
+/* 모의거래를 지원하지 않는 시장(현물·업비트·주식) */
+.op-unsupported {
+  padding: 24px 16px;
+  text-align: center;
+  color: var(--tv-text-dim);
+}
+
+.op-unsupported strong {
+  display: block;
+  margin-bottom: 6px;
+  color: var(--tv-text-strong);
+  font-size: var(--tv-fs);
+}
+
 /* ── 헤더 ── */
 .op-head {
   display: flex;

@@ -1,23 +1,27 @@
 import { useEffect, useRef, useState } from 'react'
-import type { Interval } from '../lib/binance'
+import type { Interval } from '../lib/market/types'
+import { supportsInterval } from '../lib/market/ids'
 import { parseQuickInterval } from '../lib/quickInterval'
+import { UNSUPPORTED_INTERVAL } from './menus/IntervalMenu'
 
 interface QuickIntervalBoxProps {
   /** Non-null string = open, seeded with the typed character. */
   seed: string | null
+  /** 활성 칸 종목 — 이 시장에서 못 그리는 주기는 적용하지 않는다. */
+  symbol: string
   onApply: (interval: Interval) => void
   onClose: () => void
 }
 
-export function QuickIntervalBox({ seed, onApply, onClose }: QuickIntervalBoxProps) {
+export function QuickIntervalBox({ seed, symbol, onApply, onClose }: QuickIntervalBoxProps) {
   const [value, setValue] = useState('')
-  const [invalid, setInvalid] = useState(false)
+  const [error, setError] = useState<string | null>(null)
   const inputRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     if (seed !== null) {
       setValue(seed)
-      setInvalid(false)
+      setError(null)
       // Focus after mount so the seeded character is editable immediately.
       requestAnimationFrame(() => inputRef.current?.focus())
     }
@@ -28,7 +32,11 @@ export function QuickIntervalBox({ seed, onApply, onClose }: QuickIntervalBoxPro
   const submit = () => {
     const iv = parseQuickInterval(value)
     if (!iv) {
-      setInvalid(true)
+      setError('알 수 없는 주기')
+      return
+    }
+    if (!supportsInterval(symbol, iv)) {
+      setError(UNSUPPORTED_INTERVAL)
       return
     }
     onApply(iv)
@@ -42,12 +50,13 @@ export function QuickIntervalBox({ seed, onApply, onClose }: QuickIntervalBoxPro
         <input
           id="tv-quickiv-input"
           ref={inputRef}
-          className={`tv-input${invalid ? ' invalid' : ''}`}
+          className={`tv-input${error ? ' invalid' : ''}`}
+          aria-invalid={error ? true : undefined}
           value={value}
           autoComplete="off"
           onChange={(e) => {
             setValue(e.target.value)
-            setInvalid(false)
+            setError(null)
           }}
           onKeyDown={(e) => {
             if (e.key === 'Enter') {
@@ -59,7 +68,7 @@ export function QuickIntervalBox({ seed, onApply, onClose }: QuickIntervalBoxPro
             }
           }}
         />
-        {invalid && <span className="tv-quickiv-error">알 수 없는 주기</span>}
+        {error && <span className="tv-quickiv-error">{error}</span>}
       </div>
     </div>
   )

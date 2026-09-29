@@ -1,18 +1,43 @@
-import { defineConfig } from 'vite'
+import { defineConfig, type Plugin } from 'vite'
 import react from '@vitejs/plugin-react'
 import { VitePWA } from 'vite-plugin-pwa'
+import { fetchYahoo } from './src/lib/market/yahooProxy'
+
+/** 개발 서버에서도 /api/yahoo 를 받는다(배포는 functions/api/yahoo.ts). 검사·야후 호출은 같은 모듈이다. */
+function yahooDevProxy(): Plugin {
+  return {
+    name: 'yahoo-dev-proxy',
+    configureServer(server) {
+      server.middlewares.use('/api/yahoo', (req, res) => {
+        if (req.method !== 'GET') {
+          res.statusCode = 405
+          res.end()
+          return
+        }
+        const params = new URL(req.url ?? '/', 'http://localhost').searchParams
+        void fetchYahoo(params).then(({ status, body }) => {
+          res.statusCode = status
+          res.setHeader('Content-Type', 'application/json; charset=utf-8')
+          res.setHeader('Cache-Control', 'no-store')
+          res.end(body)
+        })
+      })
+    },
+  }
+}
 
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [
     react(),
+    yahooDevProxy(),
     VitePWA({
       registerType: 'autoUpdate',
       includeAssets: ['favicon.svg'],
       manifest: {
         name: 'Trading',
         short_name: 'Trading',
-        description: '바이낸스 선물 실시간 차트',
+        description: '코인·주식 실시간 차트 (바이낸스·업비트·야후)',
         // 상단 상태표시줄 색. 앱 배경과 맞춰야 이음새가 안 보인다.
         theme_color: '#0f0f0f',
         // 앱을 열 때 잠깐 보이는 첫 화면 색.
@@ -38,6 +63,11 @@ export default defineConfig({
         runtimeCaching: [
           {
             urlPattern: /^https:\/\/fapi\.binance\.com\/.*/,
+            handler: 'NetworkOnly',
+          },
+          {
+            // 야후 프록시 — 지난 시세를 서비스워커가 내주면 안 된다.
+            urlPattern: /\/api\/yahoo(\?|$)/,
             handler: 'NetworkOnly',
           },
         ],

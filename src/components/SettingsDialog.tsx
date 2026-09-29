@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
 import { Dialog } from './ui/Dialog'
 import { DEFAULT_CHART_SETTINGS, TIMEZONES, type ChartSettings } from '../lib/chartSettings'
+import { alertSettings, DEFAULT_ALERT_SETTINGS, setAlertSettings, type AlertSettings } from '../lib/alertSettings'
+import { primeAlertSound } from '../lib/alertSound'
 
 interface SettingsDialogProps {
   open: boolean
@@ -9,7 +11,7 @@ interface SettingsDialogProps {
   onChange: (next: ChartSettings) => void
 }
 
-type Tab = 'symbol' | 'status' | 'scale' | 'canvas' | 'timezone'
+type Tab = 'symbol' | 'status' | 'scale' | 'canvas' | 'timezone' | 'alerts'
 
 const TABS: { id: Tab; label: string }[] = [
   { id: 'symbol', label: '심볼' },
@@ -17,6 +19,7 @@ const TABS: { id: Tab; label: string }[] = [
   { id: 'scale', label: '스케일' },
   { id: 'canvas', label: '캔버스' },
   { id: 'timezone', label: '시간대' },
+  { id: 'alerts', label: '알림' },
 ]
 
 const GRID_OPTIONS: { id: ChartSettings['grid']; label: string }[] = [
@@ -29,18 +32,30 @@ const GRID_OPTIONS: { id: ChartSettings['grid']; label: string }[] = [
 export function SettingsDialog({ open, onClose, settings, onChange }: SettingsDialogProps) {
   const [tab, setTab] = useState<Tab>('symbol')
   const [draft, setDraft] = useState<ChartSettings>(settings)
+  // 알림 설정(동기화 키 trading.alertSettings.v1)도 차트 설정처럼 확인을 눌러야 반영한다.
+  const [alertDraft, setAlertDraft] = useState<AlertSettings>(alertSettings.get())
 
   // Reopening starts from the live settings; edits are only committed on 확인.
   useEffect(() => {
     if (open) setDraft(settings)
   }, [open, settings])
+  useEffect(() => {
+    if (open) setAlertDraft(alertSettings.get())
+  }, [open])
 
   const set = <K extends keyof ChartSettings>(key: K, value: ChartSettings[K]) =>
     setDraft((prev) => ({ ...prev, [key]: value }))
 
   const footer = (
     <>
-      <button type="button" className="tv-btn" onClick={() => setDraft(DEFAULT_CHART_SETTINGS)}>
+      <button
+        type="button"
+        className="tv-btn"
+        onClick={() => {
+          setDraft(DEFAULT_CHART_SETTINGS)
+          setAlertDraft(DEFAULT_ALERT_SETTINGS)
+        }}
+      >
         기본값
       </button>
       <span className="tv-settings-spacer" />
@@ -52,6 +67,7 @@ export function SettingsDialog({ open, onClose, settings, onChange }: SettingsDi
         className="tv-btn primary"
         onClick={() => {
           onChange(draft)
+          setAlertSettings(alertDraft)
           onClose()
         }}
       >
@@ -211,6 +227,33 @@ export function SettingsDialog({ open, onClose, settings, onChange }: SettingsDi
                   <option value="dark">다크</option>
                   <option value="light">라이트</option>
                 </select>
+              </label>
+            </>
+          )}
+
+          {tab === 'alerts' && (
+            <>
+              <label className="tv-field">
+                <span className="tv-field-label">새 수평선에 알림 자동 켜기</span>
+                <input
+                  className="tv-switch"
+                  type="checkbox"
+                  checked={alertDraft.autoLineAlert}
+                  onChange={(e) => setAlertDraft((prev) => ({ ...prev, autoLineAlert: e.target.checked }))}
+                />
+              </label>
+              <label className="tv-field">
+                <span className="tv-field-label">알림 소리</span>
+                <input
+                  className="tv-switch"
+                  type="checkbox"
+                  checked={alertDraft.sound}
+                  onChange={(e) => {
+                    // 이 누름 안에서 오디오를 깨워 둬야 나중에 소리가 난다.
+                    if (e.target.checked) primeAlertSound()
+                    setAlertDraft((prev) => ({ ...prev, sound: e.target.checked }))
+                  }}
+                />
               </label>
             </>
           )}

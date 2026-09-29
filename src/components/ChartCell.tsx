@@ -1,17 +1,20 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Chart, type PaneInfo, type CompareInfo } from './Chart'
 import { CoinIcon } from './CoinIcon'
-import { useBinanceKlines } from '../hooks/useBinanceKlines'
-import { useBinanceWebSocket } from '../hooks/useBinanceWebSocket'
+import { useKlines } from '../hooks/useKlines'
+import { useLiveCandles } from '../hooks/useLiveCandles'
 import { useTicker24h } from '../hooks/useTicker24h'
-import type { Candle, Interval } from '../lib/binance'
-import { rateLimitedUntil } from '../lib/binance'
+import { useSymbols } from '../hooks/useSymbols'
+import type { Candle, Interval } from '../lib/market/types'
+import { rateLimitedUntil } from '../lib/market'
+import { exchangeLabel, shortSymbol } from '../lib/symbols'
+import { marketOf } from '../lib/market/ids'
 import type { ChartSettings } from '../lib/chartSettings'
 import type { ChartType, ScaleMode } from '../lib/chartTypes'
 import { INTERVAL_INFO } from '../lib/intervals'
 import type { IndicatorInstance } from '../lib/indicatorConfig'
 import { indicatorTitle } from '../lib/indicatorConfig'
-import type { PriceAlert } from '../hooks/usePriceAlerts'
+import type { PriceAlert } from '../lib/alertRules'
 import type { Drawing, DrawingTool, MagnetMode, NewDrawing } from '../lib/drawings'
 import type { Pin } from '../lib/pins'
 import { computeFeatures, MIN_HISTORY, type FeatureSet } from '../lib/features'
@@ -26,6 +29,8 @@ import './indicators.css'
 
 /** 웹소켓 틱이 이보다 오래 없으면 REST 재조회로 차트를 따라잡는다. */
 const STALE_MS = 15000
+/** 업비트는 체결로만 봉이 움직인다 — 거래가 뜸한 종목에서 헛 재조회를 하지 않게 길게 둔다. */
+const UPBIT_STALE_MS = 120000
 
 /** 리플레이 속도(봉당 ms). */
 const REPLAY_SPEEDS: { label: string; ms: number }[] = [
@@ -230,7 +235,9 @@ export function ChartCell({
   const [replayBase, setReplayBase] = useState<ReplayBase | null>(null)
 
   const ticker = useTicker24h(symbol)
-  const { candles, loading, error, reload, loadOlder, loadingOlder, exhausted, commit } = useBinanceKlines(symbol, interval)
+  const { candles, loading, error, reload, loadOlder, loadingOlder, exhausted, commit } = useKlines(symbol, interval)
+  const infos = useSymbols([symbol, ...compare])
+  const symbolInfo = infos.find((i) => i.symbol === symbol)
 
   const lastTickRef = useRef(0)
   const onPriceRef = useRef(onPrice)
@@ -306,7 +313,7 @@ export function ChartCell({
     [symbol, interval],
   )
 
-  const status = useBinanceWebSocket(symbol, interval, {
+  const status = useLiveCandles(symbol, interval, {
     onCandle: handleCandle,
     onTrade: handleTrade,
     onReconnect: () => void reload(),
@@ -316,14 +323,19 @@ export function ChartCell({
     if (ticker) onPriceRef.current(ticker.symbol, ticker.lastPrice)
   }, [ticker])
 
+  // 업비트는 체결이 뜸한 종목이면 조용한 게 정상이라 오래 기다린다(재조회는 원본 봉 여러 쪽을 받는다).
+  // 야후는 폴링 자체가 재조회라 따로 따라잡지 않는다(장이 닫히면 새 봉이 없는 게 정상이다).
+  const market = marketOf(symbol)
+  const staleMs = market === 'upbit' ? UPBIT_STALE_MS : STALE_MS
   useEffect(() => {
+    if (market === 'yahoo') return
     const timer = window.setInterval(() => {
       // 레이트리밋(429/418) 쿨다운 중엔 REST 를 건드리지 않는다 — getJson 이 즉시 던져 봤자 낭비다.
-      if (rateLimitedUntil() > Date.now()) return
-      if (Date.now() - lastTickRef.current > STALE_MS && !loading) void reload()
-    }, STALE_MS)
+      if (rateLimitedUntil(symbol) > Date.now()) return
+      if (Date.now() - lastTickRef.current > staleMs && !loading) void reload()
+    }, staleMs)
     return () => window.clearInterval(timer)
-  }, [reload, loading])
+  }, [reload, loading, symbol, staleMs, market])
 
   // 좁은 칸(범례 컨테이너 < 520px, 예: 폰)에서는 OHLC 를 한 줄로 접는다.
   useEffect(() => {
@@ -513,7 +525,6 @@ export function ChartCell({
   const symbolAlerts = useMemo(() => alerts.filter((a) => a.symbol === symbol && a.active), [alerts, symbol])
   const symbolDrawings = useMemo(() => drawings.filter((d) => d.symbol === symbol), [drawings, symbol])
 
-  const base = symbol.replace(/USDT$|USDC$|BUSD$/, '')
   const overlayEnabled = active && !pinMode && !replayPicking
 
   const toggleVisible = useCallback(
@@ -703,10 +714,11 @@ export function ChartCell({
           {settings.showStatusLine && (
             <>
               <div className="tv-legend-head">
-                <CoinIcon base={base} size={18} />
+                <CoinIcon symbol={symbol} size={18} />
                 <span className="tv-legend-title">{description}</span>
                 <span className="tv-legend-meta">
-                  · {INTERVAL_INFO[interval].short} · Binance
+                  · {INTERVAL_INFO[interval].short} · {exchangeLabel(symbol, infos)}
+                  {symbolInfo?.delay ? ` · ${symbolInfo.delay}분 지연` : ''}
                 </span>
                 <span className={`tv-dot ${status === 'open' ? 'ok' : status === 'connecting' ? 'warn' : 'bad'}`} />
               </div>
@@ -772,7 +784,7 @@ export function ChartCell({
                     return (
                       <div className="tv-ind-row compare" key={sym}>
                         <span className="tv-ind-title" style={info ? { color: info.color } : undefined}>
-                          {sym.replace(/USDT$/, '')}
+                          {shortSymbol(sym)}
                         </span>
                         {info && (
                           <span className="tv-ind-val" style={{ color: info.color }}>
