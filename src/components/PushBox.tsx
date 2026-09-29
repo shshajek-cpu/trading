@@ -37,7 +37,7 @@ export function PushBox({ push }: PushBoxProps) {
       {push.state === 'on' ? (
         <>
           <p className="pb-title">앱을 꺼도 알림이 옵니다</p>
-          <p className="pb-desc">서버가 1분마다 가격·수평선 알림을 확인합니다. 폰이 잠겨 있어도 받습니다.</p>
+          <p className="pb-desc">서버가 1분마다 가격·수평선·지표 알림을 확인합니다. 폰이 잠겨 있어도 받습니다.</p>
           <button type="button" className="tv-btn pb-btn" onClick={() => void push.disable()}>
             끄기
           </button>
@@ -45,9 +45,7 @@ export function PushBox({ push }: PushBoxProps) {
       ) : (
         <>
           <p className="pb-title">지금은 앱을 켜둬야만 알림이 옵니다</p>
-          <p className="pb-desc">
-            켜두면 앱을 닫아도 서버가 가격·수평선 알림을 대신 감시합니다. 지표 알림은 앱이 열려 있을 때만 울립니다.
-          </p>
+          <p className="pb-desc">켜두면 앱을 닫아도 서버가 가격·수평선·지표 알림을 대신 감시합니다.</p>
           <button
             type="button"
             className="tv-btn primary pb-btn"

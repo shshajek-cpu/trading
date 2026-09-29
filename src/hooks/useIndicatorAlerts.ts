@@ -14,16 +14,35 @@ import { CHART_PALETTES } from '../lib/theme'
 import {
   conditionMet,
   INDICATOR_ALERTS_STORAGE_KEY,
-  loadIndicatorAlerts,
-  saveIndicatorAlerts,
+  parseIndicatorAlerts,
   type IndicatorAlert,
   type NewIndicatorAlert,
 } from '../lib/indicatorAlerts'
+import { notifySettingsChanged } from '../lib/syncBus'
 
 export interface UseIndicatorAlertsResult {
   alerts: IndicatorAlert[]
   addAlert: (alert: NewIndicatorAlert) => void
   removeAlert: (id: string) => void
+  /** 서버(푸시 워커)가 먼저 울린 알림을 로컬에서도 울린 것으로 표시한다. 켜진 '한 번만' 알림만 끄고 나머지 id 는 넘긴다. */
+  markFired: (ids: string[]) => void
+}
+
+function loadAlerts(): IndicatorAlert[] {
+  try {
+    return parseIndicatorAlerts(localStorage.getItem(INDICATOR_ALERTS_STORAGE_KEY))
+  } catch {
+    return []
+  }
+}
+
+function saveAlerts(alerts: IndicatorAlert[]): void {
+  try {
+    localStorage.setItem(INDICATOR_ALERTS_STORAGE_KEY, JSON.stringify(alerts))
+    notifySettingsChanged()
+  } catch {
+    /* 저장 실패는 무시 — 메모리 상태는 유지된다. */
+  }
 }
 
 /** 지표 계산에 쓰는 과거 봉 수 — 급증 강도(기본 100봉)·일목 등 긴 지표도 값이 나오게 넉넉히. */
@@ -58,22 +77,23 @@ function mergeCandle(list: Candle[], candle: Candle): void {
 /**
  * 지표 값 알림. 활성 알림의 (종목, 주기)마다 과거 봉을 받고 봉 스트림 하나로 실시간 봉을 이어 받아,
  * 알림에 저장된 지표 사본으로 값을 계산해 조건을 판정한다. 차트에 그 종목이 떠 있지 않아도 동작한다.
- * 브라우저에서 계산하므로 앱이 열려 있을 때(백그라운드 탭 포함)만 울린다.
+ * 앱이 열려 있을 때(백그라운드 탭 포함) 여기서 울린다. 앱이 닫혀 있으면 푸시 워커(worker/indicatorAlerts.ts)가
+ * 동기화된 이 목록을 매분 같은 계산·판정으로 보고 웹 푸시를 보낸다 — 같은 태그(ind-<id>)라 OS 가 하나로 합친다.
  */
 export function useIndicatorAlerts(onFire: (alert: IndicatorAlert, value: number) => void): UseIndicatorAlertsResult {
-  const [alerts, setAlerts] = useState<IndicatorAlert[]>(loadIndicatorAlerts)
+  const [alerts, setAlerts] = useState<IndicatorAlert[]>(loadAlerts)
   const alertsRef = useRef(alerts)
   alertsRef.current = alerts
   const fireRef = useRef(onFire)
   fireRef.current = onFire
 
-  useEffect(() => saveIndicatorAlerts(alerts), [alerts])
+  useEffect(() => saveAlerts(alerts), [alerts])
 
   // 다른 탭이 바꾼 알림을 받아 온다. 안 받으면 이 탭이 옛 목록을 통째로 저장해 꺼진 알림을 되살린다.
   useEffect(() => {
     const onStorage = (e: StorageEvent) => {
       if (e.key !== INDICATOR_ALERTS_STORAGE_KEY) return
-      const next = loadIndicatorAlerts()
+      const next = loadAlerts()
       alertsRef.current = next
       setAlerts(next)
     }
@@ -98,6 +118,17 @@ export function useIndicatorAlerts(onFire: (alert: IndicatorAlert, value: number
 
   const removeAlert = useCallback((id: string) => {
     setAlerts((prev) => prev.filter((a) => a.id !== id))
+  }, [])
+
+  const markFired = useCallback((ids: string[]) => {
+    const fired = new Set(ids)
+    const hit = (a: IndicatorAlert) => a.active && a.trigger === 'once' && fired.has(a.id)
+    if (!alertsRef.current.some(hit)) return
+    const now = Date.now()
+    const update = (a: IndicatorAlert): IndicatorAlert => (hit(a) ? { ...a, active: false, firedAt: now } : a)
+    // 스트림 판정이 렌더 전에 와도 다시 울리지 않게 ref 도 바로 바꾼다.
+    alertsRef.current = alertsRef.current.map(update)
+    setAlerts((prev) => prev.map(update))
   }, [])
 
   // 감시할 (종목, 주기) 묶음. 이게 바뀔 때만 데이터 연결을 다시 만든다.
@@ -242,5 +273,5 @@ export function useIndicatorAlerts(onFire: (alert: IndicatorAlert, value: number
     }
   }, [watchKey])
 
-  return { alerts, addAlert, removeAlert }
+  return { alerts, addAlert, removeAlert, markFired }
 }

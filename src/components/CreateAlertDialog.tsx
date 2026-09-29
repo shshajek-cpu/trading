@@ -406,8 +406,8 @@ export function CreateAlertDialog({
 
         {instance && interval && (
           <p className="ca-note">
-            {INTERVAL_INFO[interval].short} 봉으로 계산합니다. 지표 알림은 이 앱이 열려 있는 동안(다른 탭에 있어도)
-            울리고, 앱을 닫으면 오지 않습니다.
+            {INTERVAL_INFO[interval].short} 봉으로 계산합니다. 앱이 열려 있으면 여기서 울리고, 「앱 꺼도 알림 받기」를 켜면
+            앱을 닫아도 서버가 1분마다 확인해 푸시로 보냅니다(서버 값은 대체 시세 때문에 조금 다를 수 있습니다).
           </p>
         )}
 

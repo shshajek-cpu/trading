@@ -18,17 +18,7 @@ import type {
 import type { BitmapCoordinatesRenderingScope, CanvasRenderingTarget2D } from 'fancy-canvas'
 import type { LinePoint } from '../lib/indicators'
 import { withAlpha } from '../lib/theme'
-
-export interface BandSpec {
-  top: number
-  bottom: number
-  color: string
-  /**
-   * 선이 top 위·bottom 아래로 나간 부분을 강조한다. `max`·`min` 은 그라데이션이 가장 진해지는 값(RSI 100·0).
-   * `points` 는 이 프리미티브가 붙은 시리즈의 값과 같아야 한다.
-   */
-  outside?: { points: LinePoint<number>[]; above: string; below: string; max: number; min: number }
-}
+import type { BandSpec } from './compute'
 
 /** 밴드 밖으로 나간 선 토막을 다시 그리는 굵기(미디어 px). 원래 선(1px)을 덮어 색이 바뀐 것이 또렷이 보이게. */
 const BEYOND_LINE_WIDTH = 2

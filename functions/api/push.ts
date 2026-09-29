@@ -49,7 +49,9 @@ export interface WatchRecord {
   lineMarks?: Record<string, SideMark>
   /** 걸린 교차 알림이 기다리는 쪽. */
   armMarks?: Record<string, SideMark>
-  /** 감시기가 울렸고 앱이 아직 확인하지 않은 알림·수평선 id. 감시기는 여기 있는 동안 다시 울리지 않는다. */
+  /** 지표 알림(봉마다·봉 마감 시)마다 감시기가 마지막으로 푸시한 봉의 시작 시각(초). */
+  barMarks?: Record<string, number>
+  /** 감시기가 울렸고 아직 확인되지 않은 알림·수평선·지표 알림('한 번만') id. 감시기는 여기 있는 동안 다시 울리지 않는다. */
   firedIds: string[]
   /** 앱이 받았다고 알린 시각(ms, id 별). 감시기는 이 뒤에 설정이 저장되면 확인된 것으로 보고 firedIds 에서 뺀다. */
   acks?: Record<string, number>
@@ -93,6 +95,7 @@ function buildRecord(prev: WatchRecord | null, subs: PushSubscriptionRecord[], a
     subs,
     ...(prev?.lineMarks ? { lineMarks: prev.lineMarks } : {}),
     ...(prev?.armMarks ? { armMarks: prev.armMarks } : {}),
+    ...(prev?.barMarks ? { barMarks: prev.barMarks } : {}),
     firedIds: prev?.firedIds ?? [],
     ...(Object.keys(acks).length > 0 ? { acks } : {}),
   }

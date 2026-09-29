@@ -172,7 +172,14 @@ export function AlertsWidget({
 
         {indicatorAlerts.length > 0 && (
           <div className="aw-section">
-            <p className="aw-section-title">지표 알림 · 앱이 열려 있을 때</p>
+            <p className="aw-section-title">
+              {/* 푸시가 켜져 있으면 서버가 지표 알림도 감시한다(앱을 닫아도 옴). */}
+              {!push.supported
+                ? '지표 알림 · 앱이 열려 있을 때'
+                : push.state === 'on'
+                  ? '지표 알림 · 앱을 닫아도 푸시로 옴'
+                  : '지표 알림 · 푸시를 켜면 앱을 닫아도 옴'}
+            </p>
             <ul className="aw-rows">
               {indicatorAlerts.map((a) => (
                 <li key={a.id} className={rowClass(!a.active)} onClick={onPickSymbol && (() => onPickSymbol(a.symbol))}>

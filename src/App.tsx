@@ -75,14 +75,8 @@ import {
   type LayoutSyncKey,
 } from './lib/layoutConfig'
 import { LAYOUT_ICON } from './lib/chartTypeIcons'
-import {
-  createIndicator,
-  loadIndicators,
-  saveIndicators,
-  indicatorTitle,
-  type IndicatorInstance,
-  type IndicatorKind,
-} from './lib/indicatorConfig'
+import { createIndicator, indicatorTitle, type IndicatorInstance, type IndicatorKind } from './lib/indicatorConfig'
+import { loadIndicators, saveIndicators } from './lib/indicatorStorage'
 import {
   legendShown,
   loadChartSettings,
@@ -381,7 +375,7 @@ function App() {
     setActive: setAlertActive,
   } = usePriceAlerts(handleTrigger)
 
-  // indicator alerts (브라우저에서 지표 값을 계산해 판정한다)
+  // indicator alerts (앱이 열려 있으면 브라우저에서, 닫혀 있으면 푸시 워커가 지표 값을 계산해 판정한다)
   const handleIndicatorFire = useCallback(
     (alert: IndicatorAlert, value: number) => {
       const message =
@@ -445,13 +439,15 @@ function App() {
   )
   const lineAlertKey = lineAlertList.map((d) => `${d.id}|${d.symbol}|${d.points[0].price}`).join(',')
 
-  // 서버(푸시 워커)가 먼저 울린 알림·수평선을 로컬에서도 울린 것으로 표시한다. 두 목록 모두 모르는 id 는 그냥 넘긴다.
+  // 서버(푸시 워커)가 먼저 울린 알림·수평선·지표 알림을 로컬에서도 울린 것으로 표시한다. 어느 목록도 모르는 id 는 그냥 넘긴다.
+  const markIndicatorsFired = indicatorAlerts.markFired
   const handleServerFired = useCallback(
     (ids: string[]) => {
       markFired(ids)
       markLinesFired(ids)
+      markIndicatorsFired(ids)
     },
-    [markFired, markLinesFired],
+    [markFired, markLinesFired, markIndicatorsFired],
   )
   const push = usePushAlerts(sync.code, handleServerFired)
 

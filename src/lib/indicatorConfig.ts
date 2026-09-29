@@ -1,5 +1,4 @@
 import { INDICATOR_PALETTE } from './theme'
-import { notifySettingsChanged } from './syncBus'
 
 /**
  * 지표 설정 모델(v3). TradingView 처럼 "지표 인스턴스" 목록으로 다룬다 —
@@ -541,11 +540,7 @@ export function multiMaSlots(i: IndicatorInstance): { slot: number; length: numb
   return out
 }
 
-/* ── 저장/불러오기 (v3) + v2 마이그레이션 ─────────────────────────────── */
-
-const STORAGE_KEY = 'trading.indicators.v3'
-const LEGACY_KEY = 'trading.indicators.v2'
-const TEMPLATE_KEY = 'trading.indicatorTemplates.v1'
+/* ── 검증·보정 + v2 마이그레이션 (저장/불러오기는 indicatorStorage) ───── */
 
 function isInstance(v: unknown): v is IndicatorInstance {
   if (typeof v !== 'object' || v === null) return false
@@ -591,8 +586,8 @@ interface LegacyMa {
   visible?: boolean
 }
 
-/** v2 설정을 v3 인스턴스 목록으로 옮긴다. 거래량이 맨 앞. */
-function migrateV2(raw: string): IndicatorInstance[] | null {
+/** v2 설정을 v3 인스턴스 목록으로 옮긴다. 거래량이 맨 앞. 못 읽으면 null. */
+export function migrateV2(raw: string): IndicatorInstance[] | null {
   try {
     const parsed = JSON.parse(raw) as Record<string, unknown>
     const list: IndicatorInstance[] = []
@@ -646,72 +641,6 @@ function migrateV2(raw: string): IndicatorInstance[] | null {
     return list
   } catch {
     return null
-  }
-}
-
-export function loadIndicators(): IndicatorInstance[] {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY)
-    if (raw) {
-      const parsed: unknown = JSON.parse(raw)
-      if (Array.isArray(parsed)) return parsed.filter(isInstance).map(normalize)
-    }
-    // v3 가 없으면 v2 를 옮겨 온다.
-    const legacy = localStorage.getItem(LEGACY_KEY)
-    if (legacy) {
-      const migrated = migrateV2(legacy)
-      if (migrated) {
-        saveIndicators(migrated)
-        return migrated
-      }
-    }
-    // 신규 사용자: TradingView 기본값 = 거래량 하나.
-    return [createIndicator('volume', [])]
-  } catch {
-    return [createIndicator('volume', [])]
-  }
-}
-
-export function saveIndicators(list: IndicatorInstance[]): void {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(list))
-    notifySettingsChanged()
-  } catch {
-    /* 저장 실패는 무시 — 다음 저장에서 회복 */
-  }
-}
-
-/* ── 템플릿 ───────────────────────────────────────────────────────────── */
-
-export interface IndicatorTemplate {
-  id: string
-  name: string
-  indicators: Omit<IndicatorInstance, 'id'>[]
-}
-
-function isTemplate(v: unknown): v is IndicatorTemplate {
-  if (typeof v !== 'object' || v === null) return false
-  const t = v as Record<string, unknown>
-  return typeof t.id === 'string' && typeof t.name === 'string' && Array.isArray(t.indicators)
-}
-
-export function loadTemplates(): IndicatorTemplate[] {
-  try {
-    const raw = localStorage.getItem(TEMPLATE_KEY)
-    if (!raw) return []
-    const parsed: unknown = JSON.parse(raw)
-    return Array.isArray(parsed) ? parsed.filter(isTemplate) : []
-  } catch {
-    return []
-  }
-}
-
-export function saveTemplates(t: IndicatorTemplate[]): void {
-  try {
-    localStorage.setItem(TEMPLATE_KEY, JSON.stringify(t))
-    notifySettingsChanged()
-  } catch {
-    /* 저장 실패는 무시 */
   }
 }
 

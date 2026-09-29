@@ -93,7 +93,7 @@ CSS 그리드 한 판(`.tv-app`), 칸 사이는 `--tv-gap` 거터.
 `App`(슬라이스 C)은 다른 슬라이스의 컴포넌트를 **계약대로** 조립하기만 한다.
 
 - A(그리기): `DrawingToolbar`, `ObjectTree`, `useDrawings`, `lib/drawings`.
-- B(차트/지표): `ChartCell`, `IndicatorsDialog`, `IndicatorTemplatesMenu`, `lib/indicatorConfig`.
+- B(차트/지표): `ChartCell`, `IndicatorsDialog`, `IndicatorTemplatesMenu`, `lib/indicatorConfig`, `lib/indicatorStorage`.
 - D(심볼/관심/알림): `SymbolSearchDialog`, `CreateAlertDialog`, `widgets/*`, `useSymbols`, `useWatchlist`, `usePriceAlerts`, `lib/symbols`.
 
 `CellConfig`(symbol·interval·chartType·scaleMode·autoScale·compare)는 C 가 소유하고 관대하게 파싱한다.
@@ -112,6 +112,7 @@ CSS 그리드 한 판(`.tv-app`), 칸 사이는 `--tv-gap` 거터.
 - 아이콘 버튼에는 `title` 대신 `{...tip(이름, 설명, 단축키, 방향)}`(`lib/tooltip`)을 단다. `TooltipLayer` 가 마우스를 올렸을 때 이름·단축키·설명을 띄운다. 단축키는 `shortcutKeys.label(id)` 로 사용자가 바꾼 키를 쓴다. 왼쪽 툴바는 `'right'`, 오른쪽 위젯 탭은 `'left'`.
 - `App` 에는 시세 틱마다 바뀌는 상태를 두지 않는다 — `App` 이 다시 그리면 화면 전체가 다시 그려진다. 틱 값은 `lib/liveStore`(관심 목록 행, 활성 종목 현재가)나 모의거래 라이브 스토어(`usePaperLive`)에 두고, 쓰는 컴포넌트만 `useSyncExternalStore` 로 구독한다.
 - 닫힌 채 시작하는 위젯 페이지·대화상자는 `React.lazy` 로 나눠 열 때 불러온다(닫혀 있는 동안 상태를 들고 있어야 하는 것은 제외).
+- 푸시 워커(`worker/indicatorAlerts.ts`)가 앱과 같은 값으로 지표 알림을 판정하려고 `chart/compute`·`lib/indicatorConfig`·`lib/indicatorAlerts`·`lib/indicators`·`lib/intervals`·`lib/theme` 을 그대로 번들한다. 이 파일들(과 그들이 가져오는 파일)에는 `window`·`document`·`localStorage`·캔버스 코드와 차트 라이브러리의 실행 코드를 넣지 않는다 — 저장은 `lib/indicatorStorage`·`useIndicatorAlerts`, 그리기는 `chart/bandFill`·`chart/volumeProfile` 에 둔다. 지표 알림은 앱이 열려 있으면 브라우저에서, 푸시를 켜 두면 앱을 닫아도 워커가 울린다(태그 `ind-<id>` 가 같아 OS 가 합친다). 워커는 바이낸스가 막히면 gate.io 봉으로 계산하므로 값이 조금 다를 수 있다(거래량 기반 지표가 특히).
 
 ---
 

@@ -4,7 +4,7 @@
  * Chart 는 이 결과를 lightweight-charts 시리즈로 그리고, ChartCell 은 같은 결과에서
  * 범례 값을 뽑는다 — 지표 계산은 한 번만 한다(요건: 캔들 수가 바뀔 때만 재계산).
  */
-import { LineStyle } from 'lightweight-charts'
+import type { LineStyle } from 'lightweight-charts'
 import type { Candle } from '../lib/binance'
 import { withAlpha, type ChartPalette } from '../lib/theme'
 import {
@@ -39,8 +39,49 @@ import {
   type IndicatorInstance,
   type IndicatorKind,
 } from '../lib/indicatorConfig'
-import type { BandSpec } from './bandFill'
-import type { VisibleProfileSpec } from './volumeProfile'
+
+/**
+ * 기준선 모양(lightweight-charts LineStyle 의 Dotted·Dashed 값). 값만 둬 차트 라이브러리를 실행 코드로 끌어오지 않는다 —
+ * 푸시 워커도 compute 를 번들한다.
+ */
+const DOTTED: LineStyle = 1
+const DASHED: LineStyle = 2
+
+/*
+ * 차트 프리미티브(bandFill·volumeProfile)가 그리는 설정. compute 가 만들고 프리미티브가 받는다 —
+ * 그리기 코드(캔버스)를 끌어오지 않게 여기 둔다(푸시 워커도 compute 를 쓴다).
+ */
+
+export interface BandSpec {
+  top: number
+  bottom: number
+  color: string
+  /**
+   * 선이 top 위·bottom 아래로 나간 부분을 강조한다. `max`·`min` 은 그라데이션이 가장 진해지는 값(RSI 100·0).
+   * `points` 는 이 프리미티브가 붙은 시리즈의 값과 같아야 한다.
+   */
+  outside?: { points: LinePoint<number>[]; above: string; below: string; max: number; min: number }
+}
+
+export interface VolumeProfileStyle {
+  upColor: string
+  downColor: string
+  pocColor: string
+  showPoc: boolean
+  showValueArea: boolean
+  valueAreaAlpha: number
+  outsideAlpha: number
+}
+
+/** 보이는 구간 볼륨 프로파일(VPVR) 한 개의 설정 — 지표 인스턴스에서 compute 가 만든다. */
+export interface VisibleProfileSpec {
+  rows: number
+  valueAreaPct: number
+  /** 가장 긴 막대 길이(가격 칸 폭의 %). */
+  widthPct: number
+  placement: 'left' | 'right'
+  style: VolumeProfileStyle
+}
 
 export type LegendFormat = 'price' | 'fixed2' | 'volume' | 'ratio'
 
@@ -207,7 +248,7 @@ export function computeIndicator(
     levels: [],
   }
   const dim = palette.textDim
-  const lvl = (price: number): LevelLine => ({ price, color: dim, lineStyle: LineStyle.Dashed })
+  const lvl = (price: number): LevelLine => ({ price, color: dim, lineStyle: DASHED })
 
   switch (instance.kind) {
     case 'volume':
@@ -361,7 +402,7 @@ export function computeIndicator(
       // 강조를 켜면 밴드 밖 값은 범례에서도 강조색(과매수 초록·과매도 빨강)으로 보인다.
       const legendZones = p.fill ? { above: p.upper, below: p.lower, aboveColor: c[1], belowColor: c[2] } : undefined
       base.lines = [{ key: 'rsi', type: 'line', points, color: c[0], legendLabel: '', legendZones }]
-      base.levels = [lvl(p.upper), lvl(p.lower), { price: 50, color: dim, lineStyle: LineStyle.Dotted }]
+      base.levels = [lvl(p.upper), lvl(p.lower), { price: 50, color: dim, lineStyle: DOTTED }]
       // 70/30 밴드 사이를 RSI 색 10%로 채우고(트레이딩뷰 기본), 밴드 밖으로 나간 구간은 선~기준선 사이 채우기와 선 색으로 강조한다.
       base.band = {
         top: p.upper,
@@ -386,7 +427,7 @@ export function computeIndicator(
         { key: 'macd', type: 'line', points: m.macd, color: c[0], legendLabel: 'MACD' },
         { key: 'signal', type: 'line', points: m.signal, color: c[1], legendLabel: 'S' },
       ]
-      base.levels = [{ price: 0, color: dim, lineStyle: LineStyle.Dotted }]
+      base.levels = [{ price: 0, color: dim, lineStyle: DOTTED }]
       break
     }
     case 'stoch': {

@@ -1,7 +1,6 @@
 import type { Interval } from './binance'
 import { isInterval } from './intervals'
 import { indicatorTitle, toIndicatorInstance, type IndicatorInstance } from './indicatorConfig'
-import { notifySettingsChanged } from './syncBus'
 
 /** TradingView 알림 조건 어휘: 교차 / 상향 교차 / 하향 교차 / 보다 큼 / 보다 작음. */
 export type IndicatorCondition = 'crossing' | 'crossingUp' | 'crossingDown' | 'greater' | 'less'
@@ -141,23 +140,17 @@ function migrateSigmaSpike(a: IndicatorAlert): IndicatorAlert {
   return { ...a, title: indicatorTitle(a.indicator), lineKey: 'ratio', lineName: '급증 배율 (x)', value }
 }
 
-export function loadIndicatorAlerts(): IndicatorAlert[] {
+/**
+ * 저장된 알림 목록(JSON 문자열)을 읽는다. 없거나 깨졌으면 빈 목록, 모양이 틀린 항목은 버린다.
+ * 앱(useIndicatorAlerts)과 푸시 워커(동기화 설정의 같은 키)가 함께 쓴다 — 두 곳이 같은 알림을 보게 한다.
+ */
+export function parseIndicatorAlerts(raw: unknown): IndicatorAlert[] {
+  if (typeof raw !== 'string' || !raw) return []
   try {
-    const raw = localStorage.getItem(INDICATOR_ALERTS_STORAGE_KEY)
-    if (!raw) return []
     const parsed: unknown = JSON.parse(raw)
     if (!Array.isArray(parsed)) return []
     return parsed.map(toAlert).filter((a): a is IndicatorAlert => a !== null)
   } catch {
     return []
-  }
-}
-
-export function saveIndicatorAlerts(alerts: IndicatorAlert[]): void {
-  try {
-    localStorage.setItem(INDICATOR_ALERTS_STORAGE_KEY, JSON.stringify(alerts))
-    notifySettingsChanged()
-  } catch {
-    /* 저장 실패는 무시 — 메모리 상태는 유지된다. */
   }
 }

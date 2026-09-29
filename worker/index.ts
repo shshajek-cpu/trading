@@ -1,5 +1,5 @@
 /**
- * 가격 알림 감시기 (Cron, 1분마다).
+ * 가격·수평선·지표 알림 감시기 (Cron, 1분마다).
  *
  * 앱이 꺼져 있어도 알림이 가야 하므로 서버가 대신 시세를 본다.
  * 감시 목록은 모든 기기가 함께 쓰는 동기화 설정(s:<code>)에서 매분 새로 뽑는다 — 어느 기기에서 만들거나 고치거나 옮긴
@@ -18,14 +18,46 @@
  * (가격 알림을 껐다·지웠다, 수평선이 울렸다·알림을 껐다·지웠다) 앱이 받았다고 알린(acks) 뒤에 설정이 다시 저장됐으면
  * 확인된 것으로 보고 뺀다. 그 뒤 다시 켜면 다시 울린다.
  *
+ * 지표 알림(indicatorAlerts.ts)은 (종목, 주기)마다 과거 봉을 읽어 앱과 같은 계산·판정으로 본다. '한 번만' 알림은
+ * 가격 알림처럼 firedIds 로, '봉마다'·'봉 마감 시' 알림은 알림마다 마지막으로 푸시한 봉(barMarks)으로 한 봉에 한 번만 보낸다.
+ *
+ * 한 호출은 두 단계로 돈다. 1단계에서 가격·수평선을 판정해 보내고 기록까지 적은 뒤, 2단계에서 지표 봉을 읽고 계산해
+ * 울린 것이 있을 때만 한 번 더 적는다. 지표 계산이 CPU 한도(무료 플랜 약 10ms)를 넘겨 호출이 끊겨도 1단계 결과는 남는다.
+ * 지표 봉은 한 호출에 INDICATOR_FEEDS_PER_RUN(3) 묶음만 읽는다 — 묶음이 N 개면 분마다 돌아가며 보므로 묶음마다
+ * ceil(N/3) 분에 한 번 판정한다(그만큼 늦게 울리고, 1m 처럼 짧은 주기는 그 사이에 지나간 교차·닫힌 봉을 놓칠 수 있다).
+ *
  * Workers 무료 플랜 한도 안에서 돈다:
  * - KV(하루 목록 조회 1,000회·쓰기 1,000회): 매분 목록을 조회하지 않고 감시 대상 코드 목록 키(`w-index`)와
  *   코드마다 구독 기록(w:)·동기화 설정(s:) 두 개만 읽는다. 목록 조회는 정각마다 한 번(하루 24회) 색인을 다시 맞출 때만 쓴다.
  * - 기록은 바뀐 것이 있을 때만 한다 — 푸시를 보냈을 때, 교차 알림이 걸리거나 수평선의 기준 쪽을 처음 잡았을 때,
- *   감시에서 빠진 항목의 기준을 지울 때, firedIds 가 바뀔 때. 조용한 분에는 쓰지 않는다.
- * - 외부 요청(호출 하나당 50회): 종목별 봉 조회는 CANDLE_FETCH_MAX 번까지만 하고 나머지는 전체 시세 한 번으로 본다.
+ *   감시에서 빠진 항목의 기준·봉 기록을 지울 때, firedIds 가 바뀔 때. 조용한 분에는 쓰지 않는다. 두 단계가 한 기록을 모두
+ *   적어야 하면(드물다) 같은 키는 초당 한 번만 쓸 수 있어 2단계가 1초 남짓 기다렸다 적는다(CPU 는 쓰지 않는다).
+ * - 외부 요청(호출 하나당 50회): 봉 조회(가격 시세·지표 봉 합계)는 CANDLE_FETCH_MAX 번까지만 하고, 지표 봉 몫(이번 분에
+ *   고른 묶음 수)을 남긴다. 넘는 가격 종목은 전체 시세 한 번으로 보고, 못 읽은 지표 봉은 다음 차례에 읽는다.
  *   푸시 발송도 이 한도에 들어가므로, 넘칠 것 같은 알림은 발동으로 적지 않고 다음 분으로 미룬다.
  */
+import {
+  describeIndicatorAlert,
+  formatAlertValue,
+  INDICATOR_ALERTS_STORAGE_KEY,
+  parseIndicatorAlerts,
+  type IndicatorAlert,
+} from '../src/lib/indicatorAlerts'
+import { dueBar, feedKey, historyFor, judgeIndicatorAlert, loadFeeds, pickFeeds, type Feed } from './indicatorAlerts'
+import {
+  BINANCE_BLOCKED,
+  CANDLE_FETCH_MAX,
+  GATE_CANDLES_URL,
+  gateTickers,
+  KLINES_URL,
+  loadCandles,
+  newBudget,
+  SUBREQUEST_MAX,
+  SYMBOL_RE,
+  type Budget,
+  type GateTicker,
+  type PriceSource,
+} from './market'
 import { sendPush, type PushSubscription } from './webpush'
 
 interface Env {
@@ -79,7 +111,9 @@ interface WatchRecord {
   lineMarks?: Record<string, SideMark>
   /** 걸린 교차 알림이 기다리는 쪽. 키는 armKey — 가격·거는 조건을 바꾸면 새로 건다. */
   armMarks?: Record<string, SideMark>
-  /** 감시기가 울렸고 앱이 아직 확인하지 않은 알림·수평선 id. 여기 있는 동안은 다시 울리지 않는다. */
+  /** 지표 알림('봉마다'·'봉 마감 시')마다 마지막으로 푸시한 봉의 시작 시각(초). 한 봉에 한 번만 보낸다. */
+  barMarks?: Record<string, number>
+  /** 감시기가 울렸고 앱이 아직 확인하지 않은 알림·수평선·지표 알림('한 번만') id. 여기 있는 동안은 다시 울리지 않는다. */
   firedIds: string[]
   /** 앱이 받았다고 알린 시각(ms, id 별). 이 뒤에 저장된 설정은 그 확인을 반영한 것으로 본다. */
   acks?: Record<string, number>
@@ -100,6 +134,8 @@ interface Watch {
   at: number
   alerts: WatchAlert[]
   lines: WatchLine[]
+  /** 켜진 지표 알림. */
+  indicators: IndicatorAlert[]
 }
 
 /** 설정 한 키(JSON 문자열)의 목록. 없거나 깨졌으면 빈 목록. */
@@ -193,6 +229,8 @@ async function readWatch(env: Env, code: string): Promise<Watch | null> {
     at: typeof at === 'number' ? at : 0,
     alerts: readAlerts(readList(snapshot, PRICE_ALERTS_KEY)),
     lines: readLines(readList(snapshot, DRAWINGS_KEY)),
+    // 모양 검사는 앱(indicatorAlerts.parseIndicatorAlerts)과 같다. 없거나 깨졌으면 빈 목록.
+    indicators: parseIndicatorAlerts(snapshot[INDICATOR_ALERTS_STORAGE_KEY]).filter((a) => a.active),
   }
 }
 
@@ -222,21 +260,11 @@ function meets(condition: Side, price: number, now: number): boolean {
 /** 감시할 동기화 코드 목록 — 구독이 있는 코드. /api/push 가 구독이 바뀔 때 맞춘다. */
 const INDEX_KEY = 'w-index'
 
-const KLINES_URL = 'https://fapi.binance.com/fapi/v1/klines'
-const GATE_CANDLES_URL = 'https://api.gateio.ws/api/v4/futures/usdt/candlesticks'
-const TICKERS_URL = 'https://api.gateio.ws/api/v4/futures/usdt/tickers'
-
-/** 무료 플랜의 호출 하나당 외부 요청(하위 요청) 한도. 시세 조회와 푸시 발송이 함께 쓴다. */
-const SUBREQUEST_MAX = 50
-/** 종목별 봉 조회(바이낸스·gate 합계) 상한. 남는 14회는 전체 시세 한 번과 푸시 발송 몫이다. */
-const CANDLE_FETCH_MAX = 36
 /** 종목마다 읽는 1분봉 수 — 진행 중인 봉과 앞선 두 봉. 크론이 한 번 늦거나 건너뛰어도 구간이 끊기지 않는다. */
 const BAR_LIMIT = 3
 const MINUTE_MS = 60_000
-/** 바이낸스 표기(BTCUSDT, 1000PEPEUSDT, BTCUSDT_250328). 모양이 다른 값으로는 요청을 쓰지 않는다. */
-const SYMBOL_RE = /^[0-9A-Z_]{2,40}$/
-/** 이 응답이면 이번 호출 동안 바이낸스를 다시 부르지 않는다 — 지역·IP 차단(403/451)과 요청 한도(418/429). */
-const BINANCE_BLOCKED = new Set([403, 418, 429, 451])
+/** KV 는 같은 키에 초당 한 번까지 쓴다. 1단계가 적은 기록을 2단계가 다시 적을 때는 이만큼 기다린다(CPU 는 쓰지 않는다). */
+const KEY_WRITE_GAP_MS = 1_100
 
 /** 1분봉 하나(가격은 바이낸스 표기 배율). 전체 시세의 현재가는 시작·끝이 같은 점 하나로 담는다. */
 interface Bar {
@@ -252,17 +280,10 @@ interface Bar {
   c: number
 }
 
-type PriceSource = 'binance' | 'gate'
-
 /** 종목 하나의 시세. bars 는 시간순이고 비어 있지 않다. */
 interface Quote {
   source: PriceSource
   bars: Bar[]
-}
-
-/** 이번 호출에서 쓴 외부 요청 수. */
-interface Budget {
-  used: number
 }
 
 /** [시작 ms, 시가, 고가, 저가, 종가] 목록을 봉으로 바꾼다. 마지막 봉만 진행 중일 수 있다. 값이 이상하면 null. */
@@ -305,40 +326,6 @@ async function binanceBars(symbol: string, budget: Budget): Promise<Bar[] | 'blo
   }
 }
 
-/** gate.io 계약 이름과 바이낸스 표기로 바꾸는 배율, 현재가(바이낸스 배율). */
-interface GateTicker {
-  contract: string
-  scale: number
-  last: number
-}
-
-/**
- * gate.io 전체 시세. BTC_USDT 형식이라 밑줄을 빼 바이낸스 표기(BTCUSDT)로 맞춘다.
- * gate 는 1000 배 계약을 따로 상장하지 않고 원 코인만 둔다(PEPE_USDT 등).
- * 그래서 바이낸스 1000PEPEUSDT 도 찾을 수 있게 ×1000 항목을 함께 넣는다(같은 이름의 계약이 있으면 그쪽을 쓴다).
- */
-async function gateTickers(budget: Budget): Promise<Map<string, GateTicker> | null> {
-  budget.used++
-  try {
-    const res = await fetch(TICKERS_URL, { headers: { Accept: 'application/json' } })
-    if (!res.ok) return null
-    const list = (await res.json()) as { contract: string; last: string }[]
-    const map = new Map<string, GateTicker>()
-    const scaled: [string, GateTicker][] = []
-    for (const t of list) {
-      const last = Number(t.last)
-      if (!Number.isFinite(last) || !t.contract.endsWith('_USDT')) continue
-      const symbol = t.contract.replace('_', '')
-      map.set(symbol, { contract: t.contract, scale: 1, last })
-      scaled.push([`1000${symbol}`, { contract: t.contract, scale: 1000, last: last * 1000 }])
-    }
-    for (const [symbol, ticker] of scaled) if (!map.has(symbol)) map.set(symbol, ticker)
-    return map
-  } catch {
-    return null
-  }
-}
-
 /** gate.io 1분봉(바이낸스 배율로 환산). 실패하면 null. */
 async function gateBars(ticker: GateTicker, budget: Budget): Promise<Bar[] | null> {
   budget.used++
@@ -359,47 +346,33 @@ async function gateBars(ticker: GateTicker, budget: Budget): Promise<Bar[] | nul
 
 /**
  * 종목별 시세를 모은다. 바이낸스 1분봉 → (막혔거나 실패한 종목) gate.io 1분봉 → gate.io 현재가 순.
- * 종목별 봉 조회는 CANDLE_FETCH_MAX 번까지 — 넘는 종목과 봉을 못 읽은 종목은 전체 시세 한 번(현재가 점 하나)으로 본다.
+ * 봉 조회는 CANDLE_FETCH_MAX 에서 지표 봉 몫(reserve)을 뺀 만큼까지 — 넘는 종목과 봉을 못 읽은 종목은
+ * 전체 시세 한 번(현재가 점 하나)으로 본다.
  */
-async function loadQuotes(symbols: string[], budget: Budget): Promise<Map<string, Quote>> {
+async function loadQuotes(symbols: string[], budget: Budget, reserve: number): Promise<Map<string, Quote>> {
   const quotes = new Map<string, Quote>()
-  const [first, ...others] = [...new Set(symbols)].filter((s) => SYMBOL_RE.test(s)).sort()
-  if (first === undefined) return quotes
+  const items = [...new Set(symbols)]
+    .filter((s) => SYMBOL_RE.test(s))
+    .sort()
+    .map((symbol) => ({ symbol }))
+  if (items.length === 0) return quotes
 
-  let candles = 0
-  let blocked = false
-  const fallback: string[] = []
-  const viaBinance = async (symbol: string): Promise<void> => {
-    candles++
-    const bars = await binanceBars(symbol, budget)
-    if (bars === 'blocked') blocked = true
-    if (bars && bars !== 'blocked') quotes.set(symbol, { source: 'binance', bars })
-    else fallback.push(symbol)
-  }
-  // 첫 종목으로 막혔는지 먼저 본다 — 막혔으면 나머지 종목에는 바이낸스 요청을 쓰지 않는다.
-  await viaBinance(first)
-  const rest = blocked ? [] : others.slice(0, CANDLE_FETCH_MAX - candles)
-  await Promise.all(rest.map(viaBinance))
-  fallback.push(...others.slice(rest.length))
-  if (fallback.length === 0) return quotes
+  const loaded = await loadCandles(
+    items,
+    budget,
+    CANDLE_FETCH_MAX - reserve,
+    ({ symbol }) => binanceBars(symbol, budget),
+    (_, ticker) => gateBars(ticker, budget),
+  )
+  for (const [{ symbol }, { source, value }] of loaded) quotes.set(symbol, { source, bars: value })
+  if (quotes.size === items.length) return quotes
 
-  fallback.sort()
   const tickers = await gateTickers(budget)
   if (!tickers) return quotes
-  // gate 에 없는 종목에는 요청을 쓰지 않는다.
-  const listed = fallback.flatMap((symbol) => {
-    const ticker = tickers.get(symbol)
-    return ticker ? [{ symbol, ticker }] : []
-  })
-  await Promise.all(
-    listed.slice(0, Math.max(0, CANDLE_FETCH_MAX - candles)).map(async ({ symbol, ticker }) => {
-      const bars = await gateBars(ticker, budget)
-      if (bars) quotes.set(symbol, { source: 'gate', bars })
-    }),
-  )
   const now = Date.now()
-  for (const { symbol, ticker } of listed) {
-    if (quotes.has(symbol)) continue
+  for (const { symbol } of items) {
+    const ticker = tickers.get(symbol)
+    if (!ticker || quotes.has(symbol)) continue
     const { last } = ticker
     quotes.set(symbol, { source: 'gate', bars: [{ t: now, end: now, closed: true, o: last, h: last, l: last, c: last }] })
   }
@@ -490,10 +463,11 @@ function priceNote(quote: Quote, hit: number): string {
     : `${source} ${formatPrice(hit)} 도달 · 현재가 ${formatPrice(last)}`
 }
 
-/** 이번 분에 보낼 푸시 하나. */
+/** 이번 분에 보낼 푸시 하나. bar 가 있으면 봉마다 울리는 지표 알림 — firedIds 대신 barMarks 에 그 봉을 적는다. */
 interface Hit {
   id: string
   payload: string
+  bar?: number
 }
 
 /** 이번 분에 볼 코드 하나. */
@@ -511,7 +485,7 @@ interface Entry {
  * 앱이 받았다고 알린 뒤에 설정이 다시 저장됐으면 확인된 것이다 — 그래도 켜져 있으면 다시 켠 것이라 다시 감시한다.
  */
 function unackedFired(record: WatchRecord, watch: Watch): Pick<Entry, 'firedIds' | 'acks'> {
-  const live = new Set([...watch.alerts, ...watch.lines].map((w) => w.id))
+  const live = new Set([...watch.alerts, ...watch.lines, ...watch.indicators].map((w) => w.id))
   const prev = record.acks ?? {}
   const firedIds = record.firedIds.filter((id) => {
     const ackedAt = prev[id]
@@ -522,14 +496,32 @@ function unackedFired(record: WatchRecord, watch: Watch): Pick<Entry, 'firedIds'
   return { firedIds, acks }
 }
 
-/** 지금 감시하는 항목(keys)의 기준만 남긴다. 지운 것이 있으면 pruned — 기록해야 옛 기준이 되살아나지 않는다. */
-function liveMarks(
-  marks: Record<string, SideMark> | undefined,
-  keys: string[],
-): { marks: Record<string, SideMark>; pruned: boolean } {
-  const out: Record<string, SideMark> = {}
-  for (const k of keys) if (marks?.[k]) out[k] = marks[k]
+/** 지금 감시하는 항목(keys)의 기록만 남긴다. 지운 것이 있으면 pruned — 기록해야 옛 기록이 되살아나지 않는다. */
+function liveMarks<T>(marks: Record<string, T> | undefined, keys: string[]): { marks: Record<string, T>; pruned: boolean } {
+  const out: Record<string, T> = {}
+  for (const k of keys) {
+    const mark = marks?.[k]
+    if (mark !== undefined) out[k] = mark
+  }
   return { marks: out, pruned: Object.keys(marks ?? {}).length !== Object.keys(out).length }
+}
+
+/** 봉마다 울리는 지표 알림이 이 봉(시작 시각, 초)에서 이미 울렸다 — 감시기가 푸시했거나(barMarks) 앱이 울렸다(lastBar). */
+function alreadyPushed(alert: IndicatorAlert, barMarks: Record<string, number> | undefined, bar: number): boolean {
+  return alert.trigger !== 'once' && (barMarks?.[alert.id] === bar || alert.lastBar === bar)
+}
+
+/** 지표 알림 푸시. 문구·태그는 앱(App.handleIndicatorFire)과 같고, gate.io 봉으로 계산했으면 그렇다고 덧붙인다. */
+function indicatorPayload(alert: IndicatorAlert, value: number, source: PriceSource): string {
+  const text =
+    alert.message ||
+    `${alert.symbol} ${alert.interval} ${describeIndicatorAlert(alert)} (현재 ${formatAlertValue(value)})`
+  return JSON.stringify({
+    title: '지표 알림',
+    body: source === 'gate' ? `${text}\ngate.io 대체 시세로 계산` : text,
+    tag: `ind-${alert.id}`,
+    symbol: alert.symbol,
+  })
 }
 
 /**
@@ -570,15 +562,79 @@ async function checkAll(env: Env, rebuild: boolean): Promise<void> {
   }
   if (entries.length === 0) return
 
-  const budget: Budget = { used: 0 }
+  const budget = newBudget()
+  const now = Date.now()
+  // 이번 분에 볼 지표 봉 묶음(INDICATOR_FEEDS_PER_RUN 개까지, 분마다 돌아가며). 이번 봉에 이미 울린 봉마다 알림은 빼고 고른다.
+  const specs = pickFeeds(
+    entries.flatMap(({ record, watch, firedIds }) =>
+      watch.indicators.filter((a) => {
+        const bar = dueBar(a, now)
+        return !firedIds.includes(a.id) && bar !== null && !alreadyPushed(a, record.barMarks, bar)
+      }),
+    ),
+    Math.floor(now / MINUTE_MS),
+  )
   const symbols = entries.flatMap(({ watch, firedIds }) =>
     [...watch.alerts, ...watch.lines].filter((w) => !firedIds.includes(w.id)).map((w) => w.symbol),
   )
-  const quotes = await loadQuotes(symbols, budget)
-  for (const entry of entries) await checkRecord(env, entry, quotes, budget)
+  // 가격 시세가 봉 조회를 다 써 지표 봉이 영영 밀리지 않게 그 몫을 남긴다(넘는 가격 종목은 현재가로 본다).
+  const quotes = await loadQuotes(symbols, budget, specs.length)
+
+  // 1단계: 가격·수평선 판정·발송·기록을 먼저 끝낸다 — 지표 계산 중에 CPU 한도로 호출이 끊겨도 이 결과는 남는다.
+  const stages: { record: WatchRecord; wrote: boolean }[] = []
+  for (const entry of entries) stages.push(await checkPrices(env, entry, quotes, budget))
+  if (specs.length === 0) return
+
+  // 2단계: 지표 알림. 봉을 읽고 계산해, 울린 것이 있을 때만 한 번 더 적는다.
+  const feeds = await loadFeeds(specs, budget)
+  for (const [i, entry] of entries.entries()) await checkIndicators(env, entry, stages[i], feeds, budget)
 }
 
-async function checkRecord(env: Env, entry: Entry, quotes: Map<string, Quote>, budget: Budget): Promise<void> {
+/**
+ * 푸시를 보낸다. 외부 요청 한도를 넘길 알림은 보내지 않는다 — 발동으로 적지 않고 다음 분으로 미룬다(기준도 그대로 둔다).
+ * 보낸 알림과 죽은 구독(404/410 — 다음부터 뺀다)을 돌려준다.
+ */
+async function deliver(
+  env: Env,
+  subs: PushSubscription[],
+  hits: Hit[],
+  budget: Budget,
+): Promise<{ sent: Hit[]; dead: Set<string> }> {
+  const sent: Hit[] = []
+  const dead = new Set<string>()
+  for (const hit of hits) {
+    const targets = subs.filter((s) => !dead.has(s.endpoint))
+    if (budget.used + targets.length > SUBREQUEST_MAX) continue
+    sent.push(hit)
+    for (const sub of targets) {
+      budget.used++
+      // 한 기기의 발송 실패(네트워크 등)가 나머지 기기와 발동 기록을 막지 않게 한다.
+      // 기록이 안 남으면 매분 같은 알림이 다시 울린다.
+      try {
+        const r = await sendPush(sub, hit.payload, {
+          publicKey: env.VAPID_PUBLIC_KEY,
+          privateKey: env.VAPID_PRIVATE_KEY,
+          subject: env.VAPID_SUBJECT || 'mailto:noreply@example.com',
+        })
+        if (!r.ok && (r.status === 404 || r.status === 410)) dead.add(sub.endpoint)
+      } catch (e) {
+        console.error('push failed', sub.endpoint, e)
+      }
+    }
+  }
+  return { sent, dead }
+}
+
+/**
+ * 1단계: 가격 알림·수평선을 판정해 보내고, 확인된 발동·감시에서 빠진 항목의 기준·봉 기록 정리와 함께 적는다.
+ * 바뀐 것이 없으면 쓰지 않는다. 2단계가 이어 쓸 지금 기록과 적었는지를 돌려준다.
+ */
+async function checkPrices(
+  env: Env,
+  entry: Entry,
+  quotes: Map<string, Quote>,
+  budget: Budget,
+): Promise<{ record: WatchRecord; wrote: boolean }> {
   const { key, record, watch } = entry
   const fired = new Set(entry.firedIds)
   // 울렸고 아직 확인되지 않은 것은 판정하지 않는다.
@@ -591,7 +647,12 @@ async function checkRecord(env: Env, entry: Entry, quotes: Map<string, Quote>, b
   // 감시에서 빠졌다가(울림·끔·지움) 같은 모습으로 돌아온 항목이 옛 기준으로 곧바로 울리지 않게, 빠진 항목의 기준은 지워 적는다.
   const { marks: armMarks, pruned: armPruned } = liveMarks(record.armMarks, alerts.filter((a) => a.arm).map(armKey))
   const { marks: lineMarks, pruned: linePruned } = liveMarks(record.lineMarks, lines.map(lineKey))
-  if (armPruned || linePruned) dirty = true
+  // 봉 기록은 켜진 봉마다·봉 마감 시 지표 알림 것만 남긴다.
+  const { marks: barMarks, pruned: barPruned } = liveMarks(
+    record.barMarks,
+    watch.indicators.filter((a) => a.trigger !== 'once').map((a) => a.id),
+  )
+  if (armPruned || linePruned || barPruned) dirty = true
 
   const hits: Hit[] = []
   for (const alert of alerts) {
@@ -641,46 +702,75 @@ async function checkRecord(env: Env, entry: Entry, quotes: Map<string, Quote>, b
     })
   }
 
-  const dead = new Set<string>()
-  for (const hit of hits) {
-    const targets = record.subs.filter((s) => !dead.has(s.endpoint))
-    // 외부 요청 한도를 넘기면 이 알림은 발동으로 적지 않고 다음 분으로 미룬다(기준도 그대로 둔다).
-    if (budget.used + targets.length > SUBREQUEST_MAX) continue
-    fired.add(hit.id)
-    dirty = true
-    for (const sub of targets) {
-      budget.used++
-      // 한 기기의 발송 실패(네트워크 등)가 나머지 기기와 발동 기록을 막지 않게 한다.
-      // 기록이 안 남으면 매분 같은 알림이 다시 울린다.
-      try {
-        const r = await sendPush(sub, hit.payload, {
-          publicKey: env.VAPID_PUBLIC_KEY,
-          privateKey: env.VAPID_PRIVATE_KEY,
-          subject: env.VAPID_SUBJECT || 'mailto:noreply@example.com',
-        })
-        // 404/410 은 구독이 죽은 것 — 다음부터 빼둔다.
-        if (!r.ok && (r.status === 404 || r.status === 410)) dead.add(sub.endpoint)
-      } catch (e) {
-        console.error('push failed', sub.endpoint, e)
-      }
-    }
-  }
-  // 바뀐 것이 없으면 아무것도 쓰지 않는다 — 무료 한도의 대부분이 여기서 아껴진다.
-  if (!dirty) return
-
+  const { sent, dead } = await deliver(env, record.subs, hits, budget)
+  for (const hit of sent) fired.add(hit.id)
+  if (sent.length > 0) dirty = true
   // 울린 교차 알림·수평선은 기준을 지운다 — 확인된 뒤 다시 켜면 그때 새로 잡는다.
   for (const alert of alerts) if (fired.has(alert.id)) delete armMarks[armKey(alert)]
   for (const line of lines) if (fired.has(line.id)) delete lineMarks[lineKey(line)]
 
   // 예전 기록의 기기별 목록(alertsBy·linesBy·alerts)은 여기서 빠진다. 키 순서는 /api/push 와 같게 둔다(같은 내용이면 다시 쓰지 않게).
+  const next: WatchRecord = {
+    subs: record.subs.filter((s) => !dead.has(s.endpoint)),
+    lineMarks,
+    armMarks,
+    barMarks,
+    firedIds: [...fired],
+    ...(Object.keys(entry.acks).length > 0 ? { acks: entry.acks } : {}),
+  }
+  // 바뀐 것이 없으면 아무것도 쓰지 않는다 — 무료 한도의 대부분이 여기서 아껴진다.
+  if (dirty) await env.SETTINGS.put(key, JSON.stringify(next))
+  return { record: next, wrote: dirty }
+}
+
+/**
+ * 2단계: 이번 분에 읽은 지표 봉(feeds)으로 지표 알림을 판정해 보낸다. 봉을 못 읽은(차례가 아닌) 알림은 다음 차례에 본다.
+ * 보낸 것이 있을 때만 1단계가 남긴 기록에 발동('한 번만')·봉 기록('봉마다'·'봉 마감 시')을 더해 적는다.
+ */
+async function checkIndicators(
+  env: Env,
+  entry: Entry,
+  { record, wrote }: { record: WatchRecord; wrote: boolean },
+  feeds: Map<string, Feed>,
+  budget: Budget,
+): Promise<void> {
+  const fired = new Set(record.firedIds)
+  const barMarks = { ...record.barMarks }
+  const now = Date.now()
+  const hits: Hit[] = []
+  for (const alert of entry.watch.indicators) {
+    if (fired.has(alert.id)) continue
+    // 이번 분에 읽은 묶음이 아니거나, 이 알림에 모자란 봉 수로 읽었으면(고른 뒤에 봉이 바뀌어 새로 볼 차례가 된 알림) 다음 차례에 본다.
+    const feed = feeds.get(feedKey(alert))
+    if (!feed || historyFor(alert.indicator) > feed.bars) continue
+    // 이번 봉에 이미 울린 봉마다 알림은 계산하지 않는다.
+    const due = dueBar(alert, now)
+    if (due === null || alreadyPushed(alert, barMarks, due)) continue
+    const judged = judgeIndicatorAlert(alert, feed, now)
+    if (!judged?.met || alreadyPushed(alert, barMarks, judged.bar)) continue
+    hits.push({
+      id: alert.id,
+      payload: indicatorPayload(alert, judged.value, feed.source),
+      ...(alert.trigger === 'once' ? {} : { bar: judged.bar }),
+    })
+  }
+  if (hits.length === 0) return
+
+  const { sent, dead } = await deliver(env, record.subs, hits, budget)
+  if (sent.length === 0) return
+  for (const hit of sent) {
+    if (hit.bar === undefined) fired.add(hit.id)
+    else barMarks[hit.id] = hit.bar
+  }
+  // Promise.withResolvers 는 ES2024 라 워커 타입 검사(es2022)에 없어 생성자 꼴로 기다린다.
+  if (wrote) await new Promise((resolve) => setTimeout(resolve, KEY_WRITE_GAP_MS))
   await env.SETTINGS.put(
-    key,
+    entry.key,
     JSON.stringify({
+      ...record,
       subs: record.subs.filter((s) => !dead.has(s.endpoint)),
-      lineMarks,
-      armMarks,
+      barMarks,
       firedIds: [...fired],
-      ...(Object.keys(entry.acks).length > 0 ? { acks: entry.acks } : {}),
     } satisfies WatchRecord),
   )
 }
@@ -712,7 +802,14 @@ export default {
       const rec = await env.SETTINGS.get<WatchRecord>(`w:${code}`, 'json')
       const watch = await readWatch(env, code)
       const items = watch ? [...watch.alerts, ...watch.lines] : []
-      const quotes = await loadQuotes(items.map((w) => w.symbol), { used: 0 })
+      const indicators = watch?.indicators ?? []
+      // 크론과 같이 이번 분의 차례인 묶음만 읽는다(CPU 한도). 다른 묶음은 ?turn=<분 번호> 로 본다.
+      const now = Date.now()
+      const turn = Number(url.searchParams.get('turn') ?? Math.floor(now / MINUTE_MS))
+      const specs = pickFeeds(indicators, Number.isFinite(turn) ? turn : 0)
+      const budget = newBudget()
+      const quotes = await loadQuotes(items.map((w) => w.symbol), budget, specs.length)
+      const feeds = await loadFeeds(specs, budget)
       return Response.json({
         subs: rec?.subs.length ?? 0,
         watched: ((await env.SETTINGS.get<string[]>(INDEX_KEY, 'json')) ?? []).includes(code),
@@ -723,10 +820,33 @@ export default {
         lines: watch?.lines ?? [],
         lineMarks: rec?.lineMarks ?? {},
         armMarks: rec?.armMarks ?? {},
+        barMarks: rec?.barMarks ?? {},
         firedIds: rec?.firedIds ?? [],
         acks: rec?.acks ?? {},
         // 판정에 쓰는 시세(출처와 1분봉).
         quotes: Object.fromEntries(quotes),
+        // 켜진 지표 알림과 지금 봉으로 계산한 값. feed 가 null 이면 봉을 읽지 않았다(이번 분 차례가 아님·요청 한도·gate 에 없는 종목 등).
+        // judged: 판정한 봉(시작 시각, 초)·지표 값·조건 충족. null 이면 판정할 봉이나 값이 없다.
+        indicators: indicators.map((a) => {
+          const feed = feeds.get(feedKey(a))
+          return {
+            id: a.id,
+            symbol: a.symbol,
+            interval: a.interval,
+            trigger: a.trigger,
+            describe: describeIndicatorAlert(a),
+            createdAt: a.createdAt,
+            // 이 알림에 드는 봉 수(historyFor)와 묶음에서 읽은 봉.
+            history: historyFor(a.indicator),
+            feed: feed ? { source: feed.source, candles: feed.candles.length, last: feed.candles.at(-1) } : null,
+            judged: feed ? judgeIndicatorAlert(a, feed, now) : null,
+            // 감시기 상태: 울리고 아직 확인되지 않음(once), 마지막으로 푸시한 봉(perBar·perBarClose), 앱이 마지막으로 울린 봉.
+            fired: rec?.firedIds.includes(a.id) ?? false,
+            pushedBar: rec?.barMarks?.[a.id] ?? null,
+            appLastBar: a.lastBar ?? null,
+            dueBar: dueBar(a, now),
+          }
+        }),
       })
     }
 

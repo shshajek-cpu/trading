@@ -1,12 +1,6 @@
 import { useState } from 'react'
-import {
-  fromTemplateEntry,
-  loadTemplates,
-  saveTemplates,
-  toTemplateEntry,
-  type IndicatorInstance,
-  type IndicatorTemplate,
-} from '../lib/indicatorConfig'
+import { fromTemplateEntry, toTemplateEntry, type IndicatorInstance } from '../lib/indicatorConfig'
+import { loadTemplates, saveTemplates, type IndicatorTemplate } from '../lib/indicatorStorage'
 import './indicators.css'
 
 interface IndicatorTemplatesMenuProps {

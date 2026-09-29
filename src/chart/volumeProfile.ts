@@ -15,6 +15,7 @@ import type {
 } from 'lightweight-charts'
 import type { MediaCoordinatesRenderingScope } from 'fancy-canvas'
 import type { Candle } from '../lib/binance'
+import type { VisibleProfileSpec, VolumeProfileStyle } from './compute'
 
 export interface VolumeProfileRow {
   low: number
@@ -135,16 +136,6 @@ export function pocPrice(profile: VolumeProfile): number {
   return (r.low + r.high) / 2
 }
 
-export interface VolumeProfileStyle {
-  upColor: string
-  downColor: string
-  pocColor: string
-  showPoc: boolean
-  showValueArea: boolean
-  valueAreaAlpha: number
-  outsideAlpha: number
-}
-
 /**
  * 호출한 쪽이 배율을 맞춰 둔 캔버스에 미디어(CSS px) 좌표로 그린다.
  * 막대는 `x` 에서 `direction` 쪽으로 자라고, 가장 긴 막대가 `width` px. 상승 거래량을 `x` 쪽에, 하락 거래량을 그 바깥에 잇는다.
@@ -196,16 +187,6 @@ export function drawVolumeProfile(
       ctx.fillRect(sign > 0 ? geo.x : geo.x - geo.width, Math.round(y), geo.width, 1)
     }
   }
-}
-
-/** 보이는 구간 볼륨 프로파일(VPVR) 한 개의 설정 — 지표 인스턴스에서 compute 가 만든다. */
-export interface VisibleProfileSpec {
-  rows: number
-  valueAreaPct: number
-  /** 가장 긴 막대 길이(가격 칸 폭의 %). */
-  widthPct: number
-  placement: 'left' | 'right'
-  style: VolumeProfileStyle
 }
 
 type ProfileGeometry = Parameters<typeof drawVolumeProfile>[2]
